@@ -1,0 +1,23 @@
+.git
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+web/node_modules
+web/dist
+dsn.json
+.env
+.env.*
+*.log
+
+# В образ приложения не входят исходные данные, документация и тесты. Это
+# уменьшает build context и исключает случайную публикацию материалов хакатона.
+docs/
+tests/
+build/
+*.pdf
+*.xlsx
+run.bat
+requirements.txt

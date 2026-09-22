@@ -1,93 +1,600 @@
-# template-gitlab-8c0dabb4
+# ПочтаТех · PI-Planner
 
-Template for task: GitLab репозиторий
+Сервис квартального планирования и звёздной карты команд.
 
-## Getting started
+Пользователь загружает выданный датасет и получает выполнимый план квартала:
+задачи разложены по шести двухнедельным спринтам с конкретными исполнителями,
+и для каждой задачи сказано, **почему** она включена, перенесена или предложена
+к отмене. Раз в две недели загружается фактический результат спринта — сервис
+пересчитывает остаток плана, показывает, какие отклонения вызвали изменения, и
+обновляет KPI. Звёздная карта показывает состав команд, компетенции инженеров и
+Bus Factor.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Содержание
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+1. [Быстрый старт](#1-быстрый-старт)
+2. [Как это устроено](#2-как-это-устроено)
+3. [Как пользоваться: семь экранов](#3-как-пользоваться-семь-экранов)
+4. [Цикл квартала: датасет, факт, пересчёт](#4-цикл-квартала-датасет-факт-пересчёт)
+5. [Преобразование исходных данных](#5-преобразование-исходных-данных)
+6. [Правила планирования](#6-правила-планирования)
+7. [KPI](#7-kpi)
+8. [Звёздная карта и Bus Factor](#8-звёздная-карта-и-bus-factor)
+9. [Что показывают данные](#9-что-показывают-данные)
+10. [HTTP API](#10-http-api)
+11. [Фронтенд](#11-фронтенд)
+12. [Docker, мониторинг, бэкапы](#12-docker-мониторинг-бэкапы)
+13. [Проверка и тесты](#13-проверка-и-тесты)
+14. [Настройки](#14-настройки)
+15. [Структура репозитория](#15-структура-репозитория)
+16. [Частые проблемы](#16-частые-проблемы)
+17. [Документация](#17-документация)
 
-## Add your files
+---
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+## 1. Быстрый старт
+
+Есть три способа запуска. Для демо и проверки достаточно первого.
+
+### 1.1. Одной командой (демо)
+
+```bash
+./run.sh          # Linux / macOS
+run.bat           # Windows
+```
+
+Открыть <http://127.0.0.1:8000>.
+
+Скрипт делает всё сам:
+
+1. ставит Python-зависимости (через `uv`, если он есть и не старше 0.12, иначе —
+   обычный `.venv` + `pip`);
+2. проверяет PostgreSQL. Если база не отвечает — поднимает PostgreSQL 17 в
+   docker или podman (контейнер `pi-planner-pg`). Своя база задаётся
+   переменной `PI_PLANNER_DSN`;
+3. при первом запуске заливает схему и данные (`db/01…05.sql` + `build/seed.sql`).
+   Клиент `psql` не нужен: SQL заливается через `tools/apply_sql.py`;
+4. если прогонов ещё нет — строит базовый план квартала;
+5. собирает фронт, если `web/dist` отсутствует (обычно он уже в репозитории);
+6. стартует сервер на порту 8000.
+
+| Флаг | Что делает |
+|---|---|
+| `--reset` | перезалить базу с нуля (сотрёт загруженный факт и прогоны) |
+| `--no-build` | не собирать фронт |
+| `APP_PORT=8080 ./run.sh` | другой порт |
+
+Остановить — `Ctrl+C`. База в контейнере останавливается отдельно:
+`docker stop pi-planner-pg` (или `podman stop …`); данные при этом сохраняются.
+
+**Полный цикл квартала одной командой** — базовый план, затем факт спринтов
+1–3 из `demo/` и три пересчёта:
+
+```bash
+./.venv/bin/python tools/demo_cycle.py
+```
+
+> Файлы в `demo/` — **синтетический** факт для демонстрации пересчёта, а не
+> данные организаторов. Реальный факт загружается через интерфейс по шаблону.
+
+### 1.2. Docker Compose (полный стек)
+
+PostgreSQL, приложение, Caddy (HTTPS), Prometheus, Grafana и бэкапы:
+
+```bash
+cp .env.example .env              # обязательно задать POSTGRES_PASSWORD
+docker compose up -d --build
+```
+
+* приложение — <https://localhost> (Caddy, автоматический HTTPS);
+* Grafana — <https://grafana.localhost>, дашборд **PI-Planner / Overview**
+  создаётся автоматически;
+* Prometheus и PostgreSQL наружу не публикуются.
+
+При первом запуске база инициализируется схемой и данными, а одноразовый сервис
+`bootstrap-plan` строит базовый план; `app` стартует только после него. Если
+успешный базовый прогон уже есть, шаг ничего не меняет. Подробнее — в
+[разделе 12](#12-docker-мониторинг-бэкапы).
+
+### 1.3. Режим разработки фронта
+
+```bash
+./run.sh                          # бэкенд на :8000 должен работать
+cd web && npm install && npm run dev
+```
+
+Открыть <http://127.0.0.1:5173> — Vite с горячей перезагрузкой, `/api`
+проксируется на `:8000`. Перед коммитом — `npm run build`: `web/dist`
+коммитится намеренно, чтобы демо-машина не нуждалась в npm.
+
+---
+
+## 2. Как это устроено
 
 ```
-cd existing_repo
-git remote add origin https://git.codenrock.com/codenrock/khakaton-postcode-challenge-ot-pochtatekha/template-gitlab-8c0dabb4.git
-git branch -M main
-git push -uf origin main
+               браузер
+                  │
+     ┌────────────▼─────────────┐
+     │  web/dist (React + Vite) │   7 экранов, свой hash-роутер
+     └────────────┬─────────────┘
+                  │  GET /api/views/{витрина}, POST /api/dataset, /api/actuals
+     ┌────────────▼─────────────┐
+     │  app/server.py           │   stdlib HTTP-сервер, без фреймворка
+     │   ├ views.py             │   белый список из 33 витрин
+     │   ├ ingest.py            │   загрузка датасета и факта спринта
+     │   ├ planner.py           │   алгоритм планирования
+     │   └ metrics.py           │   /metrics для Prometheus
+     └────────────┬─────────────┘
+                  │  psycopg 3
+     ┌────────────▼─────────────┐
+     │  PostgreSQL 17           │   схема, витрины v_*, 31 инвариант приёмки
+     └──────────────────────────┘
 ```
 
-## Integrate with your tools
+Ключевые принципы:
 
-- [ ] [Set up project integrations](https://git.codenrock.com/codenrock/khakaton-postcode-challenge-ot-pochtatekha/template-gitlab-8c0dabb4/-/settings/integrations)
+* **Вся аналитика — в SQL.** Витрины (`db/04_views.sql`) считают дефициты,
+  Bus Factor, отклонения и KPI. Фронт ничего не пересчитывает: он показывает
+  строки витрин как есть.
+* **Планировщик — отдельный детерминированный алгоритм** (`app/planner.py`).
+  Один и тот же вход всегда даёт один и тот же план. Результат прогона пишется
+  в `plan_runs` / `plan_task_schedule` / `plan_assignments` вместе с
+  объяснением каждого решения.
+* **Проверка независима от планировщика.** 31 инвариант (`db/05_invariants.sql`,
+  витрина `v_plan_violations`) проверяет готовый план по данным, а не по коду
+  алгоритма. `error` обязан быть нулевым.
+* **Каждый пересчёт — новый прогон.** Старые прогоны не перезаписываются;
+  в шапке интерфейса можно переключиться на любой из них и сравнить.
 
-## Collaborate with your team
+---
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+## 3. Как пользоваться: семь экранов
 
-## Test and Deploy
+В шапке — квартал (`PI-2026-Q3`, 01.07–22.09.2026, 6 спринтов), выбор прогона
+(по умолчанию — последний успешный) и состояние API.
 
-Use the built-in continuous integration in GitLab.
+| Экран | Что показывает | Главный вопрос |
+|---|---|---|
+| **Загрузка** | загрузка датасета (xlsx) и факта спринта (csv/xlsx), шаблон факта, история загрузок | как обновить данные |
+| **План квартала** | Гант по шести спринтам: задачи по инициативам, доли SP по спринтам, займы, базовая линия Недели 0. Клик по задаче — панель с причиной решения, исполнителями и разбором | что попало в квартал и почему |
+| **Риски** | алерты по спринтам, изменения плана относительно прошлого прогона с причиной, отклонения спринтов, нарушения приёмки | что пошло не так |
+| **Звёздная карта** | тёмная карта: 6 ядер-команд, 30 инженеров-спутников, парттаймеры на общей орбите между двумя командами. Размер точки — грейд, цвет — риск. Клик — панель инженера: что встанет без него, уникальные компетенции, загрузка по спринтам. Ниже — Bus Factor по компетенциям и роли, которых нет в штате | кто незаменим |
+| **KPI** | штемпели: тонкое кольцо — прогноз, залитая дуга — факт. Процент выполнения квартала, выполнение плана по каждому спринту, Bus Factor | насколько план выполняется |
+| **Роли и ёмкость** | дефицит часов по «команда × роль» (штатный и с учётом замещений), где нужен наём, Bus Factor ролей, ёмкость команд в SP, диагностика исходных данных | где не хватает людей |
+| **Профили** | карточка каждой команды: фонд часов, velocity, ёмкость в SP, живой бэклог, роли есть / нужны, компетенции | из чего состоит команда |
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+Оформление: светлая тема «Маршрутный лист» везде, тёмная — только на звёздной
+карте. Интерфейс работает от 360 px, всё доступно с клавиатуры, цвет никогда не
+единственный носитель смысла (рядом всегда слово). Подробно — `docs/UI_DESIGN.md`.
 
-***
+---
 
-# Editing this README
+## 4. Цикл квартала: датасет, факт, пересчёт
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```
+загрузка датасета ──► ETL ──► базовый план (прогон, as_of_sprint = 0)
+                                   │   фиксирует plan_baseline — «обещание» квартала
+                                   ▼
+   факт спринта N ──► проверка файла ──► применение факта ──► пересчёт с спринта N+1
+                                                               │
+                         новый прогон, v_plan_diff, алерты, KPI ◄┘
+```
 
-## Suggestions for a good README
+| Шаг | Через интерфейс | Через API |
+|---|---|---|
+| Загрузить датасет | «Загрузка» → xlsx | `POST /api/dataset?filename=x.xlsx` (тело — файл) |
+| Получить шаблон факта | кнопка «Шаблон» | `GET /api/actuals/template?sprint=N` |
+| Загрузить факт спринта | «Загрузка факта» | `POST /api/actuals?sprint=N` (тело — файл) |
+| Посмотреть данные | экраны | `GET /api/views/{витрина}` |
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+* **Загрузка датасета начинает новый цикл**: прежние прогоны и загруженный факт
+  стираются, строится новый базовый план.
+* **Загрузка факта спринта N** заменяет прежний факт этого спринта и все более
+  поздние — так можно переиграть спринт, не пересобирая всё.
+* Базовая линия (`plan_baseline`) при пересчётах не меняется: KPI сравнивают
+  факт с первоначальным обещанием, а не с последней версией плана.
+* Загрузки выполняются под одной блокировкой записи: две параллельные загрузки
+  не перепутают состояние. Максимальный размер файла — 10 МБ.
 
-## Name
-Choose a self-explaining name for your project.
+### Формат файла с фактом
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+CSV или XLSX; шаблон уже содержит живые задачи и колонки ролей.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```
+task_id,status,actual_start,actual_end,comment,Аналитик,Разработчик Java,…
+MP-102,InProgress,2026-07-01,,не успели закрыть,18,51.6
+SRV-4051,Done,2026-07-01,2026-07-14,закрыта по плану,30,15
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+* `status` — `ToDo` / `InProgress` / `Done` (русские синонимы тоже принимаются:
+  «в работе», «выполнена», …);
+* колонки ролей — часы, потраченные **за этот спринт** (не накопительно);
+* задачи, которых нет в файле, остаются в прежнем состоянии;
+* `Done` без даты окончания — берётся конец спринта;
+* файл проверяется **целиком**: если есть хоть одна ошибка, не принимается
+  ничего, а ответ `400` перечисляет проблемы по строкам (неизвестная задача,
+  неверный статус, отрицательные часы, дата вне спринта, откат `Done → ToDo`,
+  дубликаты, отсутствующие колонки и т. д.). База при этом не меняется.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+---
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## 5. Преобразование исходных данных
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Датасет — один лист Excel с шестью таблицами подряд
+(`Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx`). ETL (`etl/load.py`)
+ищет блоки **по маркерам в первой колонке, а не по номерам строк**: датасет уже
+приезжал «с правками», и строки поедут снова. Результат — `build/seed.sql`,
+он коммитится, чтобы бэкенду не нужен был ETL для старта.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+| Что | Как преобразуем |
+|---|---|
+| Матрица сметы 22 роли × 45 задач | разворачивается в длинную таблицу `task_role_estimates`, нулевые ячейки не хранятся |
+| Роли | приводятся к канону по `etl/config.py → ROLE_ALIASES`: `Девопс`→`ДевОпс`, `Разработчик IOS`→`Разработчик iOS`, `Разработчик BigData`→`Разработчик Big Data`. 22 строки матрицы → **21 роль** |
+| Навыки | `skills_declared` режется по запятым **верхнего уровня**: «CI/CD (GitLab, Jenkins)» — один навык, а не два. 116 уникальных навыков, 182 связи |
+| Парттаймеры | 34 строки профилей → **30 инженеров** и 34 орбиты: роль, грейд и стек принадлежат инженеру, ставка — привязке к команде |
+| Инициативы | `PRODF ↔ BR` строго 1:1, 15 инициатив |
+| Зависимости | все три типа (`has to be done before`, `is required for`, `depends on`) канонизируются как «A блокирует B» по заголовкам колонок листа |
+| Справочники | «варианты выбора цели», причины расхождений и результаты закрытия — в отдельные таблицы |
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Перезалив идемпотентен: `seed.sql` начинается с `TRUNCATE … RESTART IDENTITY`.
+Когда придёт новая версия датасета — загрузить её через интерфейс или положить
+файл и перезапустить ETL (`python etl/load.py`).
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### Допущения и обработка пропусков
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+| Пропуск или расхождение в данных | Что делаем |
+|---|---|
+| **Три источника часов расходятся у 25 из 45 задач** | истина — сумма столбца матрицы сметы (подтверждено организаторами). Два других значения хранятся рядом, все расхождения — в `dq_issues` и на экране «Роли и ёмкость» → диагностика |
+| `spent_time` пуст у всех задач `InProgress` | факт берётся только из блока `Spent_time_roles`; остаток = смета − факт, не меньше нуля |
+| Колонка «будет включено в спринт» заполнена только у 8 задач `Done` | для KPI непригодна: первоначальный план фиксируется первым прогоном планировщика (`plan_baseline`) |
+| Границы квартала в датасете не заданы | PI = начало календарного квартала + 6 × 14 дней: **01.07–22.09.2026** |
+| `rung` неоднороден внутри инициативы (7 из 15) | приоритет инициативы = `MAX(rung)` её задач |
+| В матрице две строки «Разработчик Big Data» и «Разработчик BigData» | сливаются в одну роль, часы суммируются |
+| `planned_start` / `planned_end` в исходнике | это история, а не обязательство: план по ним не строится. Прогноз позже исходной даты — предупреждение, не ошибка |
+| Обрезанное значение справочника «Отменено зака…» | принимается как «Отменено заказчиком», помечается в `dq_issues` |
+| Нарушенная связь в исходнике (`KP-3898` блокирует уже закрытую `ASUKD-5222`) | загружается как есть, помечается в `dq_issues` |
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Итог загрузки: **0 блокирующих находок**, 35 предупреждений, 3 информационных.
 
-## License
-For open source projects, say how it is licensed.
+---
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 6. Правила планирования
+
+Четыре ограничения соблюдаются одновременно.
+
+1. **Ёмкость команды в Story Points.** Средняя фактическая производительность ×
+   0.8 (focus factor). Задача, которая крупнее свободной ёмкости одного спринта,
+   **растягивается на несколько**: её SP списываются с ёмкости команды частями.
+   Без этого задача с 8 SP при ёмкости 7.2 SP не попала бы в план никогда — а
+   именно её (`DB-202`) онбординг приводит как пример работы «минимум на 2 спринта».
+2. **Часы специалистов.** 80 ЧЧ за спринт при полной занятости, 40 при 0.5.
+   Лимит проверяется по **сумме всех орбит** инженера: парттаймер 0.5 + 0.5 даёт
+   80 ЧЧ суммарно, а не по 80 в каждой команде.
+3. **Роли.** Исполнитель берётся только из тех, у кого эта роль основная:
+   замещения ролей запрещены организаторами. Инженера можно **занять** другой
+   команде, если в своей он не выбран, — такое назначение помечается как заём.
+4. **Зависимости.** Блокируемая задача не начинается раньше, чем через спринт
+   после блокирующей.
+
+**Приоритизация.** Инициативы обходятся по убыванию скоринга (`MAX(rung)`),
+внутри инициативы — по топологическому порядку зависимостей, задача ставится в
+самый ранний подходящий спринт. Освободившийся после переносов ресурс не
+пропадает: делается повторная упаковка, иначе причина «не хватило ресурсов» у
+перенесённой задачи была бы неправдой.
+
+**Отмена.** Задача, которой не хватило ресурсов, пробно раскладывается в
+«следующий квартал» с тем же штатом. Не помещается и туда — сервис рекомендует
+отменить или пересогласовать объём, а не переносить: перенос означал бы «в
+следующий раз получится».
+
+**Объяснение решений.** У каждой задачи в каждом прогоне есть `decision`
+(в квартале / перенесена / к отмене), `reason_text` — готовая фраза по-русски,
+и `reason_details` — разбор: кто закрывает роли, займы, растяжка SP. Именно их
+показывает панель задачи на экране «План квартала».
+
+### Story Points и часы — разные величины
+
+Алгоритм их **не связывает** и не пересчитывает одну в другую: это два
+независимых ограничения. SP расходуют квартальную ёмкость команды, часы —
+рабочее время конкретных людей. Задача занимает место в спринте по обоим
+основаниям сразу, и не влезть может по любому из них — причина решения всегда
+говорит, по какому именно. Единственное упрощение: задача в работе списывает
+свои SP целиком, даже если часть часов по ней уже потрачена до квартала.
+
+### Запуск планировщика вручную
+
+```bash
+./.venv/bin/python tools/run_planner.py              # базовый план, фиксирует plan_baseline
+./.venv/bin/python tools/run_planner.py --dry-run    # посчитать и показать, в базу не писать
+./.venv/bin/python tools/run_planner.py --if-empty   # ничего не делать, если базовый прогон уже есть
+```
+
+Полная спецификация — `docs/PLANNER_SPEC.md`.
+
+---
+
+## 7. KPI
+
+| Показатель | Формула | Норма |
+|---|---|---|
+| Процент выполнения квартального плана | инициативы, завершённые за 12 недель / инициативы, **включённые в первоначальный план** × 100% | 80–100 |
+| Выполнение плана спринта | фактически выполненные SP / первоначально запланированные SP × 100% | 90–105 |
+| Bus Factor | минимум по навыкам, нужным бэклогу: сколько инженеров владеют навыком (сейчас 1 — у 44 навыков единственный носитель, он же единственный специалист роли) | ≥ 2 |
+
+Инициатива считается включённой в план, только если план обещал завершить **все**
+её живые задачи: частично включённую инициативу план завершить не обещал, и в
+знаменатель она не входит. Пересчёт базу сравнения не меняет.
+
+**Прогноз и факт разделены**: у каждого показателя есть строки `kind = forecast`
+(по текущему плану) и `kind = actual` (по загруженному факту). До загрузки факта
+существует только прогноз. Нормы (`target_min` / `target_max`) хранятся в
+строке снимка — фронт их не зашивает.
+
+---
+
+## 8. Звёздная карта и Bus Factor
+
+Bus Factor считается **по компетенциям**: для каждого заявленного навыка —
+сколько инженеров им владеют. Навык с одним носителем — риск; если этот носитель
+ещё и единственный специалист своей роли, риск критический: работу не подхватит
+никто, замещения запрещены.
+
+На датасете: **116 компетенций, у 86 из них один носитель, 44 — критические**.
+Отдельно считается покрытие ролей: шесть ролей, которых нет в штате вообще
+(`Руководитель проекта`, весь 1С-стек, `Специалист поддержки`) — это вопрос
+найма, а не незаменимости, поэтому на карте их нет, они показаны отдельным блоком.
+
+Где отсутствие человека останавливает работу, видно в `v_engineer_absence_risk`:
+для каждого инженера — задачи текущего плана, у которых нет запасного исполнителя.
+
+Цвета точек на карте:
+
+| Цвет | Значение |
+|---|---|
+| красный | работы встанут: у задач текущего плана нет запасного исполнителя |
+| жёлтый | незаменим: единственный носитель критичных компетенций |
+| зелёный | есть замена |
+| ромб | инженер делит ставку между двумя командами |
+
+Раскладка карты **детерминированная**, не силовая: ядра по кругу в порядке,
+при котором команды с общими инженерами стоят рядом, спутники равномерно по
+своей дуге. Карту можно показать дважды — и она будет одинаковой.
+
+---
+
+## 9. Что показывают данные
+
+| | |
+|---|---|
+| Ёмкость в SP | узкое место только у `Team-Platform` |
+| Часы по ролям | **2371 ЧЧ** дефицита по 47 связкам «команда × роль» |
+| Природа дефицита | **все 47** — «роли нет в команде», а не «мало часов» |
+| Нужен наём | 6 ролей, 665 ЧЧ: руководители проектов и весь 1С-стек |
+| Зависимости | живых рёбер 10 из 19, глубина ≤ 2 — **не** узкое место |
+| Итог планирования | 10 задач из 37 в квартале, 27 перенесено, 26 из них — «нет роли в штате» |
+
+Вывод для заказчика: бэклог упирается не в скорость команд и не в граф
+зависимостей, а в отсутствующие роли. Пять из восьми незаменимых инженеров
+вращаются вокруг `Team-Platform` — той же команды, у которой единственной не
+хватает ёмкости в SP.
+
+---
+
+## 10. HTTP API
+
+| Метод и путь | База | Назначение |
+|---|---|---|
+| `GET /api/livez` | не трогает | liveness: 200, пока процесс жив |
+| `GET /api/health` | читает | readiness: 503, если база недоступна |
+| `GET /api/version` | не трогает | версии приложения, ETL и PI |
+| `GET /api/views` | — | список витрин с описаниями |
+| `GET /api/views/{view}` | читает | строки витрины: `?run_id=&limit=&offset=&order=` |
+| `POST /api/dataset?filename=x.xlsx` | пишет | загрузить датасет, построить базовый план |
+| `GET /api/actuals/template?sprint=N` | читает | CSV-шаблон факта спринта |
+| `POST /api/actuals?sprint=N` | пишет | загрузить факт спринта, пересчитать план |
+| `GET /metrics` | читает, кэш 15 с | метрики Prometheus |
+
+**Витрины.** Данные для фронта отдаются одним маршрутом поверх белого списка из
+33 витрин (`app/views.py`, ADR-019): имя витрины — параметр пути, а не
+отдельный эндпоинт. Ответ — строки как есть плюс конверт:
+
+```json
+{ "view": "v_role_deficit", "as_of": "…", "run_id": null,
+  "count": 76, "returned": 76, "truncated": false,
+  "columns": ["team_id", "role_name", "demand_hh", "…"], "items": [ … ] }
+```
+
+Имя витрины не подставляется в SQL, `ORDER BY` собирается только из колонок
+витрины, чтение идёт в read-only сессии. Витрины, зависящие от прогона,
+принимают `run_id`; без него берётся последний успешный. Значения `numeric`
+приходят **строками** (`"-281.00"`), чтобы не терять точность.
+
+**Ошибки.** `400` — неверные параметры или файл (с полем `problems`), `404` —
+неизвестная витрина, `503` — база недоступна (фронт показывает «API недоступен»,
+а не пустой экран).
+
+Какие витрины нужны какому экрану — `docs/UI_SPEC.md`; примеры запросов —
+`docs/SCHEMA.md`, раздел 2б.
+
+---
+
+## 11. Фронтенд
+
+React 19 + Vite + TypeScript, Mantine 9 (таблицы, вкладки, загрузка файлов,
+боковые панели), TanStack Query. Сторонних чартов нет: Гант — CSS grid,
+звёздная карта и штемпели KPI — своё SVG.
+
+```
+web/src/
+  api/          wire.ts — чтение numeric-строк (num, fmtHours, fmtSp, isNegative)
+  hooks/        useViews.ts — один хук на витрину; useRun — выбранный прогон
+  components/   общие части: шапка, KpiStamp, QueryError, AsOfLabel, сетка спринтов
+  screens/      upload, plan, risks, starmap, kpi, roles, profiles
+  theme/        tokens.css (палитра, в т. ч. тёмная для карты), mantineTheme.ts
+  types/        views.ts — типы строк витрин (генерируются tools/gen_types.py)
+```
+
+Правила, на которых держится фронт:
+
+* данные — **только** через хуки из `hooks/useViews.ts`: ключ кэша строится из
+  имени витрины и параметров, поэтому два экрана не получат чужие данные;
+* `numeric` читается через `wire.ts`, знак разрыва — через `isNegative`, а не
+  `parseFloat`; `null` рисуется как «—», а не как 0;
+* один выбранный прогон на всё приложение (`useRun`);
+* роутинг — свой hash-роутер (`#/plan`, `#/starmap`, …): страница работает как
+  статика из `web/dist` без настройки сервера.
+
+Сборка: `cd web && npm run build` (включает `tsc --noEmit`). Результат —
+`web/dist`, его отдаёт `app/server.py`.
+
+---
+
+## 12. Docker, мониторинг, бэкапы
+
+`docker-compose.yaml` поднимает:
+
+| Сервис | Что делает |
+|---|---|
+| `db` | PostgreSQL 17; при первом старте инициализируется `db/*.sql` + `build/seed.sql` |
+| `bootstrap-plan` | одноразово строит базовый план (`run_planner.py --if-empty`) |
+| `app` | сервер приложения; read-only файловая система, без capabilities |
+| `caddy` | единственный публичный вход: HTTPS, заголовки безопасности, `/metrics` снаружи — 404 |
+| `prometheus` | сбор метрик и правила алертов (`ops/prometheus`) |
+| `grafana` | дашборд **PI-Planner / Overview** (`ops/grafana`), вход через Caddy |
+| `backup` | регулярный `pg_dump` с проверкой восстановления (`ops/backup.sh`) |
+| `migrate` | профиль `ops`: миграции схемы (`docker compose run --rm migrate`) |
+
+Сети разделены: `frontend` (Caddy ↔ app, Grafana), `backend` (app ↔ db),
+`monitoring` (Prometheus ↔ app). Все настройки — в `.env` (образец —
+`.env.example`, сам `.env` в git не попадает).
+
+**Метрики** собираются своим кодом (`app/metrics.py`, формат Prometheus 0.0.4):
+HTTP-счётчики и длительности, живость базы, время витрин
+(`pi_planner_view_*`), последний прогон планировщика
+(`pi_planner_plan_violations{severity="error"}` обязан быть 0), календарь PI.
+`/metrics` отвечает 200 и при мёртвой базе: вместо бизнес-серий приходят
+`pi_planner_db_up 0` и `pi_planner_db_metrics_error{error_class}`. Имена метрик
+заморожены для devops (ADR-018). Логи — текст для демо или JSON
+(`--log-format json`, одна строка — один объект).
+
+### Минимальный production-гейт
+
+Перед переключением трафика должны одновременно выполняться условия:
+
+- `docker compose ps` показывает `healthy` для `db`, `app`, `prometheus` и
+  `grafana`, остальные сервисы — `running`;
+- `docker compose run --rm migrate` завершился с кодом 0;
+- `/api/livez`, `/api/health` и `/api/version` через Caddy отвечают 200, а
+  публичный `/metrics` — 404;
+- Prometheus видит `up{job="pi-planner"} == 1`, а
+  `pi_planner_plan_violations{severity="error"} == 0`;
+- создан свежий dump, и в логе `backup` есть успешная restore-проверка;
+- записаны версия образа / commit SHA и имя последнего проверенного dump — без
+  этого воспроизводимый откат невозможен.
+
+Одного `docker compose up` для production мало: задайте боевые домены и
+секреты, вынесите `BACKUP_DIR` на отдельный диск, выполните миграции и
+smoke-тесты. Секреты не передаются в git, образ или командную строку CI.
+Чек-лист релиза, отката и восстановления — `docs/RUNBOOK.md`, разделы 5.2–5.7;
+метрики, алерты и текущие ограничения мониторинга — `docs/OBSERVABILITY.md`.
+
+---
+
+## 13. Проверка и тесты
+
+**Юнит- и интеграционные тесты** (102 теста):
+
+```bash
+./.venv/bin/python -m pip install pytest   # pytest — dev-зависимость, run.sh её не ставит
+./.venv/bin/python -m pytest -q
+# с uv >= 0.12: uv run --group dev pytest -q
+```
+
+**Фронт:**
+
+```bash
+cd web && npx tsc --noEmit && npm run build
+```
+
+**Корректность плана** — прямо в базе:
+
+```sql
+SELECT * FROM v_plan_violations WHERE run_id = :run AND severity = 'error';  -- пусто = план корректен
+SELECT * FROM v_dq_summary;                                                   -- качество исходных данных
+SELECT * FROM v_role_coverage_org WHERE verdict LIKE 'НАЙМ%';                 -- где нужен наём
+SELECT task_id, decision, reason_text FROM plan_task_schedule WHERE run_id = :run;
+```
+
+31 инвариант проверяет результат планировщика независимо от его кода: ёмкость
+в SP по каждому спринту, перегрузку людей по сумме орбит, допустимость роли,
+орбиты и займы, зазоры зависимостей, полноту назначений, базовую линию и наличие
+объяснения у каждого решения. Приёмочные и негативные SQL-проверки —
+`tools/acceptance.sql`, `tools/negative_test.sql`; результат приёмки —
+`docs/RUNBOOK.md`, раздел 9.
+
+---
+
+## 14. Настройки
+
+| Где | Что |
+|---|---|
+| `PI_PLANNER_DSN` | строка подключения к PostgreSQL (по умолчанию `host=127.0.0.1 port=5432 dbname=pi_planner user=postgres password=postgres`) |
+| `APP_PORT` | порт сервера для `run.sh` (8000) |
+| `PI_PLANNER_LOG_FORMAT` | `text` или `json` |
+| `PI_PLANNER_METRICS_TTL` | кэш бизнес-метрик в секундах (15) |
+| `etl/config.py` | все параметры модели: focus factor, часы в спринте, алиасы ролей, имя файла датасета |
+| `.env` | настройки Docker-стека: пароли, домены, порты, лимиты ресурсов, бэкапы (см. `.env.example`) |
+
+---
+
+## 15. Структура репозитория
+
+```
+run.sh / run.bat        запуск одной командой
+docker-compose.yaml     полный стек; Dockerfile — образ приложения; Caddyfile — прокси
+etl/                    config.py — все ручки; load.py — загрузчик датасета
+app/                    server.py (HTTP), views.py (белый список витрин),
+                        planner.py (алгоритм), ingest.py (загрузки), db.py, metrics.py
+db/01…05.sql            схема, контракт, замещения, витрины, 31 инвариант приёмки
+db/migrations/          миграции схемы (tools/migrate.py)
+build/seed.sql          результат ETL — данные для заливки
+web/                    фронт (Vite + React + TypeScript); web/dist — собранный
+tools/                  run_planner.py, apply_sql.py, demo_cycle.py, migrate.py,
+                        gen_types.py, acceptance.sql, negative_test.sql
+ops/                    Prometheus, Grafana, скрипт бэкапа
+demo/                   синтетический факт спринтов 1–3 для проверки пересчёта
+tests/                  pytest
+docs/                   документация (см. раздел 17)
+default_task.md         исходное ТЗ
+```
+
+---
+
+## 16. Частые проблемы
+
+| Симптом | Что делать |
+|---|---|
+| `Address already in use` на 8000 | сервер уже запущен. Остановить его или запустить на другом порту: `APP_PORT=8080 ./run.sh` |
+| «PostgreSQL недоступен, а docker/podman не найдены» | поднять PostgreSQL самостоятельно и задать `PI_PLANNER_DSN` |
+| В интерфейсе «API недоступен» | сервер работает, но база не отвечает: проверить контейнер (`docker ps`) и `GET /api/health` |
+| Экраны пустые, «датасет не загружен» | загрузить xlsx на экране «Загрузка» или `./run.sh --reset` |
+| KPI без факта, риски почти пустые | факт ещё не загружен — это нормально. Для демонстрации: `tools/demo_cycle.py` |
+| После правок фронт не изменился | пересобрать (`cd web && npm run build`) и обновить страницу с очисткой кэша (`Ctrl+Shift+R`) |
+| Файл факта отклонён | в ответе `400` перечислены проблемы по строкам; начать проще с шаблона («Шаблон» на экране «Загрузка») |
+
+---
+
+## 17. Документация
+
+| Документ | О чём |
+|---|---|
+| `default_task.md` | исходное ТЗ хакатона |
+| `docs/DECISIONS.md` | архитектурные решения и допущения (ADR-000…025) |
+| `docs/PLANNER_SPEC.md` | правила и алгоритм планировщика |
+| `docs/SCHEMA.md` | схема базы, витрины, контракт данных |
+| `docs/UI_SPEC.md` | что показывает каждый экран и из каких витрин |
+| `docs/UI_DESIGN.md` | оформление: палитра, шрифты, раскладка, правила |
+| `docs/RUNBOOK.md` | эксплуатация: запуск, релиз, откат, восстановление, приёмка |
+| `docs/OBSERVABILITY.md` | метрики, алерты, дашборды, ограничения мониторинга |
+| `docs/ANSWERS_ORGANIZERS.md` | ответы организаторов на вопросы по данным |
+| `docs/REVIEW_RESPONSE.md` | ответы на ревью |
