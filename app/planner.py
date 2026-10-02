@@ -233,22 +233,24 @@ ORDER BY bus_factor, skill_name
 """
 
 # Факт спринтов (ADR-021): последняя загрузка и какие задачи в каком спринте
-# ВПЕРВЫЕ отмечены выполненными — это числитель «Выполнения плана спринта».
+# ВПЕРВЫЕ отмечены выполненными. Спринт задаёт дата события, не дата загрузки.
 LAST_UPLOAD_SQL = """
 SELECT upload_id, sprint_no FROM actual_uploads
 WHERE pi_id = %s ORDER BY sprint_no DESC LIMIT 1
 """
 DONE_IN_SPRINT_SQL = """
-SELECT u.sprint_no, a.task_id
+SELECT completed_in.sprint_no, a.task_id
 FROM task_actuals a
 JOIN actual_uploads u   ON u.upload_id = a.upload_id
 JOIN tasks_seed_state s ON s.task_id = a.task_id
+JOIN sprints completed_in ON completed_in.pi_id = u.pi_id
+                         AND a.actual_end BETWEEN completed_in.start_date AND completed_in.end_date
 WHERE a.status = 'Done' AND s.status <> 'Done' AND u.pi_id = %s
   AND NOT EXISTS (SELECT 1 FROM task_actuals a2
                   JOIN actual_uploads u2 ON u2.upload_id = a2.upload_id
                   WHERE a2.task_id = a.task_id AND a2.status = 'Done'
                     AND u2.sprint_no < u.sprint_no)
-ORDER BY u.sprint_no, a.task_id
+ORDER BY completed_in.sprint_no, a.task_id
 """
 TASK_PRODF_SQL = "SELECT task_id, prodf_id FROM tasks ORDER BY task_id"
 
@@ -1765,6 +1767,7 @@ def _build_kpis(
     sp_of: dict[str, Decimal] = {task_id: sp for task_id, _st, sp, _rem in inputs.all_tasks}
     sp_of.update({task.task_id: task.estimation_sp for task in inputs.tasks})
     status_of = {task_id: status for task_id, status, _sp, _rem in inputs.all_tasks}
+    done_in_pi = set().union(*inputs.done_in_sprint.values()) if inputs.done_in_sprint else set()
     prodf_of = dict(inputs.task_prodf)
     prodf_of.update({task.task_id: task.prodf_id for task in inputs.tasks})
 
@@ -1793,7 +1796,7 @@ def _build_kpis(
     )
 
     def done(task_id: str) -> bool:
-        return status_of.get(task_id) == DONE_STATUS
+        return status_of.get(task_id) == DONE_STATUS and task_id in done_in_pi
 
     on_track = sorted(
         prodf_id for prodf_id in committed
@@ -1857,7 +1860,7 @@ def _build_kpis(
         need = planned_sp.get(sprint_no, Decimal("0"))
         if sprint_no <= inputs.last_reported_sprint:
             ids = sorted(inputs.done_in_sprint.get(sprint_no, frozenset()))
-            kind, note = "actual", "факт: SP задач, отмеченных выполненными в загрузке за этот спринт"
+            kind, note = "actual", "факт: SP задач с датой завершения в этом спринте, включая поздние отчёты"
         else:
             ids = sorted(
                 task_id for task_id, row in current.items()

@@ -219,6 +219,37 @@ class ParsedRow:
     completed_sp: Decimal | None = None
 
 
+def normalize_actual_dates(
+    rows: list[ParsedRow], *, sprint_end: date, pi_start: date, pi_end: date,
+    today: date | None = None,
+) -> tuple[list[str], list[str]]:
+    """Проверить даты события до записи факта; дата отчёта не заменяет дату Done."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    today = today or date.today()
+    for row in rows:
+        if row.status == "Done" and row.actual_end is None:
+            row.actual_end = sprint_end
+            warnings.append(f"{row.task_id}: дата окончания не указана — взят конец спринта {sprint_end}")
+        if row.status != "Done" and row.actual_end is not None:
+            warnings.append(f"{row.task_id}: дата окончания у невыполненной задачи пропущена")
+            row.actual_end = None
+        if row.actual_start is not None and row.actual_start > sprint_end:
+            errors.append(f"{row.task_id}: дата начала {row.actual_start} позже конца отчётного спринта {sprint_end}")
+        if row.actual_start is not None and row.actual_start > today:
+            errors.append(f"{row.task_id}: дата начала {row.actual_start} ещё не наступила")
+        if row.status == "Done":
+            if row.actual_end > today:
+                errors.append(f"{row.task_id}: дата окончания {row.actual_end} ещё не наступила")
+            if not pi_start <= row.actual_end <= pi_end:
+                errors.append(f"{row.task_id}: дата окончания {row.actual_end} вне PI {pi_start}..{pi_end}")
+            elif row.actual_end > sprint_end:
+                errors.append(f"{row.task_id}: дата окончания {row.actual_end} позже конца отчётного спринта {sprint_end}")
+            if row.actual_start is not None and row.actual_start > row.actual_end:
+                errors.append(f"{row.task_id}: дата начала {row.actual_start} позже даты окончания {row.actual_end}")
+    return errors, warnings
+
+
 def _read_table(data: bytes, name: str) -> list[list[Any]]:
     if name.lower().endswith((".xlsx", ".xlsm")):
         import openpyxl
@@ -243,7 +274,7 @@ def _parse_date(value: Any) -> date | None:
         return value.date()
     if isinstance(value, date):
         return value
-    text = _norm(value)[:10]
+    text = _norm(value)
     for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
         try:
             return datetime.strptime(text, fmt).date()
@@ -310,6 +341,9 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
             end = _parse_date(cells.get("actual_end"))
         except ValueError as exc:
             errors.append(f"{where}: дата «{exc}» — ожидается ГГГГ-ММ-ДД или ДД.ММ.ГГГГ")
+            continue
+        if start is not None and end is not None and start > end:
+            errors.append(f"{where}: дата начала {start} позже даты окончания {end}")
             continue
         completed_sp: Decimal | None = None
         raw_sp = _norm(cells.get("completed_sp"))
@@ -415,16 +449,23 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
         if errors:
             raise UploadError(f"факт спринта {sprint_no} не принят: {len(errors)} ошибок", errors)
 
-        sprint_end = db.scalar(
-            "SELECT end_date FROM sprints WHERE pi_id = %s AND sprint_no = %s", (pi_id, sprint_no)
+        calendar = db.query_one(
+            """SELECT s.start_date AS sprint_start, s.end_date AS sprint_end,
+                      p.start_date AS pi_start, p.end_date AS pi_end
+                 FROM sprints s JOIN pi_periods p ON p.pi_id = s.pi_id
+                WHERE s.pi_id = %s AND s.sprint_no = %s""",
+            (pi_id, sprint_no),
         )
-        for row in rows:
-            if row.status == "Done" and row.actual_end is None:
-                row.actual_end = sprint_end
-                warnings.append(f"{row.task_id}: дата окончания не указана — взят конец спринта {sprint_end}")
-            if row.status != "Done" and row.actual_end is not None:
-                warnings.append(f"{row.task_id}: дата окончания у невыполненной задачи пропущена")
-                row.actual_end = None
+        if not calendar:
+            raise UploadError(f"для спринта {sprint_no} нет календаря PI")
+        date_errors, date_warnings = normalize_actual_dates(
+            rows, sprint_end=calendar["sprint_end"],
+            pi_start=calendar["pi_start"], pi_end=calendar["pi_end"],
+        )
+        errors.extend(date_errors)
+        warnings.extend(date_warnings)
+        if errors:
+            raise UploadError(f"факт спринта {sprint_no} не принят: {len(errors)} ошибок", errors)
 
         # Факт планом до загрузки нужен как база сравнения: если базового
         # прогона ещё нет (база залита из CLI), строим его ДО изменения состояния.
