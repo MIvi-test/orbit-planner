@@ -27,7 +27,7 @@ COMMENT ON COLUMN plan_runs.actuals_upload_id IS
  'На каком факте построен пересчёт (ADR-021). NULL — базовый план по датасету. '
  'По этой ссылке UI показывает, «какие отклонения вызвали изменения».';
 COMMENT ON COLUMN plan_runs.as_of_sprint IS '0 = базовый план на Неделе 0; k = пересчёт на начало спринта k после факта спринта k-1; sprint_count+1 = итог квартала.';
-COMMENT ON COLUMN plan_runs.status IS 'infeasible = алгоритм не смог уложить бэклог даже с переносами. Фронту показывать явно, а не молча.';
+COMMENT ON COLUMN plan_runs.status IS 'Технический статус расчёта: ok означает опубликованный результат. Бизнес-результат (completed/planned/partial/nothing_scheduled) находится в params.business_outcome.';
 
 -- ---------------------------------------------------------------------
 --  Базовая линия Недели 0. Нужна для обоих KPI-числителей.

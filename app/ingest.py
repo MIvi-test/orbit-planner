@@ -112,7 +112,7 @@ def run_plan(as_of_sprint: int) -> dict[str, Any]:
 
 def _has_baseline() -> bool:
     return bool(
-        db.scalar("SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok'")
+        db.scalar("SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible')")
     )
 
 

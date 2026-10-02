@@ -3,7 +3,7 @@
  * должны показывать ОДИН И ТОТ ЖЕ прогон одновременно, иначе цифры на разных
  * экранах не сойдутся (docs/UI_SPEC.md §0 — «run_id показывать там, где он не
  * null»). Правило «текущего» одно и то же везде: последний прогон со
- * `status = 'ok'` — сервер сообщает его через `run_default: true`.
+ * `status IN ('ok', 'infeasible')` учитывает и старые опубликованные прогоны.
  */
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 import { usePlanRuns } from './useViews'
@@ -13,7 +13,7 @@ interface RunContextValue {
   runs: PlanRunRow[]
   /** Прогон, который сейчас показывают экраны: выбранный вручную или «текущий». */
   runId: number | null
-  /** «Текущий» по правилу сервера: MAX(run_id) WHERE status = 'ok'. */
+  /** «Текущий» по правилу сервера: последний опубликованный расчёт. */
   defaultRunId: number | null
   isDefault: boolean
   setRunId: (id: number | null) => void
@@ -32,7 +32,7 @@ export function RunProvider({ children }: { children: ReactNode }) {
     [query.data],
   )
   const defaultRunId = useMemo(() => {
-    const ok = runs.filter((r) => r.status === 'ok')
+    const ok = runs.filter((r) => r.status === 'ok' || r.status === 'infeasible')
     return ok.length ? Math.max(...ok.map((r) => r.run_id)) : null
   }, [runs])
 

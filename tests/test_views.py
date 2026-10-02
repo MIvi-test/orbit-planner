@@ -122,7 +122,7 @@ def test_default_run_is_the_last_ok_run(fake_db: FakeViewsDB) -> None:
     assert params[0] == 2
     assert envelope["run_id"] == 2
     assert envelope["run_default"] is True
-    assert "status = 'ok'" in fake_db.sql[0]
+    assert "status IN ('ok', 'infeasible')" in fake_db.sql[0]
 
 
 def test_explicit_run_id_is_not_overridden(fake_db: FakeViewsDB) -> None:
@@ -133,7 +133,7 @@ def test_explicit_run_id_is_not_overridden(fake_db: FakeViewsDB) -> None:
     assert params[0] == 7
     assert envelope["run_id"] == 7
     assert envelope["run_default"] is False
-    assert "query_one" not in fake_db.kinds  # прогон по умолчанию не искали
+    assert views.LAST_OK_RUN_SQL not in fake_db.sql  # прогон по умолчанию не искали
 
 
 def test_run_id_on_a_reference_view_is_a_400(fake_db: FakeViewsDB) -> None:
@@ -158,14 +158,24 @@ def test_reference_views_are_not_filtered_by_run(fake_db: FakeViewsDB) -> None:
     assert envelope["run_default"] is False
 
 
-def test_no_ok_run_means_no_filter(fake_db: FakeViewsDB) -> None:
-    """Удачных прогонов ещё нет: отдаём витрину как есть, а не выдумываем run_id."""
+def test_no_ok_run_never_reads_rows_from_multiple_runs(fake_db: FakeViewsDB) -> None:
+    """Без активного прогона нельзя вернуть смесь строк исторических прогонов."""
     fake_db.run_id = None
 
-    envelope = views.fetch("alerts")
+    with pytest.raises(views.RunUnavailable) as excinfo:
+        views.fetch("alerts")
 
-    assert envelope["run_id"] is None
-    assert "WHERE" not in fake_db.select()[0]
+    assert excinfo.value.payload()["error"] == "no_active_run"
+    assert "query_dicts" not in fake_db.kinds
+
+
+def test_missing_explicit_run_is_distinct_from_empty_view(fake_db: FakeViewsDB) -> None:
+    """Пустая витрина существующего прогона и неверный идентификатор различаются."""
+    with pytest.raises(views.RunUnavailable) as excinfo:
+        views.fetch("alerts", run_id=1234)
+
+    assert excinfo.value.payload()["error"] == "run_not_found"
+    assert "query_dicts" not in fake_db.kinds
 
 
 def test_limit_and_offset_are_checked() -> None:
@@ -288,4 +298,3 @@ def test_catalog_documents_every_view() -> None:
         assert item["screen"] and item["note"]
         assert item["order"] and item["orderable"]
         assert {col.lstrip("-+") for col in item["order"]} <= set(item["orderable"])
-

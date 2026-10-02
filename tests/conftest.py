@@ -27,6 +27,7 @@ class FakeViewsDB:
         self.rows = list(rows or [])
         self.total = total
         self.run_id = run_id
+        self.existing_run_ids = {2, 7, 999}
         self.columns = columns or ["alert_id", "run_id", "sprint_no"]
         self.calls: list[tuple[str, str, list[Any]]] = []
         self.error: Exception | None = None
@@ -42,6 +43,9 @@ class FakeViewsDB:
     def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         self.calls.append(("query_one", self._norm(sql), list(params or [])))
         self._boom()
+        if "WHERE run_id = %s::int" in sql:
+            requested = int(params[0])
+            return {"run_id": requested} if requested in self.existing_run_ids else None
         return {"run_id": self.run_id}
 
     def scalar(self, sql: str, params: Any = None) -> Any:

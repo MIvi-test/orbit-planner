@@ -291,7 +291,7 @@ SELECT b.run_id, 'BASELINE_MUTATED', 'error', b.task_id::text,
         || ' в каноническом прогоне ' || c.run_id)::text
 FROM plan_baseline b
 JOIN plan_baseline c ON c.task_id = b.task_id AND c.run_id <> b.run_id
-WHERE c.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok')
+WHERE c.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
   AND (b.planned_sp <> c.planned_sp OR b.committed <> c.committed)
 
 -- W. KPI посчитаны не полностью ------------------------------------------

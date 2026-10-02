@@ -25,7 +25,7 @@ def test_if_empty_does_not_replace_an_existing_plan(monkeypatch, capsys) -> None
 
     assert run_planner.main(["--if-empty"]) == 0
     assert "пропуск" in capsys.readouterr().out
-    assert "as_of_sprint = 0" in sql[0] and "status = 'ok'" in sql[0]
+    assert "as_of_sprint = 0" in sql[0] and "status IN ('ok', 'infeasible')" in sql[0]
 
 
 def test_validation_failure_exits_nonzero_and_reports_run(monkeypatch, capsys) -> None:

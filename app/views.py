@@ -43,8 +43,9 @@ from app import db
 LIMIT_DEFAULT = 500
 LIMIT_MAX = 5000
 
-# Прогон по умолчанию — последний удачный: «текущий» в терминах docs/SCHEMA.md §2.
-LAST_OK_RUN_SQL = "SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status = 'ok'"
+# Старые версии помечали корректно рассчитанный пустой план как infeasible.
+# Его тоже надо показывать, пока история не пересчитана новым планировщиком.
+LAST_OK_RUN_SQL = "SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status IN ('ok', 'infeasible')"
 
 # Колонки витрины — для пустого результата: у пустого списка строк нет ключей,
 # а фронт должен знать форму ответа и в этом случае.
@@ -285,7 +286,7 @@ SOURCES: tuple[Source, ...] = (
         screen="KPI",
         order="-run_id",
         orderable=("run_id", "pi_id", "as_of_sprint", "algorithm", "status", "created_at"),
-        note="Список прогонов для выбора `run_id`; `params` несёт границы календаря прогона. "
+        note="Список прогонов для выбора `run_id`; `params` несёт календарь и business_outcome. "
         "Витрина не фильтруется по `run_id` — она для того и нужна, чтобы выбрать прогон.",
     ),
     _source(
@@ -450,6 +451,23 @@ class UnknownView(ValueError):
         }
 
 
+class RunUnavailable(ValueError):
+    """Для витрины прогона нет выбранного существующего плана."""
+
+    def __init__(self, run_id: int | None = None) -> None:
+        self.run_id = run_id
+        super().__init__("нет активного прогона" if run_id is None else f"прогон {run_id} не найден")
+
+    def payload(self) -> dict[str, Any]:
+        if self.run_id is None:
+            return {
+                "error": "no_active_run",
+                "message": "Нет активного успешного прогона плана",
+                "hint": "Список доступных прогонов: GET /api/views/plan_runs",
+            }
+        return {"error": "run_not_found", "message": f"Прогон {self.run_id} не найден"}
+
+
 class BadRequest(ValueError):
     """Параметр запроса не прошёл проверку: это 400, а не 500 и не пустой ответ."""
 
@@ -533,7 +551,7 @@ def catalog() -> dict[str, Any]:
 
 
 def last_ok_run_id() -> int | None:
-    """Прогон по умолчанию: последний удачный (`MAX(run_id) WHERE status = 'ok'`).
+    """Прогон по умолчанию: последний опубликованный расчёт.
 
     Тот же предикат, что у KPI и проверки `BASELINE_MUTATED` (SCHEMA.md §2): фронт,
     бэкенд и приёмка не могут разойтись в том, какой прогон «текущий».
@@ -591,13 +609,18 @@ def fetch(
 
     run_default = False
     if source.run_column is not None and run_id is None:
-        run_id = last_ok_run_id()  # None — удачных прогонов ещё нет, фильтра не будет
+        run_id = last_ok_run_id()
         run_default = True
+        if run_id is None:
+            raise RunUnavailable()
+    elif source.run_column is not None:
+        if db.query_one("SELECT run_id FROM plan_runs WHERE run_id = %s::int", [run_id]) is None:
+            raise RunUnavailable(run_id)
 
     pairs = parse_order(order, source)
     where = ""
     where_params: list[Any] = []
-    if source.run_column is not None and run_id is not None:
+    if source.run_column is not None:
         where = f" WHERE {source.run_column} = %s::int"
         where_params.append(int(run_id))
 

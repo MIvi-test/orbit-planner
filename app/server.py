@@ -448,6 +448,9 @@ class Handler(BaseHTTPRequestHandler):
         except views.UnknownView as exc:
             outcome = "not_found"
             self._send_json(HTTPStatus.NOT_FOUND, exc.payload())
+        except views.RunUnavailable as exc:
+            outcome = "not_found"
+            self._send_json(HTTPStatus.NOT_FOUND, exc.payload())
         except views.BadRequest as exc:
             outcome = "bad_request"
             self._send_json(HTTPStatus.BAD_REQUEST, exc.payload())

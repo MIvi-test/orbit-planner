@@ -777,6 +777,23 @@ def test_quarter_end_run_moves_the_rest_to_the_next_pi() -> None:
 
     row = plan.schedule[0]
     assert plan.status == "ok"  # не infeasible: квартал просто закончился
+    assert plan.params["business_outcome"] == "nothing_scheduled"
     assert row.decision == "deferred_next_pi"
     assert row.reason_code == planner.REASON_PI_CLOSED
     assert plan.assignments == ()
+
+
+def test_empty_backlog_is_a_successful_completed_run() -> None:
+    plan = planner.build_plan(inputs([], [], all_tasks=(("A", "Done", Decimal(1), Decimal(0)),)))
+
+    assert plan.status == "ok"
+    assert plan.params["business_outcome"] == "completed"
+    assert plan.schedule == ()
+
+
+def test_all_deferred_is_published_as_the_current_result() -> None:
+    plan = planner.build_plan(inputs([task("A", roles={99: 40})], [engineer("ENG-1")]))
+
+    assert plan.status == "ok"
+    assert plan.params["business_outcome"] == "nothing_scheduled"
+    assert plan.schedule[0].decision == "deferred_next_pi"

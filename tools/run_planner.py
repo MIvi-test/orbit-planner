@@ -89,7 +89,7 @@ def _run_locked(args: argparse.Namespace) -> int:
     if args.if_empty:
         baselines = int(
             db.scalar(
-                "SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok'"
+                "SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible')"
             )
             or 0
         )

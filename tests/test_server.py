@@ -386,8 +386,25 @@ def test_view_run_defaults_to_the_last_ok_run(base_url: str, fake_db) -> None:
     assert status == 200
     assert payload["run_id"] == 2
     assert payload["run_default"] is True
-    assert "status = 'ok'" in fake_db.sql[0]
+    assert "status IN ('ok', 'infeasible')" in fake_db.sql[0]
     assert "WHERE run_id = %s::int" in fake_db.select()[0]
+
+
+def test_run_view_without_active_run_returns_explicit_404(base_url: str, fake_db) -> None:
+    fake_db.run_id = None
+
+    status, _, body = get(f"{base_url}/api/views/alerts")
+
+    assert status == 404
+    assert json.loads(body)["error"] == "no_active_run"
+    assert "query_dicts" not in fake_db.kinds
+
+
+def test_unknown_run_returns_404(base_url: str, fake_db) -> None:
+    status, _, body = get(f"{base_url}/api/views/alerts?run_id=1234")
+
+    assert status == 404
+    assert json.loads(body)["error"] == "run_not_found"
 
 
 def test_view_accepts_run_limit_offset_and_order(base_url: str, fake_db) -> None:

@@ -42,9 +42,9 @@ export function usePlanData() {
   const spQ = usePlanTaskSp(runId)
   const assignQ = usePlanAssignments(runId)
 
-  // Канонический базовый прогон (ADR-004): MIN(run_id) WHERE as_of_sprint=0 AND status='ok'.
+  // Канонический базовый прогон: первый опубликованный, включая старый infeasible.
   const baselineRunId = useMemo(() => {
-    const candidates = runs.filter((r) => r.as_of_sprint === 0 && r.status === 'ok')
+    const candidates = runs.filter((r) => r.as_of_sprint === 0 && (r.status === 'ok' || r.status === 'infeasible'))
     return candidates.length ? Math.min(...candidates.map((r) => r.run_id)) : null
   }, [runs])
   const baselineQ = usePlanSchedule(baselineRunId)

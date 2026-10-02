@@ -260,7 +260,7 @@ BASELINE_SCHEDULE_SQL = """
 SELECT b.task_id, s.decision, s.start_sprint, s.end_sprint
 FROM plan_baseline b
 JOIN plan_task_schedule s ON s.run_id = b.run_id AND s.task_id = b.task_id
-WHERE b.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok')
+WHERE b.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
 ORDER BY b.task_id
 """
 
@@ -284,8 +284,8 @@ SELECT DISTINCT ON (s.task_id) s.task_id, s.start_sprint
 FROM plan_task_schedule s
 JOIN plan_runs r ON r.run_id = s.run_id
 WHERE r.as_of_sprint = 0
-  AND r.status = 'ok'
-  AND r.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok')
+  AND r.status IN ('ok', 'infeasible')
+  AND r.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
   AND s.start_sprint IS NOT NULL
 ORDER BY s.task_id
 """
@@ -1383,7 +1383,6 @@ def build_plan(
         lower_bounds={
             task.task_id: lower_bound(task) for task in ordered if task.task_id not in starts
         },
-        pi_closed=pi_closed,
     )
 
 
@@ -1410,7 +1409,6 @@ def _assemble(
     *,
     sp_shares: tuple[tuple[str, int, Decimal], ...] = (),
     lower_bounds: dict[str, int] | None = None,
-    pi_closed: bool = False,
 ) -> Plan:
     """Собирает `Plan`: алерты, KPI, базовая линия, слепок состояния, params.
 
@@ -1512,6 +1510,16 @@ def _assemble(
         "last_reported_sprint": inputs.last_reported_sprint,
     }
     params.update(modes or {})
+    # Статус прогона описывает успешность расчёта. Результат для бизнеса живёт
+    # отдельно: пустой план может означать и завершённый PI, и полный перенос.
+    if not inputs.tasks:
+        params["business_outcome"] = "completed"
+    elif not in_quarter:
+        params["business_outcome"] = "nothing_scheduled"
+    elif deferred:
+        params["business_outcome"] = "partial"
+    else:
+        params["business_outcome"] = "planned"
     reason_summary = ", ".join(
         f"{code} {count}" for code, count in params["reasons"].items() if code != "PLANNED"
     )
@@ -1525,8 +1533,7 @@ def _assemble(
     return Plan(
         pi_id=inputs.pi_id,
         as_of_sprint=as_of_sprint,
-        # Итог квартала (факт за последний спринт) — законный прогон, а не сбой.
-        status="ok" if in_quarter or pi_closed else "infeasible",
+        status="ok",
         note=note,
         params=params,
         schedule=tuple(schedule),

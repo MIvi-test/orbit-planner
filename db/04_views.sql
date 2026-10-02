@@ -502,7 +502,7 @@ WITH pairs AS (
            (SELECT u.sprint_no FROM actual_uploads u
              WHERE u.upload_id = r.actuals_upload_id)                         AS reported_sprint,
            (SELECT MAX(p.run_id) FROM plan_runs p
-             WHERE p.run_id < r.run_id AND p.status = 'ok')                   AS prev_run_id
+             WHERE p.run_id < r.run_id AND p.status IN ('ok', 'infeasible'))   AS prev_run_id
     FROM plan_runs r
 ), base AS (
     SELECT pr.run_id, pr.prev_run_id, pr.reported_sprint, t.task_id, t.prodf_id, t.team_id,
