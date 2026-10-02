@@ -98,9 +98,6 @@ def run_plan(as_of_sprint: int) -> dict[str, Any]:
     baseline_starts = planner.load_baseline_starts() if as_of_sprint > 0 else {}
     plan = planner.build_plan(inputs, as_of_sprint=as_of_sprint, baseline_starts=baseline_starts)
     run_id = planner.write_plan(plan)
-    errors = db.scalar(
-        "SELECT COUNT(*) FROM v_plan_violations WHERE run_id = %s AND severity = 'error'", (run_id,)
-    )
     return {
         "run_id": run_id,
         "as_of_sprint": as_of_sprint,
@@ -109,7 +106,7 @@ def run_plan(as_of_sprint: int) -> dict[str, Any]:
         "in_quarter": len(plan.in_quarter),
         "not_in_quarter": len(plan.deferred),
         "alerts": len(plan.alerts),
-        "violations_error": int(errors or 0),
+        "violations_error": 0,
     }
 
 

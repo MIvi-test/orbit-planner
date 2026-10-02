@@ -1946,8 +1946,18 @@ def _build_states(
 # ---------------------------------------------------------------------------
 #  ЗАПИСЬ: весь контракт одной транзакцией
 # ---------------------------------------------------------------------------
+class PlanValidationError(RuntimeError):
+    """План сохранён для диагностики, но не опубликован из-за инвариантов."""
+
+    def __init__(self, run_id: int, errors: int, violations: list[dict[str, Any]]) -> None:
+        self.run_id = run_id
+        self.errors = errors
+        self.violations = violations
+        super().__init__(f"прогон {run_id} не опубликован: {errors} ошибок приёмки")
+
+
 def write_plan(plan: Plan) -> int:
-    """Пишет прогон и весь контракт в одной транзакции. Возвращает `run_id`.
+    """Пишет и проверяет контракт в одной транзакции; публикует только без ошибок.
 
     `is_loan` не пишем никогда — это генерируемая колонка (см. RUNBOOK, раздел 6).
     """
@@ -1966,7 +1976,7 @@ def write_plan(plan: Plan) -> int:
                 plan.as_of_sprint,
                 ALGORITHM,
                 json.dumps(plan.params, ensure_ascii=False),
-                plan.status,
+                "failed",  # до проверки результат не виден как успешный
                 plan.note,
                 plan.actuals_upload_id,
             ),
@@ -2117,4 +2127,37 @@ def write_plan(plan: Plan) -> int:
             """,
             (write_seconds, run_id),
         )
+        # Вьюха видит все записанные строки в этой транзакции. Читатели не
+        # увидят status='ok' до того, как независимая проверка закончится.
+        cur.execute(
+            """SELECT check_code, entity, detail
+               FROM v_plan_violations
+               WHERE run_id = %s AND severity = 'error'
+               ORDER BY check_code, entity, detail""",
+            (run_id,),
+        )
+        violations = list(cur.fetchall())
+        if violations:
+            sample = violations[:20]
+            cur.execute(
+                """UPDATE plan_runs
+                   SET params = jsonb_set(params, '{validation}', %s::jsonb, true),
+                       note = %s
+                   WHERE run_id = %s""",
+                (
+                    json.dumps({"errors": len(violations), "sample": sample}, ensure_ascii=False),
+                    f"Не опубликован: {len(violations)} ошибок приёмки",
+                    run_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """UPDATE plan_runs
+                   SET status = %s,
+                       params = jsonb_set(params, '{validation}', '{"errors": 0}'::jsonb, true)
+                   WHERE run_id = %s""",
+                (plan.status, run_id),
+            )
+    if violations:
+        raise PlanValidationError(run_id, len(violations), sample)
     return run_id

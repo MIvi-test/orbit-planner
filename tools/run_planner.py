@@ -158,7 +158,13 @@ def main(argv: list[str] | None = None) -> int:
         print("--dry-run: в базу ничего не писали")
         return 0
 
-    run_id = planner.write_plan(plan)
+    try:
+        run_id = planner.write_plan(plan)
+    except planner.PlanValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        for row in exc.violations:
+            print(f"  {row['check_code']}: {row['entity']} — {row['detail']}", file=sys.stderr)
+        return 1
     print(
         f"записано: run_id = {run_id} "
         f"(as_of_sprint = {plan.as_of_sprint}, алгоритм {planner.ALGORITHM})"

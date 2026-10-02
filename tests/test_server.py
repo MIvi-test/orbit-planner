@@ -14,7 +14,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import server, views
+from app import planner, server, views
 
 HEALTH = {
     "dsn": "host=127.0.0.1 port=5432 dbname=pi_planner user=postgres",
@@ -512,3 +512,19 @@ def test_empty_upload_is_rejected(base_url: str) -> None:
 
     assert status == 400
     assert json.loads(body.decode("utf-8"))["error"] == "bad_upload"
+
+
+def test_rejected_plan_is_reported_as_422(base_url: str, monkeypatch) -> None:
+    violation = {"check_code": "UNDER_ALLOCATED", "entity": "A / QA", "detail": "0 ЧЧ"}
+
+    def reject(_body, _filename):
+        raise planner.PlanValidationError(42, 1, [violation])
+
+    monkeypatch.setattr(server.ingest, "load_dataset", reject)
+
+    status, _, body = post(f"{base_url}/api/dataset", b"dataset")
+    payload = json.loads(body)
+    assert status == 422
+    assert payload["error"] == "plan_validation_failed"
+    assert payload["run_id"] == 42
+    assert payload["violations"] == [violation]

@@ -322,6 +322,17 @@ class Handler(BaseHTTPRequestHandler):
             log_event("upload_rejected", level="warning", path=path, message=exc.message)
             self._send_json(HTTPStatus.BAD_REQUEST, exc.payload())
             return
+        except ingest.planner.PlanValidationError as exc:
+            log_event("plan_rejected", level="error", path=path, run_id=exc.run_id,
+                      errors=exc.errors)
+            self._send_json(
+                HTTPStatus.UNPROCESSABLE_ENTITY,
+                {"error": "plan_validation_failed", "message": str(exc),
+                 "run_id": exc.run_id, "violations_error": exc.errors,
+                 "violations": exc.violations,
+                 "hint": "Входные данные приняты; прогон сохранён для диагностики, но не опубликован."},
+            )
+            return
         except Exception as exc:  # noqa: BLE001 — база могла уйти, а фронту нужен ответ
             log_event("upload_failed", level="error", path=path, error=repr(exc))
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
