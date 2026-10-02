@@ -333,6 +333,7 @@ CREATE TABLE actual_uploads (
     upload_id     SERIAL PRIMARY KEY,
     pi_id         TEXT        NOT NULL REFERENCES pi_periods(pi_id) ON DELETE CASCADE,
     sprint_no     SMALLINT    NOT NULL CHECK (sprint_no BETWEEN 1 AND 12),
+    plan_run_id   INT,
     source_file   TEXT        NOT NULL,
     source_sha256 TEXT        NOT NULL,
     uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),

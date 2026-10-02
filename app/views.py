@@ -407,8 +407,9 @@ SOURCES: tuple[Source, ...] = (
         order="sprint_no,task_id",
         orderable=("upload_id", "sprint_no", "task_id", "team_id", "reported_status",
                    "deviation", "planned_hours", "spent_hours"),
-        note="Факт спринта против плана, который в этом спринте действовал: «в срок», "
-        "«не закрыта в срок», «раньше плана». Витрина по загрузкам, а не по прогонам.",
+        note="Факт спринта против закреплённого при загрузке плана: «в срок», "
+        "«не закрыта в срок», «завершена с опозданием», «вне плана», «нет данных по задаче». "
+        "Статус берётся из истории до отчётного спринта.",
     ),
     _source(
         "plan_task_sp",
@@ -632,4 +633,3 @@ def fetch(
         "columns": list(items[0]) if items else _relation_columns(source.name),
         "items": items,
     }
-

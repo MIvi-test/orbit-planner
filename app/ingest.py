@@ -496,6 +496,16 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
         if not _has_baseline():
             baseline_created = run_plan(0)["run_id"]
 
+        plan_run_id = db.scalar(
+            """SELECT r.run_id FROM plan_runs r
+               WHERE r.pi_id = %s AND r.status = 'ok' AND r.as_of_sprint <= %s
+                 AND (r.actuals_upload_id IS NULL OR r.actuals_upload_id IN
+                      (SELECT u.upload_id FROM actual_uploads u
+                       WHERE u.pi_id = %s AND u.sprint_no < %s))
+               ORDER BY r.as_of_sprint DESC, r.run_id DESC LIMIT 1""",
+            (pi_id, sprint_no, pi_id, sprint_no),
+        )
+
         summary = {
             "tasks": len(rows),
             "done": sum(1 for row in rows if row.status == "Done"),
@@ -521,9 +531,10 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
                 "DELETE FROM actual_uploads WHERE pi_id = %s AND sprint_no >= %s", (pi_id, sprint_no)
             )
             cur.execute(
-                """INSERT INTO actual_uploads (pi_id, sprint_no, source_file, source_sha256, summary)
-                   VALUES (%s, %s, %s, %s, %s::jsonb) RETURNING upload_id""",
-                (pi_id, sprint_no, name, hashlib.sha256(data).hexdigest(),
+                """INSERT INTO actual_uploads
+                       (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb) RETURNING upload_id""",
+                (pi_id, sprint_no, plan_run_id, name, hashlib.sha256(data).hexdigest(),
                  json.dumps(summary, ensure_ascii=False)),
             )
             upload_id = cur.fetchone()["upload_id"]

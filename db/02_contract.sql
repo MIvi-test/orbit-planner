@@ -21,6 +21,8 @@ CREATE TABLE plan_runs (
     actuals_upload_id INT REFERENCES actual_uploads(upload_id) ON DELETE SET NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE actual_uploads ADD CONSTRAINT actual_uploads_plan_run_fk
+    FOREIGN KEY (plan_run_id) REFERENCES plan_runs(run_id) ON DELETE SET NULL;
 COMMENT ON COLUMN plan_runs.actuals_upload_id IS
  'На каком факте построен пересчёт (ADR-021). NULL — базовый план по датасету. '
  'По этой ссылке UI показывает, «какие отклонения вызвали изменения».';
