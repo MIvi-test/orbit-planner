@@ -187,6 +187,16 @@ CREATE TABLE task_role_spent (
     hours   NUMERIC(8,2) NOT NULL CHECK (hours >= 0),
     PRIMARY KEY (task_id, role_id)
 );
+CREATE TABLE task_role_etc (
+    revision_id BIGSERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    role_id SMALLINT NOT NULL,
+    remaining_hours NUMERIC(8,2) NOT NULL CHECK (remaining_hours >= 0),
+    reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (task_id, role_id) REFERENCES task_role_estimates(task_id, role_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_task_role_etc_latest ON task_role_etc(task_id, role_id, revision_id DESC);
 COMMENT ON TABLE task_role_spent IS
  'Факт по ролям (блок Spent_time_roles), только для 6 задач InProgress. Колонка tasks.spent_time у них пуста — '
  'остаток считается ТОЛЬКО отсюда, см. v_task_remaining_hh.';
@@ -396,3 +406,5 @@ INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VAL
   ('INITIATIVE_ATOMIC',    6, 'deferred_next_pi', 'Перенесена вместе со своей инициативой',                    'M2'),
   ('PI_CLOSED',            7, 'deferred_next_pi', 'Квартал завершён — остаток уходит в следующий PI',          'M2'),
   ('NOT_FEASIBLE_NEXT_PI', 8, 'cancelled',        'Не помещается и в следующий квартал — рекомендуем отменить или пересогласовать', 'M4');
+INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VALUES
+  ('ETC_REQUIRED', 9, 'deferred_next_pi', 'Нужно уточнить остаток работ или статус задачи', 'M2');

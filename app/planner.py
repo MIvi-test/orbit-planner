@@ -25,8 +25,8 @@
 
 Правила, которые алгоритм соблюдает по построению:
 
-* часы — только `v_task_remaining_hh.remaining_hours` (остаток сметы по роли,
-  ADR-002); расхождения трёх источников проверяются и уезжают в
+* часы — только `v_task_remaining_hh.remaining_hours` (ETC по роли либо
+  предварительная смета без факта, ADR-026); расхождения трёх источников проверяются и уезжают в
   `plan_runs.params` — этого требует ответ организаторов №4;
 * замещения ролей отклонены организаторами (ответ №2, ADR-010), поэтому
   исполнители берутся ТОЛЬКО из родных строк `v_engineer_role_coverage`, и
@@ -34,7 +34,7 @@
   (ADR-012): вьюха остаётся единственным источником правды о паре
   «инженер × роль», включая `efficiency`;
 * `efficiency` (множитель часов замещающего) применяется к потребности:
-  чтобы закрыть `remaining_hours` сметы, исполнителю нужно
+  чтобы закрыть `remaining_hours` работы, исполнителю нужно
   `remaining_hours × efficiency` своих часов. Сейчас в данных везде `1.00`,
   поэтому поведение не меняется, но формула уже верна (ADR-016);
 * фонд часов — по орбитам: сначала своё ядро, невыбранный остаток уходит в заём
@@ -42,9 +42,8 @@
   РОВНО С ОДНОЙ орбиты: `home_team_id` не входит в первичный ключ
   `(task_id, sprint_no, engineer_id, role_id)`, поэтому размазать одно
   назначение по двум орбитам контракт не позволяет (ADR-015);
-* задача с нулевым остатком (работа фактически сделана) получает символическое
-  назначение `0.01` ЧЧ: иначе `CHECK (hours > 0)` и инвариант
-  `IN_QUARTER_WITHOUT_ASSIGNMENTS` несовместимы друг с другом;
+* если незакрытая задача исчерпала расчётную смету, но ETC не сообщён,
+  остаток считается неизвестным; фиктивные назначения не создаются;
 * в закрытые спринты план не пишется: при `as_of_sprint = k` нижняя граница
   старта — `max(1, k, earliest_start_sprint)` (ADR-014).
 
@@ -75,8 +74,6 @@ from app import db
 ALGORITHM = "greedy-priority-topo@2"
 ESTIMATE_SOURCE = "matrix_column_sum"
 SUBSTITUTION_MODE = "rejected"
-# Минимальное назначение: контракт требует hours > 0, а остаток может быть нулевым.
-SYMBOLIC_HOURS = Decimal("0.01")
 DEFERRED_REASON = "M2"  # Отсутствие ресурсов
 DEFERRED_REASON_BLOCKED = "M3"  # Отсутствует готовность смежных команд
 DONE_STATUS = "Done"
@@ -90,6 +87,7 @@ REASON_TEAM_SP = "TEAM_SP_EXHAUSTED"
 REASON_BLOCKED = "BLOCKED_BY_DEFERRED"
 REASON_ATOMIC = "INITIATIVE_ATOMIC"
 REASON_PI_CLOSED = "PI_CLOSED"
+REASON_ETC_REQUIRED = "ETC_REQUIRED"
 REASON_NOT_FEASIBLE = "NOT_FEASIBLE_NEXT_PI"
 CANCEL_REASON = "M4"  # «Превышение плана»: не помещается и в следующий квартал
 
@@ -114,7 +112,7 @@ OBJECTIVE_NOTE = (
 
 # `plan_assignments.hours` — часы ИСПОЛНИТЕЛЯ, а не эквивалент работы (ADR-016).
 EFFICIENCY_NOTE = (
-    "hours = человеко-часы исполнителя: смету remaining_hours закрывают "
+    "hours = человеко-часы исполнителя: оставшуюся работу remaining_hours закрывают "
     "remaining_hours × v_engineer_role_coverage.efficiency часов (сейчас везде 1.00)"
 )
 
@@ -162,7 +160,7 @@ ORDER BY b.priority_rung DESC NULLS LAST, b.topo_order, b.task_id
 
 TASK_ROLES_SQL = """
 SELECT rm.task_id, rm.role_id, r.canonical_name AS role_name,
-       rm.estimated_hours, rm.spent_hours, rm.remaining_hours
+       rm.estimated_hours, rm.spent_hours, rm.remaining_hours, rm.remaining_unknown
 FROM v_task_remaining_hh rm
 JOIN roles r ON r.role_id = rm.role_id
 JOIN tasks t ON t.task_id = rm.task_id
@@ -307,6 +305,7 @@ class TaskInput:
     remaining: dict[int, Decimal]  # role_id -> ЧЧ; может быть 0
     role_names: dict[int, str]
     estimate_disputed: bool
+    remaining_unknown: bool = False
 
     @property
     def needed(self) -> dict[int, Decimal]:
@@ -391,9 +390,11 @@ def load_inputs() -> Inputs:
 
     roles_by_task: dict[str, dict[int, Decimal]] = defaultdict(dict)
     names_by_task: dict[str, dict[int, str]] = defaultdict(dict)
+    unknown_by_task: dict[str, bool] = defaultdict(bool)
     for row in db.query_dicts(TASK_ROLES_SQL):
         roles_by_task[row["task_id"]][row["role_id"]] = Decimal(row["remaining_hours"])
         names_by_task[row["task_id"]][row["role_id"]] = row["role_name"]
+        unknown_by_task[row["task_id"]] |= bool(row.get("remaining_unknown", False))
 
     tasks = tuple(
         TaskInput(
@@ -409,6 +410,7 @@ def load_inputs() -> Inputs:
             remaining=dict(roles_by_task.get(row["task_id"], {})),
             role_names=dict(names_by_task.get(row["task_id"], {})),
             estimate_disputed=bool(row["estimate_disputed"]),
+            remaining_unknown=unknown_by_task[row["task_id"]],
         )
         for row in db.query_dicts(LIVE_TASKS_SQL)
     )
@@ -770,26 +772,6 @@ def _allocate_task(
     """
     needed = task.needed
     if not needed:
-        # Работа фактически сделана (остаток 0). Символическое назначение нужно,
-        # иначе CHECK (hours > 0) и инвариант IN_QUARTER_WITHOUT_ASSIGNMENTS
-        # противоречат друг другу.
-        role_id = min(task.remaining) if task.remaining else None
-        if role_id is None:
-            return None
-        for engineer_id in _candidate_engineers(task.team_id, role_id, start_sprint, funds, by_role):
-            taken, home = _spend_from(
-                funds.engineers[engineer_id], task.team_id, start_sprint, SYMBOLIC_HOURS, funds
-            )
-            if taken > 0 and home is not None:
-                return (
-                    [
-                        Assignment(
-                            task.task_id, start_sprint, engineer_id, role_id, taken, home, task.team_id
-                        )
-                    ],
-                    start_sprint,
-                    start_sprint,
-                )
         return None
 
     assignments: list[Assignment] = []
@@ -1006,6 +988,8 @@ def build_plan(
         больше свободной ёмкости, остаток — в следующих. Окно задачи —
         от первого спринта с часами до последнего спринта с часами или с SP.
         """
+        if task.remaining_unknown or not task.needed:
+            return False
         capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
         for candidate in range(max(replan_floor, lower), inputs.sprint_count + 1):
             result = _allocate_task(
@@ -1136,6 +1120,13 @@ def build_plan(
     def diagnose(task: TaskInput) -> tuple[str, str, dict[str, Any]]:
         """Почему задача не в квартале — по фактическому состоянию фонда."""
         task_id = task.task_id
+        if task.remaining_unknown or not task.needed:
+            return (
+                REASON_ETC_REQUIRED,
+                "Перенесена: для незакрытой задачи остаток работ неизвестен или равен нулю; "
+                "уточните ETC по ролям либо подтвердите статус Done",
+                {"remaining_unknown": task.remaining_unknown, "remaining_hh": str(task.demand_hh)},
+            )
         if pi_closed:
             return (
                 REASON_PI_CLOSED,
@@ -1306,26 +1297,20 @@ def build_plan(
             if starts[task_id] == ends[task_id]
             else f"спринты {starts[task_id]}–{ends[task_id]}"
         )
-        if not task.needed:
-            text = (
-                f"Включена: работа по смете фактически выполнена (остаток 0 ЧЧ), "
-                f"задача закрывается в {window}"
-            )
-        else:
-            parts = [
+        parts = [
                 f"Включена: приоритет инициативы {task.priority_rung} — {rank[task_id]}-я в очереди "
                 f"из {len(ordered)}, {window}",
                 "Роли закрыты: "
                 + "; ".join(f"{name} — {', '.join(sorted(people))}" for name, people in sorted(roles.items())),
-            ]
-            if loan_hh > 0:
-                parts.append(f"{_q(loan_hh)} ЧЧ взяты в заём у других команд")
-            if len(shares) > 1:
-                parts.append(
-                    f"{_q(task.estimation_sp)} SP растянуты на {_sprints_word(len(shares))}: "
-                    f"это больше свободной ёмкости команды за один спринт"
-                )
-            text = ". ".join(parts)
+        ]
+        if loan_hh > 0:
+            parts.append(f"{_q(loan_hh)} ЧЧ взяты в заём у других команд")
+        if len(shares) > 1:
+            parts.append(
+                f"{_q(task.estimation_sp)} SP растянуты на {_sprints_word(len(shares))}: "
+                f"это больше свободной ёмкости команды за один спринт"
+            )
+        text = ". ".join(parts)
         return text, {
             "priority_rung": task.priority_rung,
             "queue_rank": rank[task_id],

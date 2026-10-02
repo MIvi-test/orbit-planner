@@ -378,14 +378,22 @@ def test_team_sp_capacity_pushes_the_task_to_the_next_sprint() -> None:
     assert starts_of(plan) == {"A": 1, "B": 2}
 
 
-def test_zero_remaining_task_gets_symbolic_assignment() -> None:
-    """MOB-7011 в живых данных: смета выбрана полностью, остаток 0 ЧЧ."""
+def test_zero_remaining_live_task_requires_etc_instead_of_symbolic_assignment() -> None:
+    """Исчерпанная смета не доказывает завершение незакрытой задачи."""
     plan = planner.build_plan(inputs([task("T-0", roles={1: 0})], [engineer("ENG-1")]))
 
     row = plan.schedule[0]
-    assert (row.decision, row.start_sprint, row.end_sprint) == ("in_quarter", 1, 1)
-    assert len(plan.assignments) == 1
-    assert plan.assignments[0].hours == planner.SYMBOLIC_HOURS == Decimal("0.01")
+    assert row.decision == "deferred_next_pi"
+    assert row.reason_code == planner.REASON_ETC_REQUIRED
+    assert plan.assignments == ()
+
+
+def test_explicit_etc_is_planned_even_when_spent_exceeds_original_estimate() -> None:
+    # Планировщик получает 40 ЧЧ подтверждённого ETC, а не estimate-spent=0.
+    plan = planner.build_plan(inputs([task("T-0", roles={1: 40}, status="InProgress")], [engineer("ENG-1")]))
+
+    assert plan.schedule[0].decision == "in_quarter"
+    assert sum((row.hours for row in plan.assignments), Decimal("0")) == Decimal("40")
 
 
 def test_params_validate_the_estimate_source() -> None:
