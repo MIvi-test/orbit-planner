@@ -99,6 +99,11 @@ export function ActualsDropzone({ onDone }: { onDone: () => void }) {
               completed_sp — новые подтверждённые SP только за этот спринт. Пусто означает,
               что прогресс по SP не подтверждён; часы не заменяют эту оценку.
             </Text>
+            <Text size="xs" c="dimmed">
+              В колонках дат пустая ячейка сохраняет прежнюю дату; CLEAR очищает её.
+              Новая дата исправляет запись. Для повторного Done оставьте конец пустым,
+              чтобы сохранить дату первого завершения.
+            </Text>
             <Dropzone
               onDrop={(files) => files[0] && handleFile(files[0])}
               accept={['text/csv', '.csv', '.xlsx']}

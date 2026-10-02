@@ -217,28 +217,24 @@ class ParsedRow:
     comment: str | None
     hours: dict[int, Decimal] = field(default_factory=dict)
     completed_sp: Decimal | None = None
+    clear_actual_start: bool = False
+    clear_actual_end: bool = False
 
 
 def normalize_actual_dates(
     rows: list[ParsedRow], *, sprint_end: date, pi_start: date, pi_end: date,
-    today: date | None = None,
+    today: date | None = None, previous: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Проверить даты события до записи факта; дата отчёта не заменяет дату Done."""
     errors: list[str] = []
-    warnings: list[str] = []
+    warnings = normalize_done_dates(rows, previous or {}, sprint_end)
     today = today or date.today()
     for row in rows:
-        if row.status == "Done" and row.actual_end is None:
-            row.actual_end = sprint_end
-            warnings.append(f"{row.task_id}: дата окончания не указана — взят конец спринта {sprint_end}")
-        if row.status != "Done" and row.actual_end is not None:
-            warnings.append(f"{row.task_id}: дата окончания у невыполненной задачи пропущена")
-            row.actual_end = None
         if row.actual_start is not None and row.actual_start > sprint_end:
             errors.append(f"{row.task_id}: дата начала {row.actual_start} позже конца отчётного спринта {sprint_end}")
         if row.actual_start is not None and row.actual_start > today:
             errors.append(f"{row.task_id}: дата начала {row.actual_start} ещё не наступила")
-        if row.status == "Done":
+        if row.status == "Done" and row.actual_end is not None:
             if row.actual_end > today:
                 errors.append(f"{row.task_id}: дата окончания {row.actual_end} ещё не наступила")
             if not pi_start <= row.actual_end <= pi_end:
@@ -281,6 +277,13 @@ def _parse_date(value: Any) -> date | None:
         except ValueError:
             continue
     raise ValueError(text)
+
+
+def _parse_date_event(value: Any) -> tuple[date | None, bool]:
+    """Пусто = сохранить, CLEAR = очистить, дата = установить или исправить."""
+    if _norm(value).lower() in ("clear", "очистить"):
+        return None, True
+    return _parse_date(value), False
 
 
 def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], list[str]]:
@@ -337,10 +340,13 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
             errors.append(f"{where}: статус «{_norm(cells.get('status'))}» — ожидается ToDo, InProgress или Done")
             continue
         try:
-            start = _parse_date(cells.get("actual_start"))
-            end = _parse_date(cells.get("actual_end"))
+            start, clear_start = _parse_date_event(cells.get("actual_start"))
+            end, clear_end = _parse_date_event(cells.get("actual_end"))
         except ValueError as exc:
             errors.append(f"{where}: дата «{exc}» — ожидается ГГГГ-ММ-ДД или ДД.ММ.ГГГГ")
+            continue
+        if status == "Done" and clear_end:
+            errors.append(f"{where}: нельзя очистить дату окончания выполненной задачи")
             continue
         if start is not None and end is not None and start > end:
             errors.append(f"{where}: дата начала {start} позже даты окончания {end}")
@@ -378,7 +384,7 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
         if bad_hours:
             continue
         rows.append(ParsedRow(task_id, status, start, end, _norm(cells.get("comment")) or None,
-                              hours, completed_sp))
+                              hours, completed_sp, clear_start, clear_end))
     if not rows and not errors:
         errors.append("в файле нет ни одной задачи с task_id")
     return rows, errors, warnings
@@ -395,6 +401,21 @@ def validate_completed_sp(
         if prior.get(row.task_id, Decimal(0)) + row.completed_sp > limit:
             errors.append(f"{row.task_id}: подтверждённые SP превышают исходную оценку {limit}")
     return errors
+
+
+def normalize_done_dates(
+    rows: list[ParsedRow], previous: dict[str, str], sprint_end: date,
+) -> list[str]:
+    """Только новый Done без даты получает конец отчётного спринта."""
+    warnings: list[str] = []
+    for row in rows:
+        if row.status == "Done" and row.actual_end is None and previous.get(row.task_id) != "Done":
+            row.actual_end = sprint_end
+            warnings.append(f"{row.task_id}: дата окончания не указана — взят конец спринта {sprint_end}")
+        if row.status != "Done" and row.actual_end is not None:
+            warnings.append(f"{row.task_id}: дата окончания у невыполненной задачи пропущена")
+            row.actual_end = None
+    return warnings
 
 
 PREVIOUS_STATUS_SQL = """
@@ -428,20 +449,21 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             )
 
         rows, errors, warnings = parse_actuals(data, name)
-        limits = {
-            row["task_id"]: Decimal(row["estimation_sp"] or 0)
-            for row in db.query_dicts("SELECT task_id, estimation_sp FROM tasks")
-        }
-        prior_sp = {
-            row["task_id"]: Decimal(row["completed_sp"])
-            for row in db.query_dicts(
-                """SELECT a.task_id, COALESCE(SUM(a.completed_sp), 0) AS completed_sp
-                   FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
-                   WHERE u.pi_id = %s AND u.sprint_no < %s
-                   GROUP BY a.task_id""", (pi_id, sprint_no)
-            )
-        }
-        errors.extend(validate_completed_sp(rows, limits, prior_sp))
+        if any(row.completed_sp is not None for row in rows):
+            limits = {
+                row["task_id"]: Decimal(row["estimation_sp"] or 0)
+                for row in db.query_dicts("SELECT task_id, estimation_sp FROM tasks")
+            }
+            prior_sp = {
+                row["task_id"]: Decimal(row["completed_sp"])
+                for row in db.query_dicts(
+                    """SELECT a.task_id, COALESCE(SUM(a.completed_sp), 0) AS completed_sp
+                       FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
+                       WHERE u.pi_id = %s AND u.sprint_no < %s
+                       GROUP BY a.task_id""", (pi_id, sprint_no)
+                )
+            }
+            errors.extend(validate_completed_sp(rows, limits, prior_sp))
         previous = {row["task_id"]: row["status"] for row in db.query_dicts(PREVIOUS_STATUS_SQL, (pi_id, sprint_no))}
         for row in rows:
             if previous.get(row.task_id) == "Done" and row.status != "Done":
@@ -461,6 +483,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
         date_errors, date_warnings = normalize_actual_dates(
             rows, sprint_end=calendar["sprint_end"],
             pi_start=calendar["pi_start"], pi_end=calendar["pi_end"],
+            previous=previous,
         )
         errors.extend(date_errors)
         warnings.extend(date_warnings)
@@ -506,10 +529,11 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             upload_id = cur.fetchone()["upload_id"]
             cur.executemany(
                 """INSERT INTO task_actuals
-                       (upload_id, task_id, status, actual_start, actual_end, comment, completed_sp)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                [(upload_id, r.task_id, r.status, r.actual_start, r.actual_end, r.comment, r.completed_sp)
-                 for r in rows],
+                       (upload_id, task_id, status, actual_start, actual_end, comment,
+                        completed_sp, clear_actual_start, clear_actual_end)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                [(upload_id, r.task_id, r.status, r.actual_start, r.actual_end, r.comment,
+                  r.completed_sp, r.clear_actual_start, r.clear_actual_end) for r in rows],
             )
             spent = [(upload_id, r.task_id, role_id, h) for r in rows for role_id, h in r.hours.items()]
             if spent:

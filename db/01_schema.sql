@@ -352,6 +352,10 @@ CREATE TABLE task_actuals (
     completed_sp NUMERIC(6,2) CONSTRAINT task_actuals_completed_sp_nonnegative
         CHECK (completed_sp >= 0),
     comment      TEXT,
+    clear_actual_start BOOLEAN NOT NULL DEFAULT FALSE,
+    clear_actual_end   BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK (NOT clear_actual_start OR actual_start IS NULL),
+    CHECK (NOT clear_actual_end OR actual_end IS NULL),
     PRIMARY KEY (upload_id, task_id)
 );
 CREATE TABLE task_actual_spent (
@@ -374,15 +378,36 @@ BEGIN
     INSERT INTO task_role_spent (task_id, role_id, hours)
     SELECT task_id, role_id, hours FROM task_role_spent_seed;
 
-    -- 2. статусы и даты: последнее слово — у самой поздней загрузки
+    -- 2. Статус — из последней строки. Каждая дата — из последнего явного
+    --    события для своего поля; NULL без clear_* означает «не передано».
     UPDATE tasks t
        SET status       = a.status,
-           actual_start = COALESCE(a.actual_start, t.actual_start),
-           actual_end   = CASE WHEN a.status = 'Done'
-                               THEN COALESCE(a.actual_end, t.actual_end) END
-      FROM (SELECT DISTINCT ON (ta.task_id) ta.*
+           actual_start = CASE WHEN start_event.task_id IS NOT NULL
+                               THEN CASE WHEN start_event.clear_actual_start THEN NULL
+                                         ELSE start_event.actual_start END
+                               ELSE t.actual_start END,
+           actual_end   = CASE WHEN a.status <> 'Done' THEN NULL
+                               WHEN end_event.task_id IS NOT NULL
+                               THEN CASE WHEN end_event.clear_actual_end THEN NULL
+                                         ELSE end_event.actual_end END
+                               ELSE t.actual_end END
+      FROM (SELECT DISTINCT ON (ta.task_id) ta.task_id, ta.status
               FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
-             ORDER BY ta.task_id, u.sprint_no DESC) a
+             ORDER BY ta.task_id, u.sprint_no DESC, u.upload_id DESC) a
+      LEFT JOIN LATERAL (
+          SELECT ta.task_id, ta.actual_start, ta.clear_actual_start
+          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
+          WHERE ta.task_id = a.task_id
+            AND (ta.actual_start IS NOT NULL OR ta.clear_actual_start)
+          ORDER BY u.sprint_no DESC, u.upload_id DESC LIMIT 1
+      ) start_event ON TRUE
+      LEFT JOIN LATERAL (
+          SELECT ta.task_id, ta.actual_end, ta.clear_actual_end
+          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
+          WHERE ta.task_id = a.task_id
+            AND (ta.actual_end IS NOT NULL OR ta.clear_actual_end)
+          ORDER BY u.sprint_no DESC, u.upload_id DESC LIMIT 1
+      ) end_event ON TRUE
      WHERE a.task_id = t.task_id;
 
     -- 3. часы копятся по всем загрузкам
@@ -392,8 +417,8 @@ BEGIN
 END
 $fn$;
 COMMENT ON FUNCTION apply_actuals() IS
- 'Пересобирает текущее состояние задач: снимок датасета + все загрузки факта по порядку. '
- 'Идемпотентна. Зовётся после каждой загрузки факта (app/actuals.py).';
+ 'Пересобирает статус, независимые события дат и накопленные часы из seed и журнала. '
+ 'Пустая дата сохраняет прежнюю, clear_* явно очищает поле.';
 
 COMMIT;
 
