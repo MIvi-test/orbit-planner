@@ -1,6 +1,7 @@
 """Дата завершения задаёт спринт факта и должна проходить проверку до записи."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import date
 from decimal import Decimal
 
@@ -43,6 +44,7 @@ def test_future_or_out_of_pi_completion_is_rejected(end: date) -> None:
 
 
 def test_invalid_completion_blocks_upload_before_database_write(monkeypatch) -> None:
+    monkeypatch.setattr(ingest.db, "atomic_transaction", nullcontext)
     monkeypatch.setattr(ingest, "_pi", lambda: {"pi_id": "PI-TEST", "sprint_count": 6})
     monkeypatch.setattr(ingest, "_last_sprint", lambda _pi: 0)
     monkeypatch.setattr(ingest, "parse_actuals", lambda _data, _name: (

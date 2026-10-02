@@ -10,7 +10,7 @@ END
 $fk$;
 UPDATE actual_uploads u SET plan_run_id = (
     SELECT r.run_id FROM plan_runs r
-    WHERE r.pi_id = u.pi_id AND r.status = 'ok' AND r.as_of_sprint <= u.sprint_no
+    WHERE r.pi_id = u.pi_id AND r.status IN ('ok', 'infeasible') AND r.as_of_sprint <= u.sprint_no
       AND (r.actuals_upload_id IS NULL OR r.actuals_upload_id IN
            (SELECT x.upload_id FROM actual_uploads x
             WHERE x.pi_id = u.pi_id AND x.sprint_no < u.sprint_no))

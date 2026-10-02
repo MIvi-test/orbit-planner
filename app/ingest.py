@@ -496,7 +496,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
 
         plan_run_id = db.scalar(
             """SELECT r.run_id FROM plan_runs r
-               WHERE r.pi_id = %s AND r.status = 'ok' AND r.as_of_sprint <= %s
+               WHERE r.pi_id = %s AND r.status IN ('ok', 'infeasible') AND r.as_of_sprint <= %s
                  AND (r.actuals_upload_id IS NULL OR r.actuals_upload_id IN
                       (SELECT u.upload_id FROM actual_uploads u
                        WHERE u.pi_id = %s AND u.sprint_no < %s))
