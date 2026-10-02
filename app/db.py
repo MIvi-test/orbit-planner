@@ -17,6 +17,7 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -111,6 +112,9 @@ class _DbTelemetry:
 
 
 _TELEMETRY = _DbTelemetry()
+_ATOMIC_CONNECTION: ContextVar[psycopg.Connection | None] = ContextVar(
+    "pi_planner_atomic_connection", default=None
+)
 
 
 def metrics_snapshot() -> dict[str, Any]:
@@ -166,6 +170,13 @@ def connection(read_only: bool | None = None) -> Iterator[psycopg.Connection]:
     `SET default_transaction_read_only` её уже не меняет — `CREATE TABLE`
     внутри той же транзакции проходил (проверено на этой базе).
     """
+    active = _ATOMIC_CONNECTION.get()
+    if active is not None:
+        # Все чтения и записи одного приёма видят один набор данных. Управлять
+        # commit/rollback вправе только владелец atomic_transaction().
+        yield active
+        return
+
     cfg = load_config()
     effective_read_only = cfg["read_only"] if read_only is None else read_only
 
@@ -192,6 +203,21 @@ def connection(read_only: bool | None = None) -> Iterator[psycopg.Connection]:
     finally:
         with _TELEMETRY.lock:
             _TELEMETRY.connections -= 1
+
+
+@contextmanager
+def atomic_transaction() -> Iterator[psycopg.Connection]:
+    """Единая транзакция для приёма данных, пересчёта и публикации плана."""
+    if _ATOMIC_CONNECTION.get() is not None:
+        raise RuntimeError("вложенный атомарный приём данных не поддерживается")
+    with connection(read_only=False) as conn:
+        token = _ATOMIC_CONNECTION.set(conn)
+        try:
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                yield conn
+        finally:
+            _ATOMIC_CONNECTION.reset(token)
 
 
 def _finish_operation(operation: str, started: float, outcome: str, rows: int = 0) -> None:
@@ -328,8 +354,9 @@ def transaction(*, operation: str = "transaction") -> Iterator[psycopg.Cursor]:
     _TELEMETRY.operation_enter()
     try:
         with connection(read_only=False) as conn:
-            with conn.cursor() as cur:
-                yield cur
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    yield cur
     except Exception:
         _finish_operation(operation, started, "rollback")
         raise

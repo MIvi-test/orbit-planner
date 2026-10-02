@@ -141,11 +141,12 @@ def load_dataset(data: bytes, filename: str | None) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — не xlsx, битый zip и т.п.
             raise UploadError("файл не прочитан как датасет", [f"{type(exc).__name__}: {exc}"]) from None
 
-        with db.transaction() as cur:
-            cur.execute(_strip_transaction(seed_sql))
-            cur.execute(_strip_transaction(SUBSTITUTIONS_SQL.read_text(encoding="utf-8")))
+        with db.atomic_transaction():
+            with db.transaction() as cur:
+                cur.execute(_strip_transaction(seed_sql))
+                cur.execute(_strip_transaction(SUBSTITUTIONS_SQL.read_text(encoding="utf-8")))
 
-        plan = run_plan(0)
+            plan = run_plan(0)
     return {
         "dataset": name,
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -433,7 +434,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
         raise UploadError(f"файл больше {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ")
     name = _safe_name(filename, f"actuals_sprint_{sprint_no}.csv")
 
-    with WRITE_LOCK:
+    with WRITE_LOCK, db.atomic_transaction():
         pi = _pi()
         pi_id, sprint_count = pi["pi_id"], int(pi["sprint_count"])
         last = _last_sprint(pi_id)
