@@ -39,17 +39,17 @@ HAVING SUM(x.sp) > MAX(c.available_sp_per_sprint * f.factor)
 -- A2. Доли SP задачи не сходятся с её SP (ADR-020) ------------------------
 UNION ALL
 SELECT s.run_id, 'SP_SHARES_MISMATCH', 'error', s.task_id::text,
-       ('сумма долей ' || COALESCE(sh.sp, 0) || ' SP, у задачи ' || t.estimation_sp
+       ('сумма долей ' || COALESCE(sh.sp, 0) || ' SP, остаток на момент прогона ' || ts.remaining_sp
         || ' SP' || CASE WHEN sh.outside > 0 THEN ', доли вне окна задачи: ' || sh.outside ELSE '' END)::text
 FROM plan_task_schedule s
-JOIN tasks t ON t.task_id = s.task_id
+JOIN task_state ts ON ts.run_id = s.run_id AND ts.task_id = s.task_id
 LEFT JOIN LATERAL (
     SELECT SUM(x.sp) AS sp,
            COUNT(*) FILTER (WHERE x.sprint_no NOT BETWEEN s.start_sprint AND s.end_sprint) AS outside
     FROM plan_task_sp x WHERE x.run_id = s.run_id AND x.task_id = s.task_id
 ) sh ON TRUE
 WHERE s.decision = 'in_quarter'
-  AND (COALESCE(sh.sp, 0) <> COALESCE(t.estimation_sp, 0) OR sh.outside > 0)
+  AND (COALESCE(sh.sp, 0) <> ts.remaining_sp OR sh.outside > 0)
 
 -- B. Перегрузка инженера: считать по СУММЕ ВСЕХ ОРБИТ ------------------
 -- Фонд спринта — ставка × 80 ЧЧ × factor спринта (короткий 7-й = ×0.5714).

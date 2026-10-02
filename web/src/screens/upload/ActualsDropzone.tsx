@@ -95,6 +95,10 @@ export function ActualsDropzone({ onDone }: { onDone: () => void }) {
                 Скачать шаблон
               </Anchor>
             </Group>
+            <Text size="xs" c="dimmed">
+              completed_sp — новые подтверждённые SP только за этот спринт. Пусто означает,
+              что прогресс по SP не подтверждён; часы не заменяют эту оценку.
+            </Text>
             <Dropzone
               onDrop={(files) => files[0] && handleFile(files[0])}
               accept={['text/csv', '.csv', '.xlsx']}

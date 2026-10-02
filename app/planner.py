@@ -149,11 +149,14 @@ ORDER BY s.sprint_no
 LIVE_TASKS_SQL = """
 SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung,
        COALESCE(b.estimation_sp, 0)          AS estimation_sp,
+       GREATEST(COALESCE(b.estimation_sp, 0) - COALESCE(progress.completed_sp, 0), 0) AS remaining_sp,
        b.summary,
        COALESCE(b.earliest_start_sprint, 1)  AS earliest_start_sprint,
        COALESCE(b.topo_order, 0)             AS topo_order,
        b.estimate_disputed
 FROM v_task_board b
+LEFT JOIN (SELECT a.task_id, SUM(a.completed_sp) AS completed_sp
+           FROM task_actuals a GROUP BY a.task_id) progress ON progress.task_id = b.task_id
 WHERE b.status IN ('ToDo', 'InProgress')
 ORDER BY b.priority_rung DESC NULLS LAST, b.topo_order, b.task_id
 """
@@ -306,6 +309,11 @@ class TaskInput:
     role_names: dict[int, str]
     estimate_disputed: bool
     remaining_unknown: bool = False
+    remaining_sp: Decimal | None = None
+
+    @property
+    def sp_to_plan(self) -> Decimal:
+        return self.estimation_sp if self.remaining_sp is None else self.remaining_sp
 
     @property
     def needed(self) -> dict[int, Decimal]:
@@ -411,6 +419,7 @@ def load_inputs() -> Inputs:
             role_names=dict(names_by_task.get(row["task_id"], {})),
             estimate_disputed=bool(row["estimate_disputed"]),
             remaining_unknown=unknown_by_task[row["task_id"]],
+            remaining_sp=Decimal(row.get("remaining_sp", row["estimation_sp"])),
         )
         for row in db.query_dicts(LIVE_TASKS_SQL)
     )
@@ -820,7 +829,7 @@ def _sp_flow(
     задача не может «начаться» там, где команде взять её не из чего.
     Возвращает {спринт: SP} или None, если SP не укладываются в квартал.
     """
-    need = task.estimation_sp
+    need = task.sp_to_plan
     if need <= 0:
         return {}
 
@@ -1182,12 +1191,12 @@ def build_plan(
             return (
                 REASON_TEAM_SP,
                 f"Перенесена: часов специалистов хватает, но у {task.team_id} не осталось "
-                f"ёмкости — нужно {_q(task.estimation_sp)} SP, свободно {_q(free_sp)} SP со "
+                f"ёмкости — нужно {_q(task.sp_to_plan)} SP, свободно {_q(free_sp)} SP со "
                 f"спринта {lower} до конца квартала; ёмкость заняли задачи с более высоким "
                 f"приоритетом",
                 {
                     "team_id": task.team_id,
-                    "need_sp": str(task.estimation_sp),
+                    "need_sp": str(task.sp_to_plan),
                     "free_sp": str(free_sp.quantize(Decimal("0.01"))),
                     "from_sprint": lower,
                 },
@@ -1307,7 +1316,7 @@ def build_plan(
             parts.append(f"{_q(loan_hh)} ЧЧ взяты в заём у других команд")
         if len(shares) > 1:
             parts.append(
-                f"{_q(task.estimation_sp)} SP растянуты на {_sprints_word(len(shares))}: "
+                f"{_q(task.sp_to_plan)} SP растянуты на {_sprints_word(len(shares))}: "
                 f"это больше свободной ёмкости команды за один спринт"
             )
         text = ". ".join(parts)
@@ -1910,6 +1919,7 @@ def _build_states(
 ) -> list[StateRow]:
     """Слепок ВСЕХ задач (и Done тоже): это временно́й саттелит, а не план."""
     decisions = {row.task_id: row for row in schedule}
+    sp_remaining = {task.task_id: task.sp_to_plan for task in inputs.tasks}
     states: list[StateRow] = []
     for task_id, status, sp, remaining in inputs.all_tasks:
         if status == DONE_STATUS:
@@ -1918,6 +1928,7 @@ def _build_states(
             )
             continue
         row = decisions.get(task_id)
+        sp = sp_remaining.get(task_id, sp)
         if row is None:
             states.append(StateRow(task_id, as_of_sprint, status, remaining, sp, None))
         elif row.decision == "in_quarter":

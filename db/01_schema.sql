@@ -349,6 +349,8 @@ CREATE TABLE task_actuals (
     status       TEXT NOT NULL CHECK (status IN ('ToDo','InProgress','Done')),
     actual_start DATE,
     actual_end   DATE,
+    completed_sp NUMERIC(6,2) CONSTRAINT task_actuals_completed_sp_nonnegative
+        CHECK (completed_sp >= 0),
     comment      TEXT,
     PRIMARY KEY (upload_id, task_id)
 );

@@ -55,6 +55,7 @@ FIXED_COLUMNS = {
     "status": "status", "статус": "status",
     "actual_start": "actual_start", "факт начала": "actual_start", "дата начала": "actual_start",
     "actual_end": "actual_end", "факт окончания": "actual_end", "дата окончания": "actual_end",
+    "completed_sp": "completed_sp", "выполнено sp": "completed_sp",
     "comment": "comment", "комментарий": "comment",
 }
 
@@ -194,12 +195,12 @@ def actuals_template(sprint_no: int | None = None) -> tuple[str, bytes]:
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(
-        ["task_id", "status", "actual_start", "actual_end", "comment"]
+        ["task_id", "status", "actual_start", "actual_end", "completed_sp", "comment"]
         + [row["canonical_name"] for row in roles]
     )
     for row in db.query_dicts(TEMPLATE_TASKS_SQL):
         writer.writerow(
-            [row["task_id"], row["status"], row["actual_start"] or "", "", ""] + [""] * len(roles)
+            [row["task_id"], row["status"], row["actual_start"] or "", "", "", ""] + [""] * len(roles)
         )
     return f"actuals_sprint_{sprint}.csv", ("﻿" + out.getvalue()).encode("utf-8")
 
@@ -215,6 +216,7 @@ class ParsedRow:
     actual_end: date | None
     comment: str | None
     hours: dict[int, Decimal] = field(default_factory=dict)
+    completed_sp: Decimal | None = None
 
 
 def _read_table(data: bytes, name: str) -> list[list[Any]]:
@@ -309,6 +311,18 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
         except ValueError as exc:
             errors.append(f"{where}: дата «{exc}» — ожидается ГГГГ-ММ-ДД или ДД.ММ.ГГГГ")
             continue
+        completed_sp: Decimal | None = None
+        raw_sp = _norm(cells.get("completed_sp"))
+        if raw_sp:
+            try:
+                completed_sp = Decimal(raw_sp.replace(",", "."))
+            except InvalidOperation:
+                errors.append(f"{where}: выполнено SP «{raw_sp}» — не число")
+                continue
+            if (not completed_sp.is_finite() or completed_sp < 0
+                    or completed_sp.as_tuple().exponent < -2):
+                errors.append(f"{where}: выполнено SP должно быть конечным неотрицательным числом с точностью 0,01")
+                continue
         hours: dict[int, Decimal] = {}
         bad_hours = False
         for index, role_id in role_columns.items():
@@ -329,10 +343,24 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
                 hours[role_id] = hours.get(role_id, Decimal("0")) + amount
         if bad_hours:
             continue
-        rows.append(ParsedRow(task_id, status, start, end, _norm(cells.get("comment")) or None, hours))
+        rows.append(ParsedRow(task_id, status, start, end, _norm(cells.get("comment")) or None,
+                              hours, completed_sp))
     if not rows and not errors:
         errors.append("в файле нет ни одной задачи с task_id")
     return rows, errors, warnings
+
+
+def validate_completed_sp(
+    rows: list[ParsedRow], limits: dict[str, Decimal], prior: dict[str, Decimal],
+) -> list[str]:
+    errors: list[str] = []
+    for row in rows:
+        if row.completed_sp is None:
+            continue
+        limit = limits[row.task_id]
+        if prior.get(row.task_id, Decimal(0)) + row.completed_sp > limit:
+            errors.append(f"{row.task_id}: подтверждённые SP превышают исходную оценку {limit}")
+    return errors
 
 
 PREVIOUS_STATUS_SQL = """
@@ -366,6 +394,20 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             )
 
         rows, errors, warnings = parse_actuals(data, name)
+        limits = {
+            row["task_id"]: Decimal(row["estimation_sp"] or 0)
+            for row in db.query_dicts("SELECT task_id, estimation_sp FROM tasks")
+        }
+        prior_sp = {
+            row["task_id"]: Decimal(row["completed_sp"])
+            for row in db.query_dicts(
+                """SELECT a.task_id, COALESCE(SUM(a.completed_sp), 0) AS completed_sp
+                   FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
+                   WHERE u.pi_id = %s AND u.sprint_no < %s
+                   GROUP BY a.task_id""", (pi_id, sprint_no)
+            )
+        }
+        errors.extend(validate_completed_sp(rows, limits, prior_sp))
         previous = {row["task_id"]: row["status"] for row in db.query_dicts(PREVIOUS_STATUS_SQL, (pi_id, sprint_no))}
         for row in rows:
             if previous.get(row.task_id) == "Done" and row.status != "Done":
@@ -422,9 +464,11 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             )
             upload_id = cur.fetchone()["upload_id"]
             cur.executemany(
-                """INSERT INTO task_actuals (upload_id, task_id, status, actual_start, actual_end, comment)
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
-                [(upload_id, r.task_id, r.status, r.actual_start, r.actual_end, r.comment) for r in rows],
+                """INSERT INTO task_actuals
+                       (upload_id, task_id, status, actual_start, actual_end, comment, completed_sp)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                [(upload_id, r.task_id, r.status, r.actual_start, r.actual_end, r.comment, r.completed_sp)
+                 for r in rows],
             )
             spent = [(upload_id, r.task_id, role_id, h) for r in rows for role_id, h in r.hours.items()]
             if spent:
