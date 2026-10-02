@@ -76,6 +76,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # CLI и HTTP-загрузки используют один и тот же DB-lock и снимок входа.
+    # Проверка --if-empty тоже под блокировкой, иначе два писателя могут
+    # одновременно решить, что базового прогона ещё нет.
+    with db.atomic_transaction():
+        return _run_locked(args)
+
+
+def _run_locked(args: argparse.Namespace) -> int:
+
     print(f"dsn: {db.dsn()}")
     if args.if_empty:
         baselines = int(

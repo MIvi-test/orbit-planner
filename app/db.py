@@ -29,6 +29,7 @@ DSN_FILE = ROOT / "dsn.json"
 
 DEFAULT_DSN = "host=127.0.0.1 port=5432 dbname=pi_planner user=postgres password=postgres"
 DEFAULT_STATEMENT_TIMEOUT_MS = 15_000
+DB_WRITE_LOCK_KEY = 5_427_001  # тот же ключ, что у tools/migrate.py
 DB_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0)
 
 
@@ -211,6 +212,11 @@ def atomic_transaction() -> Iterator[psycopg.Connection]:
     if _ATOMIC_CONNECTION.get() is not None:
         raise RuntimeError("вложенный атомарный приём данных не поддерживается")
     with connection(read_only=False) as conn:
+        # Блокировка берётся ВНЕ транзакции. Иначе REPEATABLE READ захватит
+        # снимок до ожидания другого писателя и прочитает устаревший вход.
+        conn.autocommit = True
+        conn.execute("SELECT pg_advisory_lock(%s)", (DB_WRITE_LOCK_KEY,))
+        conn.autocommit = False
         token = _ATOMIC_CONNECTION.set(conn)
         try:
             with conn.transaction():

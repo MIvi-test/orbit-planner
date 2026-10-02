@@ -1,5 +1,7 @@
 """Проверки CLI-обвязки планировщика."""
 
+from contextlib import nullcontext
+
 from tools import run_planner
 from tests.test_planner import engineer, inputs, task
 
@@ -7,6 +9,7 @@ from tests.test_planner import engineer, inputs, task
 def test_if_empty_does_not_replace_an_existing_plan(monkeypatch, capsys) -> None:
     """Контейнерный bootstrap не создаёт новый прогон при каждом рестарте."""
     monkeypatch.setattr(run_planner.db, "dsn", lambda: "dbname=test")
+    monkeypatch.setattr(run_planner.db, "atomic_transaction", nullcontext)
     sql: list[str] = []
 
     def scalar(query: str) -> int:
@@ -27,6 +30,7 @@ def test_if_empty_does_not_replace_an_existing_plan(monkeypatch, capsys) -> None
 
 def test_validation_failure_exits_nonzero_and_reports_run(monkeypatch, capsys) -> None:
     monkeypatch.setattr(run_planner.db, "dsn", lambda: "dbname=test")
+    monkeypatch.setattr(run_planner.db, "atomic_transaction", nullcontext)
     monkeypatch.setattr(run_planner.planner, "load_inputs",
                         lambda: inputs([task("A")], [engineer("ENG-1")]))
     violation = {"check_code": "UNDER_ALLOCATED", "entity": "A / QA", "detail": "0 ЧЧ"}
