@@ -122,6 +122,7 @@ Prometheus series через URL.
 |---|---|---|
 | `pi_planner_plan_runs_total` | gauge | — |
 | `pi_planner_plan_last_run_id` | gauge | — |
+| `pi_planner_plan_active_run_id` | gauge | — |
 | `pi_planner_plan_last_run_info` | gauge | `run_id`, `as_of_sprint`, `status` |
 | `pi_planner_plan_last_run_timestamp_seconds` | gauge | `run_id` |
 | `pi_planner_plan_violations` | gauge | `run_id`, `severity` |
@@ -131,14 +132,20 @@ Prometheus series через URL.
 | `pi_planner_plan_assigned_hours` | gauge | `run_id` |
 | `pi_planner_plan_loan_hours` | gauge | — |
 | `pi_planner_plan_alerts` | gauge | `level`, `type` |
-| `pi_planner_plan_kpi_value` | gauge | `kpi`, `sprint` |
-| `pi_planner_plan_kpi_target_min` | gauge | `kpi`, `sprint` |
-| `pi_planner_plan_kpi_target_max` | gauge | `kpi`, `sprint` |
+| `pi_planner_plan_kpi_value` | gauge | `kpi`, `sprint`, `kind` |
+| `pi_planner_plan_kpi_target_min` | gauge | `kpi`, `sprint`, `kind` |
+| `pi_planner_plan_kpi_target_max` | gauge | `kpi`, `sprint`, `kind` |
 | `pi_planner_job_last_duration_seconds` | gauge | `phase` |
 | `pi_planner_data_quality_issues` | gauge | `severity` |
 | `pi_planner_etl_last_success_timestamp_seconds` | gauge | — |
 | `pi_planner_etl_info` | gauge | `version`, `pi_start` |
 | `pi_planner_calendar_info` | gauge | `pi_id`, `pi_start`, `pi_end`, `sprint_count`, `fund_factor` |
+
+`kind` равен `forecast` или `actual`; если оба вида есть, у них отдельные
+значения и пороги. `pi_planner_plan_kpi_*`, решения и алерты берутся
+из последнего `status='ok'`, как в UI. `pi_planner_plan_last_run_*` описывают
+последнюю попытку, в том числе неуспешную; `pi_planner_plan_active_run_id`
+указывает на опубликованный прогон (0, если его нет).
 
 `run_id` в старых метриках сохранён для совместимости, но создаёт новую series
 на каждый прогон. Новые dashboard следует строить на `pi_planner_plan_last_run_id`

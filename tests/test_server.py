@@ -32,6 +32,7 @@ SNAPSHOT = {
     "runs_total": 2,
     "run": {
         "run_id": 2,
+        "active_run_id": 2,
         "as_of_sprint": 3,
         "status": "ok",
         "created_epoch": 1_700_000_000.0,

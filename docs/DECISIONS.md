@@ -608,6 +608,12 @@ sprint_count, pi_days, fund_factor, fund_hh_per_fte, short_sprints}`: прого
 Имена метрик — контракт: префикс `pi_planner_` обязателен, переименование
 считается breaking change и объявляется отдельно.
 
+Поправка к контракту KPI: `pi_planner_plan_kpi_value` и оба порога имеют
+метки `kpi`, `sprint`, `kind`. `kind=forecast|actual` различает два значения
+одного KPI в одном спринте. KPI, решения и алерты относятся к последнему
+успешному прогону, как в UI; `pi_planner_plan_last_run_*` описывают последнюю
+попытку расчёта, а `pi_planner_plan_active_run_id` показывает активный прогон.
+
 Роли эндпоинтов жёстко разные: путаница liveness и readiness ломает демо.
 
 | Путь | База | Зачем |
