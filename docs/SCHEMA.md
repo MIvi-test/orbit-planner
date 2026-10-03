@@ -284,6 +284,11 @@ ORDER BY sprint_no,
 | `tasks_seed_state`, `task_role_spent_seed` | снимок датасета: точка отсчёта воспроизведения |
 | `plan_task_sp` | доли Story Points задачи по спринтам (ADR-020) |
 | `ref_decision_reasons` | справочник причин решений планировщика |
+| `app_users` | пользователи сервиса: имя, роль, SHA-256 токена (ADR-027); загрузка датасета их не стирает |
+| `audit_log` | журнал действий, меняющих данные: кто, что, итог (`ok` / `rejected` / `failed`) |
+
+Автор загрузки хранится в `load_batches.loaded_by`, `actual_uploads.uploaded_by`,
+`task_role_etc.revised_by`.
 
 `apply_actuals()` пересобирает текущее состояние `tasks` и `task_role_spent` из
 снимка плюс все загрузки по порядку. Идемпотентна, поэтому повторная загрузка

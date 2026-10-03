@@ -1,4 +1,7 @@
+import { Center, Loader } from '@mantine/core'
 import { Shell } from './components/layout/Shell'
+import { LoginScreen } from './components/auth/LoginScreen'
+import { useAuth } from './hooks/useAuth'
 import { useHashRoute } from './hooks/useHashRoute'
 import { UploadScreen } from './screens/upload/UploadScreen'
 import { PlanScreen } from './screens/plan/PlanScreen'
@@ -10,6 +13,16 @@ import { ProfilesScreen } from './screens/profiles/ProfilesScreen'
 
 export default function App() {
   const [screen, go] = useHashRoute()
+  const { isLoading, needsLogin } = useAuth()
+
+  if (needsLogin) return <LoginScreen />
+  if (isLoading) {
+    return (
+      <Center mih="100vh">
+        <Loader />
+      </Center>
+    )
+  }
 
   return (
     <Shell screen={screen} onNavigate={go}>

@@ -1,9 +1,11 @@
-import { AppShell, Group, ScrollArea, Tabs, Text } from '@mantine/core'
+import { AppShell, Badge, Button, Group, ScrollArea, Tabs, Text, Tooltip } from '@mantine/core'
 import type { ReactNode } from 'react'
 import { HealthBadge } from './HealthBadge'
 import { PiBadge } from './PiBadge'
 import { RunSelect } from './RunSelect'
 import type { ScreenId } from '../../hooks/useHashRoute'
+import { useAuth } from '../../hooks/useAuth'
+import { ROLE_LABEL } from '../../api/auth'
 
 const NAV: { id: ScreenId; label: string }[] = [
   { id: 'upload', label: 'Загрузка' },
@@ -24,6 +26,7 @@ export function Shell({
   onNavigate: (id: ScreenId) => void
   children: ReactNode
 }) {
+  const { me, logout } = useAuth()
   return (
     <AppShell header={{ height: 106 }} padding="md">
       <AppShell.Header>
@@ -40,6 +43,18 @@ export function Shell({
             <PiBadge />
             <RunSelect />
             <HealthBadge />
+            {me && me.auth === 'required' && (
+              <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                <Tooltip label={`${me.name} · роль: ${ROLE_LABEL[me.role]}`}>
+                  <Badge variant="light" color="gray" size="sm" maw={110} style={{ flexShrink: 0 }}>
+                    {me.name}
+                  </Badge>
+                </Tooltip>
+                <Button variant="subtle" size="compact-xs" onClick={logout} style={{ flexShrink: 0 }}>
+                  Выйти
+                </Button>
+              </Group>
+            )}
           </Group>
         </Group>
         <ScrollArea scrollbarSize={4} type="auto" px="md">

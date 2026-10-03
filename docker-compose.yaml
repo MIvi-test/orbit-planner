@@ -49,6 +49,10 @@ services:
       APP_PORT: 8000
       PI_PLANNER_LOG_FORMAT: ${PI_PLANNER_LOG_FORMAT:-json}
       PI_PLANNER_METRICS_TTL: ${PI_PLANNER_METRICS_TTL:-15}
+      # Доступ (ADR-027): без токена API отвечает 401. Токен аварийного администратора
+      # обязателен; остальных пользователей создаёт tools/manage_users.py.
+      PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
+      PI_PLANNER_ADMIN_TOKEN: ${PI_PLANNER_ADMIN_TOKEN:?set PI_PLANNER_ADMIN_TOKEN in .env (openssl rand -hex 32)}
       PI_PLANNER_DSN: >-
         host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
         user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}

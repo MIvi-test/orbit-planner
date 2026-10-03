@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, db, ingest, views
+from app import absence, auth, db, ingest, views
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -99,7 +99,7 @@ MIME_OVERRIDES = {
 # `route` становится `/api/views/{view}` (см. app/metrics.py).
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
-    "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
+    "/api/me", "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
     "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/metrics",
 )
 
@@ -110,6 +110,20 @@ METRICS = Metrics(
     pi_id=PI_ID,
     known_api=KNOWN_API,
     ttl=METRICS_TTL_SECONDS,
+)
+
+# Заголовки безопасности для каждого ответа (Caddy добавляет свои, но приложение
+# должно быть безопасным и без него: run.sh, прямой порт).
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+# Mantine вставляет стили из JS, поэтому style-src допускает inline; скрипты — только свои.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 )
 
 STARTED_AT = time.time()
@@ -141,7 +155,7 @@ def log_event(event: str, level: str = "info", **fields: Any) -> None:
 
 
 
-def unavailable_payload(exc: Exception) -> dict[str, Any]:
+def unavailable_payload(exc: Exception, public: bool = False) -> dict[str, Any]:
     """Тело 503: причина, DSN без пароля и подсказка с РЕАЛЬНЫМ адресом базы.
 
     Адрес берём из `app.db.dsn()`, а не из константы: база может быть поднята
@@ -150,7 +164,12 @@ def unavailable_payload(exc: Exception) -> dict[str, Any]:
 
     `db.dsn()` вызываем терпимо: если `dsn.json` не парсится, падает и он —
     без этой защиты фронт вместо внятного 503 получил бы оборванное соединение.
+
+    `public=True` — вызов без проверенного токена: внутренности (адрес базы, текст
+    исключения) не раскрываются.
     """
+    if public:
+        return {"error": "database_unavailable", "message": "база данных недоступна"}
     try:
         dsn = db.dsn()
     except Exception:  # noqa: BLE001 — диагностика не должна падать сильнее причины
@@ -201,6 +220,8 @@ class Handler(BaseHTTPRequestHandler):
 
     server_version = "pi-planner"
     sys_version = ""  # не светим версию Python в ответах и логах
+    # Зависшее соединение (медленный клиент, обрыв посреди тела) не держит поток вечно.
+    timeout = 30
 
     # ---------------------------------------------------------------- GET/HEAD
     def do_GET(self) -> None:  # noqa: N802 — имя задано стандартной библиотекой
@@ -212,7 +233,9 @@ class Handler(BaseHTTPRequestHandler):
         error_class: str | None = None
         METRICS.enter()
         try:
-            if path.startswith("/api/") or path == "/metrics":
+            if not self._gate(path):
+                pass  # ответ 401/403/429 уже отправлен
+            elif path.startswith("/api/") or path == "/metrics":
                 self._api(path)
             else:
                 self._static(path)
@@ -259,7 +282,8 @@ class Handler(BaseHTTPRequestHandler):
         error_class: str | None = None
         METRICS.enter()
         try:
-            self._upload(path)
+            if self._gate(path):
+                self._upload(path)
         except Exception as exc:
             error_class = type(exc).__name__
             raise
@@ -286,8 +310,83 @@ class Handler(BaseHTTPRequestHandler):
                 client=self.address_string(),
             )
 
+    # ------------------------------------------------------------ доступ (S-2)
+    _principal: auth.Principal = auth.ANONYMOUS
+
+    def _client(self) -> str:
+        """Адрес клиента. За прокси (Caddy) настоящий адрес — в X-Forwarded-For."""
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        return forwarded or self.client_address[0]
+
+    def _gate(self, path: str) -> bool:
+        """Проверка токена и роли. False — ответ уже отправлен, маршрут не исполнять."""
+        self._principal = auth.ANONYMOUS
+        if path == "/metrics":
+            return True  # внутренний маршрут: наружу его закрывает Caddy
+        needed = auth.required_role(self.command, path)
+        if needed is None:
+            return True
+        if auth.mode() == "off":
+            return True
+        client = self._client()
+        if auth.LIMITER.blocked(client):
+            log_event("auth_blocked", level="warning", client=client, path=path)
+            self._send_json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "too_many_attempts", "message": "слишком много неудачных попыток входа, подождите минуту"},
+                extra_headers={"Retry-After": "60"},
+            )
+            return False
+        try:
+            principal = auth.authenticate(self.headers.get("Authorization"))
+        except auth.AuthUnavailable as exc:
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc, public=True))
+            return False
+        if principal is None:
+            # Считаем только ПРЕДЪЯВЛЕННЫЕ неверные токены (подбор). Запрос вовсе без токена —
+            # обычный первый заход фронта, он не должен приближать блокировку.
+            presented = auth.bearer(self.headers.get("Authorization")) is not None
+            if presented:
+                auth.LIMITER.record(client)
+            log_event("auth_denied", level="warning", client=client, path=path,
+                      reason="bad_token" if presented else "no_token")
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": "unauthorized", "message": "нужен токен доступа: заголовок Authorization: Bearer <токен>"},
+                extra_headers={"WWW-Authenticate": 'Bearer realm="pi-planner"'},
+            )
+            return False
+        if not principal.allows(needed):
+            log_event("auth_denied", level="warning", client=client, path=path, user=principal.name,
+                      reason="role", needed=needed)
+            auth.audit(principal, f"{self.command} {path}", "rejected", client=client,
+                       detail={"reason": "forbidden", "needed": needed})
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                {"error": "forbidden", "message": f"нужна роль {needed}, у вас {principal.role}",
+                 "required_role": needed, "role": principal.role},
+            )
+            return False
+        self._principal = principal
+        return True
+
+    def _is_public_caller(self) -> bool:
+        """Вызов без проверенного токена при включённой авторизации: тонкие ответы."""
+        if auth.mode() == "off":
+            return False
+        try:
+            return auth.authenticate(self.headers.get("Authorization")) is None
+        except auth.AuthUnavailable:
+            return True
+
+    def _audited(self, action: str, outcome: str, **detail: Any) -> None:
+        auth.audit(self._principal, action, outcome, client=self._client(), detail=detail)
+
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ingest.UploadError("некорректный заголовок Content-Length") from None
         if length <= 0:
             raise ingest.UploadError("пустое тело запроса: файл отправляется телом POST")
         if length > ingest.MAX_UPLOAD_BYTES:
@@ -301,7 +400,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/dataset":
                 body = self._read_body()
-                result = ingest.load_dataset(body, self._query_param(query, "filename"))
+                result = ingest.load_dataset(
+                    body, self._query_param(query, "filename"), actor=self._principal.name
+                )
             elif path == "/api/actuals":
                 raw_sprint = self._query_param(query, "sprint")
                 if raw_sprint is None or not raw_sprint.isdigit():
@@ -310,6 +411,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = ingest.load_actuals(
                     body, self._query_param(query, "filename"), int(raw_sprint),
                     confirm_complete=self._query_param(query, "confirm_complete") == "true",
+                    actor=self._principal.name,
                 )
             elif path == "/api/actuals/role-review":
                 try:
@@ -317,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
                     result = ingest.confirm_role_etc(
                         str(payload["task_id"]), int(payload["role_id"]),
                         Decimal(str(payload["remaining_hours"])), str(payload["reason"]),
+                        actor=self._principal.name,
                     )
                 except (ValueError, TypeError, KeyError, InvalidOperation, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля пересмотра роли", [str(exc)]) from None
@@ -326,7 +429,11 @@ class Handler(BaseHTTPRequestHandler):
                     result = ingest.confirm_task_goal(
                         str(payload["task_id"]), str(payload["closure_code"]),
                         str(payload["goal_code"]) if payload.get("goal_code") else None,
-                        str(payload["confirmed_by"]), str(payload["note"]),
+                        # При включённой авторизации подтверждает вошедший пользователь, а не
+                        # имя из тела запроса.
+                        self._principal.name if auth.mode() == "required"
+                        else str(payload["confirmed_by"]),
+                        str(payload["note"]),
                     )
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля подтверждения результата", [str(exc)]) from None
@@ -342,11 +449,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
         except ingest.UploadError as exc:
             log_event("upload_rejected", level="warning", path=path, message=exc.message)
+            self._audited(f"POST {path}", "rejected", message=exc.message)
             self._send_json(HTTPStatus.BAD_REQUEST, exc.payload())
             return
         except ingest.planner.PlanValidationError as exc:
             log_event("plan_rejected", level="error", path=path, run_id=exc.run_id,
                       errors=exc.errors)
+            self._audited(f"POST {path}", "failed", reason="plan_validation_failed", run_id=exc.run_id)
             self._send_json(
                 HTTPStatus.UNPROCESSABLE_ENTITY,
                 {"error": "plan_validation_failed", "message": str(exc),
@@ -357,21 +466,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as exc:  # noqa: BLE001 — база могла уйти, а фронту нужен ответ
             log_event("upload_failed", level="error", path=path, error=repr(exc))
+            self._audited(f"POST {path}", "failed", error=type(exc).__name__)
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
             return
-        log_event("upload_ok", path=path, run_id=(result.get("plan") or {}).get("run_id"))
+        log_event("upload_ok", path=path, run_id=(result.get("plan") or {}).get("run_id"),
+                  user=self._principal.name)
+        self._audited(f"POST {path}", "ok", run_id=(result.get("plan") or {}).get("run_id"))
         self._send_json(HTTPStatus.OK, result)
 
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
         if path == "/api/health":
+            public = self._is_public_caller()
             try:
                 payload = db.health()
             except Exception as exc:  # noqa: BLE001 — фронту нужен внятный ответ,
                 # а не оборванное соединение: демо-машина может стартовать раньше PostgreSQL
-                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc, public=public))
                 return
-            self._send_json(HTTPStatus.OK, payload)
+            # Без токена — только факт готовности: имя базы и версия сервера не раскрываются.
+            self._send_json(HTTPStatus.OK, {"status": "ok"} if public else payload)
             return
 
         if path == "/api/livez":
@@ -390,7 +504,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/version":
-            self._send_json(HTTPStatus.OK, version_payload())
+            payload = version_payload()
+            if self._is_public_caller():
+                payload = {key: payload[key] for key in ("service", "version")}
+            self._send_json(HTTPStatus.OK, payload)
+            return
+
+        if path == "/api/me":
+            self._send_json(HTTPStatus.OK, {**self._principal.as_dict(), "auth": auth.mode()})
             return
 
         if path == "/api/actuals/template":
@@ -538,11 +659,20 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         rel = unquote(path).lstrip("/")
-        target = DIST / rel if rel else INDEX
+        dist_root = DIST.resolve()
+        # resolve() раскрывает `..`, `%2e%2e` и симлинки ДО проверки границы (S-1):
+        # без него `is_relative_to` сравнивал бы только текст пути.
+        if "\x00" in rel:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+            return
+        target = (DIST / rel).resolve() if rel else INDEX.resolve()
+        if not target.is_relative_to(dist_root):
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+            return
         if target.is_dir():
             target = target / "index.html"
 
-        if not target.is_file() or not target.is_relative_to(DIST.resolve()):
+        if not target.is_file():
             if target.suffix:  # такого ассета нет — честный 404, а не подмена на index.html
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
                 return
@@ -550,9 +680,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send_file(target)
 
     # ------------------------------------------------------------- отправка
-    def _send_json(self, status: HTTPStatus, payload: Any) -> None:
+    def _send_json(self, status: HTTPStatus, payload: Any,
+                   extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-        self._respond(status, "application/json; charset=utf-8", body)
+        self._respond(status, "application/json; charset=utf-8", body, extra_headers=extra_headers)
 
     def _send_file(self, path: Path) -> None:
         body = path.read_bytes()
@@ -571,8 +702,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            # Демо живёт на локальной машине, кэш браузера только мешает правкам.
+            # Данные и состояние меняются при каждой загрузке: кэш браузера только мешает.
             self.send_header("Cache-Control", "no-store")
+            for name, value in SECURITY_HEADERS.items():
+                self.send_header(name, value)
+            if ctype.startswith("text/html"):
+                self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
             for name, value in (extra_headers or {}).items():
                 self.send_header(name, value)
             self.end_headers()
@@ -657,8 +792,20 @@ def main(argv: list[str] | None = None) -> int:
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
     state = _install_signal_handlers(httpd)
+    try:
+        auth_mode = auth.mode()
+        env_admin = auth.admin_token() is not None
+    except RuntimeError as exc:
+        raise SystemExit(f"[server] {exc}") from None
+    if auth_mode == "off":
+        log_event("auth_disabled", level="warning",
+                  message="PI_PLANNER_AUTH=off: любой запрос исполняется как admin; только для доверенной машины")
+    elif not env_admin:
+        log_event("auth_no_admin_token", level="warning",
+                  message="PI_PLANNER_ADMIN_TOKEN не задан: войти можно только пользователями из tools/manage_users.py")
     log_event(
         "server_started",
+        auth=auth_mode,
         url=url,
         static=str(DIST),
         pi_id=PI_ID,

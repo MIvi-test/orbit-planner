@@ -9,7 +9,7 @@ BEGIN;
 
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
-DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
+DROP TABLE IF EXISTS audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
@@ -30,10 +30,38 @@ CREATE TABLE load_batches (
     etl_version   TEXT        NOT NULL,
     pi_start      DATE        NOT NULL,
     loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    row_counts    JSONB       NOT NULL DEFAULT '{}'::jsonb
+    row_counts    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    loaded_by     TEXT
 );
 COMMENT ON TABLE  load_batches IS 'Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали.';
 COMMENT ON COLUMN load_batches.row_counts IS 'Счётчики строк по каждой целевой таблице, для быстрой сверки после перезалива.';
+
+CREATE TABLE app_users (
+    user_id      SERIAL PRIMARY KEY,
+    name         TEXT        NOT NULL UNIQUE CHECK (btrim(name) <> ''),
+    role         TEXT        NOT NULL CHECK (role IN ('viewer', 'planner', 'admin')),
+    token_sha256 TEXT        NOT NULL UNIQUE CHECK (token_sha256 ~ '^[0-9a-f]{64}$'),
+    active       BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ
+);
+COMMENT ON TABLE app_users IS
+ 'Пользователи сервиса. token_sha256 — SHA-256 токена; сам токен показывается один раз при создании '
+ '(tools/manage_users.py). Не входит в TRUNCATE загрузки датасета.';
+
+CREATE TABLE audit_log (
+    event_id BIGSERIAL PRIMARY KEY,
+    at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor    TEXT        NOT NULL,
+    role     TEXT        NOT NULL,
+    action   TEXT        NOT NULL,
+    target   TEXT,
+    outcome  TEXT        NOT NULL CHECK (outcome IN ('ok', 'rejected', 'failed')),
+    client   TEXT,
+    detail   JSONB       NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX ix_audit_log_at ON audit_log (at DESC);
+COMMENT ON TABLE audit_log IS 'Журнал действий, меняющих данные: кто, что, с каким итогом. Только дописывается.';
 
 -- =====================================================================
 --  1. СПРАВОЧНИКИ
@@ -252,6 +280,7 @@ CREATE TABLE task_role_etc (
     remaining_hours NUMERIC(8,2) NOT NULL CHECK (remaining_hours >= 0),
     reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revised_by TEXT,
     FOREIGN KEY (task_id, role_id) REFERENCES task_role_estimates(task_id, role_id) ON DELETE CASCADE
 );
 CREATE INDEX ix_task_role_etc_latest ON task_role_etc(task_id, role_id, revision_id DESC);
@@ -396,6 +425,7 @@ CREATE TABLE actual_uploads (
     summary       JSONB       NOT NULL DEFAULT '{}'::jsonb,
     coverage_status TEXT      NOT NULL DEFAULT 'complete'
         CHECK (coverage_status IN ('draft', 'incomplete', 'complete')),
+    uploaded_by   TEXT,
     UNIQUE (pi_id, sprint_no)
 );
 COMMENT ON TABLE actual_uploads IS

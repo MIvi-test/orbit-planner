@@ -195,6 +195,8 @@ def test_known_api_routes_are_frozen() -> None:
         "/api/livez",
         "/api/version",
         "/api/views",
+        # Текущий пользователь и роль (ADR-026).
+        "/api/me",
         # Загрузки (ADR-021): ТЗ требует, чтобы датасет и факт спринтов
         # загружал пользователь, а не оператор из командной строки.
         "/api/dataset",

@@ -535,7 +535,7 @@ def test_empty_upload_is_rejected(base_url: str) -> None:
 def test_rejected_plan_is_reported_as_422(base_url: str, monkeypatch) -> None:
     violation = {"check_code": "UNDER_ALLOCATED", "entity": "A / QA", "detail": "0 ЧЧ"}
 
-    def reject(_body, _filename):
+    def reject(_body, _filename, **_kwargs):
         raise planner.PlanValidationError(42, 1, [violation])
 
     monkeypatch.setattr(server.ingest, "load_dataset", reject)

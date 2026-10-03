@@ -9,7 +9,8 @@ import { Dropzone } from '@mantine/dropzone'
 import { Alert, Anchor, Button, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useActualReportIssues, useActualUploads, useSprints } from '../../hooks/useViews'
-import { reviewActualRole, templateUrl, uploadActuals } from '../../api/uploads'
+import { reviewActualRole, uploadActuals } from '../../api/uploads'
+import { downloadTemplate } from '../../api/client'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
 
@@ -142,7 +143,16 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
               <Text size="sm">
                 {replacing ? 'Исправление' : 'Следующий отчёт'}: <b className="mono">спринт {reportSprint}</b> из {sprintCount}
               </Text>
-              <Anchor href={templateUrl(reportSprint)} download size="sm">
+              <Anchor
+                component="button"
+                type="button"
+                size="sm"
+                onClick={() => {
+                  downloadTemplate(reportSprint).catch((err: unknown) =>
+                    setErrorMessage(err instanceof Error ? err.message : String(err)),
+                  )
+                }}
+              >
                 Скачать шаблон
               </Anchor>
             </Group>

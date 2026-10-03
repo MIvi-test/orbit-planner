@@ -125,7 +125,11 @@ def test_failed_dataset_plan_restores_previous_dataset(monkeypatch, tmp_path) ->
         "dsn": dsn, "read_only": True, "statement_timeout_ms": 15_000,
     })
     monkeypatch.setattr(etl_load, "build_seed_sql", lambda _path: (
-        f"UPDATE {schema}.state SET status = 'new'", {}, {},
+        # load_dataset записывает автора в последнюю партию загрузки (S-2): даём ей
+        # временную таблицу, исчезающую вместе с транзакцией.
+        f"UPDATE {schema}.state SET status = 'new'; "
+        "CREATE TEMP TABLE load_batches (batch_id int, loaded_by text); "
+        "INSERT INTO load_batches VALUES (1, NULL)", {}, {},
     ))
     substitution_sql = tmp_path / "substitutions.sql"
     substitution_sql.write_text("BEGIN;\nCOMMIT;\n")

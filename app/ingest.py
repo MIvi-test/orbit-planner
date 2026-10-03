@@ -119,7 +119,7 @@ def _has_baseline() -> bool:
 # ---------------------------------------------------------------------------
 #  датасет
 # ---------------------------------------------------------------------------
-def load_dataset(data: bytes, filename: str | None) -> dict[str, Any]:
+def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None) -> dict[str, Any]:
     """xlsx датасета → база с нуля → базовый план. Старые прогоны и факт стираются."""
     if not data:
         raise UploadError("пустой файл")
@@ -149,6 +149,10 @@ def load_dataset(data: bytes, filename: str | None) -> dict[str, Any]:
             with db.transaction() as cur:
                 cur.execute(_strip_transaction(seed_sql))
                 cur.execute(_strip_transaction(SUBSTITUTIONS_SQL.read_text(encoding="utf-8")))
+                cur.execute(
+                    "UPDATE load_batches SET loaded_by = %s "
+                    "WHERE batch_id = (SELECT MAX(batch_id) FROM load_batches)", (actor,)
+                )
 
             plan = run_plan(0)
     return {
@@ -503,7 +507,7 @@ def analyze_actual_rows(
 
 
 def load_actuals(data: bytes, filename: str | None, sprint_no: int,
-                 *, confirm_complete: bool = False) -> dict[str, Any]:
+                 *, confirm_complete: bool = False, actor: str | None = None) -> dict[str, Any]:
     """Save a report; only confirmed, fully covered reports close the sprint."""
     if not data:
         raise UploadError("пустой файл")
@@ -658,10 +662,11 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
             )
             cur.execute(
                 """INSERT INTO actual_uploads
-                       (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary, coverage_status)
-                   VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s) RETURNING upload_id""",
+                       (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary, coverage_status,
+                        uploaded_by)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s) RETURNING upload_id""",
                 (pi_id, sprint_no, plan_run_id, name, hashlib.sha256(data).hexdigest(),
-                 json.dumps(summary, ensure_ascii=False), coverage_status),
+                 json.dumps(summary, ensure_ascii=False), coverage_status, actor),
             )
             upload_id = cur.fetchone()["upload_id"]
             cur.executemany(
@@ -700,7 +705,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
 
 
 def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,
-                     reason: str) -> dict[str, Any]:
+                     reason: str, *, actor: str | None = None) -> dict[str, Any]:
     """Confirm a new/overrun role's remaining work and republish the plan."""
     if not task_id or role_id <= 0 or not remaining_hours.is_finite() or remaining_hours < 0:
         raise UploadError("некорректная задача, роль или остаток часов")
@@ -731,9 +736,9 @@ def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,
                 (task_id, role_id, max(spent + remaining_hours, Decimal("0.01"))),
             )
             cur.execute(
-                """INSERT INTO task_role_etc (task_id, role_id, remaining_hours, reason)
-                   VALUES (%s, %s, %s, %s) RETURNING revision_id""",
-                (task_id, role_id, remaining_hours, reason),
+                """INSERT INTO task_role_etc (task_id, role_id, remaining_hours, reason, revised_by)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING revision_id""",
+                (task_id, role_id, remaining_hours, reason, actor),
             )
             revision_id = cur.fetchone()["revision_id"]
             cur.execute(

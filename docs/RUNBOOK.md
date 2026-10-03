@@ -266,9 +266,11 @@ cp .env.example .env
 chmod 600 .env
 openssl rand -hex 32       # отдельное значение для POSTGRES_PASSWORD
 openssl rand -hex 32       # отдельное значение для GRAFANA_ADMIN_PASSWORD
+openssl rand -hex 32       # PI_PLANNER_ADMIN_TOKEN: токен аварийного администратора
 ```
 
-В `.env` задайте реальные `CADDY_DOMAIN`, `GRAFANA_DOMAIN`, оба пароля и
+В `.env` задайте реальные `CADDY_DOMAIN`, `GRAFANA_DOMAIN`, оба пароля,
+`PI_PLANNER_ADMIN_TOKEN` (заглушка `CHANGE-ME` не даёт приложению стартовать) и
 абсолютный `BACKUP_DIR` на отдельном диске. Значения `change-me-*`, localhost и
 относительный каталог backups являются блокером production-релиза. Сам `.env`
 не коммитится и не прикладывается к тикету; в CI его должен создавать secret
@@ -287,6 +289,25 @@ docker compose pull db backup caddy prometheus grafana
 плавающими тегами. Для строго воспроизводимого production-релиза registry/CI
 должен публиковать собранный `app` по immutable digest, а базовые образы —
 фиксироваться digest-политикой платформы.
+
+**Доступ пользователей (ADR-027).** После первого старта войдите токеном
+`PI_PLANNER_ADMIN_TOKEN` и заведите людей персональными токенами; общий аварийный
+токен храните как break-glass и не раздавайте:
+
+```bash
+docker compose exec app python tools/manage_users.py create ivan --role planner
+docker compose exec app python tools/manage_users.py list
+docker compose exec app python tools/manage_users.py rotate ivan     # токен утёк или потерян
+docker compose exec app python tools/manage_users.py disable ivan    # сотрудник ушёл
+docker compose exec app python tools/manage_users.py audit --limit 100
+```
+
+Роли: `viewer` — просмотр, `planner` — загрузка факта и подтверждения, `admin` —
+загрузка датасета (стирает цикл). Токен показывается один раз, в базе хранится
+SHA-256. Журнал `audit_log` дописывается при каждом изменении данных; в логе
+приложения события `auth_denied` / `auth_blocked` — основа для алертов на подбор
+токенов. Токены передаются только по HTTPS (Caddy). Метрики `/metrics` наружу
+закрыты Caddy и открыты только внутри сети `monitoring`.
 
 ### 5.3. Релиз без потери данных
 

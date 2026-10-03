@@ -21,7 +21,7 @@ export function HealthBadge() {
     )
   }
   return (
-    <Tooltip label={`PostgreSQL ${health.data.server_version} · ${health.data.tables} таблиц · ${health.data.views} вьюх`}>
+    <Tooltip label={health.data.server_version ? `PostgreSQL ${health.data.server_version} · ${health.data.tables} таблиц · ${health.data.views} вьюх` : 'база отвечает'}>
       <Badge color="teal" variant="light" size="sm">
         API в порядке
       </Badge>

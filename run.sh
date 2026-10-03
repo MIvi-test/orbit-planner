@@ -94,5 +94,17 @@ if [ "$BUILD" = 1 ] && [ ! -f web/dist/index.html ]; then
   fi
 fi
 
+# ------------------------------------------------------------------ доступ
+# Без токена API отвечает 401 (ADR-027). Если токена нет, создаём его один раз и
+# храним в .run-admin-token (в git не попадает).
+if [ "${PI_PLANNER_AUTH:-required}" != "off" ] && [ -z "${PI_PLANNER_ADMIN_TOKEN:-}" ]; then
+  TOKEN_FILE=".run-admin-token"
+  if [ ! -s "$TOKEN_FILE" ]; then
+    ( umask 077; $PY -c "import secrets; print(secrets.token_urlsafe(32))" > "$TOKEN_FILE" )
+  fi
+  export PI_PLANNER_ADMIN_TOKEN="$(cat "$TOKEN_FILE")"
+  echo "[run] токен администратора (сохранён в $TOKEN_FILE): $PI_PLANNER_ADMIN_TOKEN"
+fi
+
 echo "[run] сервис: http://127.0.0.1:${PORT}"
 exec $PY -m app.server --port "$PORT"
