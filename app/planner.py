@@ -64,7 +64,7 @@ import json
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
@@ -1273,6 +1273,7 @@ def build_plan(
         "simulated": [], "fits_next_pi": [], "not_selected": [],
         "assumptions": "тот же штат и календарь, без новых задач и найма",
     }
+    next_pi_forecast: dict[str, date] = {}
     if simulate_next_pi and not pi_closed and initiative_mode == INITIATIVE_MODE_GREEDY:
         pool = {
             task_id for task_id, (code, _text, _details) in reasons.items()
@@ -1304,9 +1305,16 @@ def build_plan(
                 simulate_next_pi=False,
             )
             fits_next = {row.task_id for row in trial_plan.schedule if row.decision == "in_quarter"}
+            next_pi_forecast = {
+                row.task_id: row.forecast_end_date + timedelta(days=inputs.pi_days)
+                for row in trial_plan.schedule
+                if row.decision == "in_quarter" and row.forecast_end_date is not None
+            }
             next_pi_check.update({
                 "simulated": sorted(pool), "fits_next_pi": sorted(fits_next),
                 "not_selected": sorted(pool - fits_next),
+                "forecast_end_dates": {task_id: end.isoformat()
+                                       for task_id, end in sorted(next_pi_forecast.items())},
             })
             for task_id in sorted(pool - fits_next):
                 code, text, details = reasons[task_id]
@@ -1389,9 +1397,15 @@ def build_plan(
         task_id = task.task_id
         if task_id in deferred:
             code, text, details = reasons[task_id]
+            forecast = next_pi_forecast.get(task_id)
+            if forecast is not None:
+                text += (f" Сценарий следующего PI при том же штате и календаре: "
+                         f"завершение {forecast.isoformat()}.")
+                details = {**details, "forecast_basis": next_pi_check["assumptions"],
+                           "forecast_end_date": forecast.isoformat()}
             schedule.append(
                 ScheduleRow(
-                    task_id, None, None, None, "deferred_next_pi",
+                    task_id, None, None, forecast, "deferred_next_pi",
                     legacy_reason(code, details), code, text, details,
                 )
             )
@@ -1620,8 +1634,8 @@ def _build_alerts(
       расписания спрос готовых задач за один спринт больше фонда роли. Доля
       каждой задачи ограничена одним полным фондом инженера за спринт;
     * red — «выход прогнозной даты завершения за пределы квартала»: инициатива,
-      у которой есть задачи вне квартала; для целей первоначального плана это
-      «цель квартала под угрозой»;
+      у которой есть задачи вне квартала; дата указана только если её даёт
+      явно помеченный сценарий следующего PI;
     * yellow — «сдвиг цепочки зависимых задач»: прогноз окончания предшественника
       и срок хотя бы одного потомка ухудшились относительно базового плана.
     """
@@ -1722,12 +1736,26 @@ def _build_alerts(
         task_ids = [row.task_id for row in rows]
         hh = sum((by_id[task_id].demand_hh for task_id in task_ids), Decimal("0"))
         threatened = prodf_id in committed and as_of_sprint > 0
+        dated = [row.forecast_end_date for row in rows if row.forecast_end_date is not None]
+        forecast_end = max(dated) if len(dated) == len(rows) else None
+        deadline = inputs.sprints.get(inputs.sprint_count, (None, None))[1]
+        detected_on = inputs.sprints.get(min(max(1, as_of_sprint), inputs.sprint_count), (None, None))[0]
+        delay_days = (forecast_end - deadline).days if forecast_end and deadline else None
+        missing_role = any(row.reason_code == REASON_ROLE_NOT_IN_STAFF for row in rows)
+        if forecast_end is not None:
+            forecast_text = (f"прогноз завершения {forecast_end.isoformat()}, "
+                             f"задержка {delay_days} дн. при том же штате и календаре")
+        elif missing_role:
+            forecast_text = "дата завершения не определена: нет требуемой роли в штате"
+        else:
+            forecast_text = ("дата завершения не определена: выбранный сценарий "
+                             "следующего PI не разместил все задачи")
         message = (
             f"{prodf_id}: цель квартала под угрозой — {len(task_ids)} задач из первоначального "
-            f"плана больше не укладываются в 12 недель ({_q(hh)} ЧЧ)"
+            f"плана больше не укладываются в 12 недель ({_q(hh)} ЧЧ); {forecast_text}"
             if threatened
-            else f"{prodf_id}: {len(task_ids)} задач перенесено в следующий PI, {hh} ЧЧ "
-            f"не закрыто — инициатива не уложится в квартал"
+            else f"{prodf_id}: {len(task_ids)} задач вне квартала, {hh} ЧЧ "
+            f"не закрыто — инициатива не уложится в квартал; {forecast_text}"
         )
         alerts.append(
             AlertRow(
@@ -1742,6 +1770,11 @@ def _build_alerts(
                     "deferred_hh": str(hh),
                     "baseline_committed": prodf_id in committed,
                     "threatened_goal": threatened,
+                    "detected_on": detected_on.isoformat() if detected_on else None,
+                    "deadline": deadline.isoformat() if deadline else None,
+                    "forecast_end_date": forecast_end.isoformat() if forecast_end else None,
+                    "delay_days": delay_days,
+                    "forecast_basis": "тот же штат и календарь, без новых задач и найма",
                     "reasons": {row.task_id: row.reason_code for row in rows},
                     "cancelled": [row.task_id for row in rows if row.decision == "cancelled"],
                 },

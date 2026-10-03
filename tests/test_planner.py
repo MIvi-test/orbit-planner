@@ -275,6 +275,11 @@ def test_next_pi_competition_does_not_make_a_feasible_task_cancelled() -> None:
     assert by_id["C"].reason_details["next_pi_scenario"] == "competing_capacity"
     assert "отдельно она помещается" in by_id["C"].reason_text
     assert plan.params["next_pi_check"]["not_selected"] == ["C"]
+    assert by_id["B"].forecast_end_date == date(2026, 6, 28)
+    assert by_id["C"].forecast_end_date is None
+    red = {alert.entity_id: alert for alert in plan.alerts if alert.level == "red"}
+    assert red["PRODF-B"].payload["delay_days"] == 14
+    assert red["PRODF-C"].payload["forecast_end_date"] is None
 
 
 def test_calendar_lands_in_params() -> None:
