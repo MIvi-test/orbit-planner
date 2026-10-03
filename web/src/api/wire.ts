@@ -22,6 +22,11 @@ export function isNumeric(value: NumericString | number | null | undefined): boo
   return Number.isFinite(typeof value === 'number' ? value : Number(value))
 }
 
+/** Дефицит — строго больше нуля: полностью покрытая связка (gap = 0) проблемой не является (DA-48). */
+export function isPositive(value: NumericString | null | undefined): boolean {
+  return isNumeric(value) && num(value) > 0
+}
+
 /** Часы для показа: без хвостовых нулей после запятой. Нет значения — «—», а не «0 ЧЧ». */
 export function fmtHours(value: NumericString | null | undefined): string {
   if (!isNumeric(value)) return '—'

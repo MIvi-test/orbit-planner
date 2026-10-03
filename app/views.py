@@ -24,7 +24,7 @@
 параметризации SQL под каждый экран. Появится нужда — добавим `where` по тому же
 белому списку колонок, а не «универсальный» фильтр.
 
-Внутренняя кухня ETL (`load_batches`, `dq_issues`, `role_aliases`,
+Внутренняя кухня ETL (`load_batches`, `role_aliases`,
 `task_sequence`, оценки, `pi_periods`) в белый список не входит: наружу ей нечего
 отдавать (docs/SCHEMA.md §3). Промежуточные вьюхи (`v_role_supply_hh`,
 `v_backlog_demand`) тоже не отдаются — у экранов есть готовые витрины с вердиктом.
@@ -241,6 +241,14 @@ SOURCES: tuple[Source, ...] = (
         note="НОРМАТИВНАЯ ёмкость команды в SP по истории × 0.8 (с неё строится базовый план); "
         "метаданные выборки: число точек, разброс, давность. Ёмкость конкретного прогона — "
         "`plan_team_capacity`. Для спринта иной длины умножать на `v_sprint_fund_factor` (ADR-017).",
+    ),
+    _source(
+        "dq_issues",
+        screen="Данные",
+        order="severity,rule_code,entity_id",
+        orderable=("issue_id", "entity", "entity_id", "rule_code", "severity"),
+        note="Полный журнал находок качества данных ETL (NEW-06): сущность, правило, серьёзность, подробности. "
+        "error блокирует загрузку, warning и info — материал для разбора.",
     ),
     _source(
         "v_sprint_forecast_accuracy",

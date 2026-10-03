@@ -280,6 +280,15 @@ export interface TeamCapacitySpRow {
 }
 
 /** Ёмкость команды, с которой построен прогон (ADR-030). */
+export interface DqIssueRow {
+  issue_id: number
+  entity: string
+  entity_id: string | null
+  rule_code: string
+  severity: 'error' | 'warning' | 'info'
+  detail: string
+}
+
 /** Прогноз перед спринтом против факта (DA-32). */
 export interface SprintForecastAccuracyRow {
   run_id: number

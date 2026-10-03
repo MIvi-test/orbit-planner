@@ -98,7 +98,7 @@ export function usePlanData() {
         title: initiative?.title ?? prodf_id,
         priority_rung: initiative?.priority_rung ?? group[0]?.rung ?? null,
         business_priority: initiative?.business_priority ?? null,
-        team_id: group[0]?.team_id ?? '',
+        team_id: [...new Set(group.map((t) => t.team_id))].sort().join(', '),
         tasks: group,
       })
     }

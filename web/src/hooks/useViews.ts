@@ -47,6 +47,7 @@ import type {
   TeamCapacitySpRow,
   PlanTeamCapacityRow,
   SprintForecastAccuracyRow,
+  DqIssueRow,
   TeamProfileRow,
   TeamRow,
 } from '../types/views'
@@ -108,6 +109,7 @@ export const usePlanTeamCapacity = (runId?: number | null) =>
 export const useTeams = () => useView<TeamRow>('teams', { limit: 20 })
 export const useEngineerRoleCoverage = () =>
   useView<EngineerRoleCoverageRow>('v_engineer_role_coverage', { limit: 500 })
+export const useDqIssues = () => useView<DqIssueRow>('dq_issues', { limit: 2000 })
 export const useDqSummary = () => useView<DqSummaryRow>('v_dq_summary', { limit: 100 })
 export const useInitiatives = () => useView<InitiativeRow>('initiatives', { limit: 100 })
 export const useRefResultOptions = () => useView<RefResultOptionRow>('ref_result_options', { limit: 50 })

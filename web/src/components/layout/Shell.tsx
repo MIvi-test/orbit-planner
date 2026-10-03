@@ -15,6 +15,7 @@ const NAV: { id: ScreenId; label: string }[] = [
   { id: 'kpi', label: 'KPI' },
   { id: 'roles', label: 'Роли и ёмкость' },
   { id: 'profiles', label: 'Профили' },
+  { id: 'data', label: 'Данные' },
 ]
 
 export function Shell({

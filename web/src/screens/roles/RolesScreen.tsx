@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Badge, Group, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Switch, Table, Text, Title } from '@mantine/core'
-import { fmtHours, fmtSp, isNegative } from '../../api/wire'
+import { fmtHours, fmtSp, isPositive } from '../../api/wire'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { QueryError, anyPending, firstError } from '../../components/common/QueryError'
 import {
@@ -47,8 +47,8 @@ export function RolesScreen() {
 
   const deficits = deficitQ.data?.items ?? []
   const effective = effectiveQ.data?.items ?? []
-  const shownDeficits = problemsOnly ? deficits.filter((row) => !isNegative(row.gap_hh)) : deficits
-  const shownEffective = problemsOnly ? effective.filter((row) => !isNegative(row.gap_hh)) : effective
+  const shownDeficits = problemsOnly ? deficits.filter((row) => isPositive(row.gap_hh)) : deficits
+  const shownEffective = problemsOnly ? effective.filter((row) => isPositive(row.gap_hh)) : effective
   const hiringNeeds = (coverageQ.data?.items ?? []).filter((row) => row.verdict.includes('НАЙМ'))
   const teamFocus = new Map((teamsQ.data?.items ?? []).map((row) => [row.team_id, row.focus_factor]))
 
@@ -88,7 +88,7 @@ export function RolesScreen() {
                     <Table.Td>{row.role_name}</Table.Td>
                     <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.demand_hh)}</Table.Td>
                     <Table.Td ta="right" className="tabular">{row.people_incl_substitution}</Table.Td>
-                    <Table.Td><Verdict text={row.verdict} problem={!isNegative(row.gap_hh)} /></Table.Td>
+                    <Table.Td><Verdict text={row.verdict} problem={isPositive(row.gap_hh)} /></Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -177,7 +177,7 @@ function DeficitFrame({ title, rows }: { title: string; rows: Array<{ team_id: s
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.demand_hh)}</Table.Td>
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.supply)}</Table.Td>
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.gap_hh)}</Table.Td>
-                <Table.Td><Verdict text={row.verdict} problem={!isNegative(row.gap_hh)} /></Table.Td>
+                <Table.Td><Verdict text={row.verdict} problem={isPositive(row.gap_hh)} /></Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
