@@ -107,7 +107,7 @@ plan_runs ──┬── plan_baseline        базовая линия Нед�
 SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
 ```
 
-29 проверок из `db/05_invariants.sql`, правила — `docs/PLANNER_SPEC.md`, раздел 7.
+проверки из `db/05_invariants.sql`, правила — `docs/PLANNER_SPEC.md`, раздел 7.
 `severity = 'error'` блокирует, `'warning'` требует показа в UI: сейчас это
 `SUBSTITUTION_USED` (инженер работает не по своей роли), `PLANNED_END_OVERSAIL`
 (прогноз выходит за даты исходного плана) и `WINDOW_HAS_GAP` (в окне задачи есть

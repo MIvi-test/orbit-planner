@@ -165,7 +165,8 @@ ORDER BY b.priority_rung DESC NULLS LAST, b.topo_order, b.task_id
 
 TASK_ROLES_SQL = """
 SELECT rm.task_id, rm.role_id, r.canonical_name AS role_name,
-       rm.estimated_hours, rm.spent_hours, rm.remaining_hours, rm.remaining_unknown
+       rm.estimated_hours, rm.spent_hours, rm.remaining_hours, rm.remaining_unknown,
+       rm.remaining_provisional
 FROM v_task_remaining_hh rm
 JOIN roles r ON r.role_id = rm.role_id
 JOIN tasks t ON t.task_id = rm.task_id
@@ -347,6 +348,8 @@ class TaskInput:
     role_names: dict[int, str]
     estimate_disputed: bool
     remaining_unknown: bool = False
+    # Остаток оценён как смета − факт и не подтверждён ETC (B-6).
+    remaining_provisional: bool = False
     remaining_sp: Decimal | None = None
 
     @property
@@ -448,10 +451,12 @@ def load_inputs() -> Inputs:
     roles_by_task: dict[str, dict[int, Decimal]] = defaultdict(dict)
     names_by_task: dict[str, dict[int, str]] = defaultdict(dict)
     unknown_by_task: dict[str, bool] = defaultdict(bool)
+    provisional_by_task: dict[str, bool] = defaultdict(bool)
     for row in db.query_dicts(TASK_ROLES_SQL):
         roles_by_task[row["task_id"]][row["role_id"]] = Decimal(row["remaining_hours"])
         names_by_task[row["task_id"]][row["role_id"]] = row["role_name"]
         unknown_by_task[row["task_id"]] |= bool(row.get("remaining_unknown", False))
+        provisional_by_task[row["task_id"]] |= bool(row.get("remaining_provisional", False))
 
     tasks = tuple(
         TaskInput(
@@ -467,7 +472,12 @@ def load_inputs() -> Inputs:
             remaining=dict(roles_by_task.get(row["task_id"], {})),
             role_names=dict(names_by_task.get(row["task_id"], {})),
             estimate_disputed=bool(row["estimate_disputed"]),
-            remaining_unknown=unknown_by_task[row["task_id"]],
+            # «Неизвестно» — только если у задачи не осталось работы ни по одной
+            # роли: исчерпанная роль при живых остальных задачу не блокирует.
+            remaining_unknown=unknown_by_task[row["task_id"]] and not any(
+                hours > 0 for hours in roles_by_task.get(row["task_id"], {}).values()
+            ),
+            remaining_provisional=provisional_by_task[row["task_id"]],
             remaining_sp=Decimal(row.get("remaining_sp", row["estimation_sp"])),
         )
         for row in db.query_dicts(LIVE_TASKS_SQL)
@@ -1552,8 +1562,14 @@ def build_plan(
                 "спринты " + ", ".join(map(str, hours_only))
                 + " содержат только работу инженеров; дата результата ждёт последних часов"
             )
+        if task.remaining_provisional:
+            parts.append(
+                "остаток часов оценён как смета минус потраченное и не подтверждён ETC: "
+                "прогресс по затратам не равен готовности — подтвердите остаток в факте спринта"
+            )
         text = ". ".join(parts)
         return text, {
+            "remaining_provisional": task.remaining_provisional,
             "priority_rung": task.priority_rung,
             "queue_rank": rank[task_id],
             "queue_size": len(ordered),

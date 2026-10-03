@@ -184,6 +184,7 @@ CREATE TABLE kpi_snapshots (
     details    JSONB    NOT NULL DEFAULT '{}'::jsonb,
     kind       TEXT     NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast','actual')),
     calculation_status TEXT NOT NULL DEFAULT 'calculated'
+        CONSTRAINT kpi_calculation_status_check
         CHECK (calculation_status IN ('calculated','no_commitment','no_plan','no_relevant_skills')),
     CONSTRAINT kpi_calculation_value_check CHECK (
         (calculation_status = 'calculated' AND value IS NOT NULL)

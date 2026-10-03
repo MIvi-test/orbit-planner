@@ -52,7 +52,7 @@ import signal
 import sys
 import threading
 import time
-from collections import defaultdict
+
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

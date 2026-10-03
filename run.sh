@@ -64,7 +64,8 @@ if [ "$RESET" = 1 ] || ! $PY tools/apply_sql.py --check >/dev/null 2>&1; then
   [ -f build/seed.sql ] || $PY etl/load.py
   $PY tools/apply_sql.py \
     db/01_schema.sql db/02_contract.sql build/seed.sql \
-    db/03_substitutions.sql db/04_views.sql db/05_invariants.sql
+    db/03_substitutions.sql db/04_views.sql db/05_invariants.sql \
+    db/06_migration_stamps.sql
 fi
 
 # ------------------------------------------------------------ базовый план
