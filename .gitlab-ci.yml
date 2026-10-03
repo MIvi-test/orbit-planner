@@ -74,7 +74,7 @@ pg:
     paths: [pytest.log]
     expire_in: 1 week
 
-# --- Цикл: датасет -> базовый план -> факт спринта 1, 0 ошибок приёмки -----
+# --- Цикл: датасет -> базовый план -> факт спринтов 1–3, 0 ошибок приёмки --
 cycle:
   extends: [.python, .postgres]
   stage: test
@@ -84,31 +84,15 @@ cycle:
       uv run python tools/apply_sql.py
       db/01_schema.sql db/02_contract.sql build/seed.sql
       db/03_substitutions.sql db/04_views.sql db/05_invariants.sql
-    - uv run python tools/ci_cycle_check.py --sprints 1
-
-# --- Полный цикл на 3 спринта. Сейчас НЕ блокирует: после факта спринта 1 план
-# пустеет (ETC_REQUIRED у всех задач в работе, B-6), демо-сценарий не доходит
-# до спринта 2. Снять allow_failure в волне 1 после решения B-6.
-cycle-full:
-  extends: [.python, .postgres]
-  stage: test
-  allow_failure: true
-  script:
-    - uv run python tools/apply_sql.py --wait 60
-    - >
-      uv run python tools/apply_sql.py
-      db/01_schema.sql db/02_contract.sql build/seed.sql
-      db/03_substitutions.sql db/04_views.sql db/05_invariants.sql
+      db/06_migration_stamps.sql
     - uv run python tools/ci_cycle_check.py --sprints 3
 
 # --- Чистая установка и обновление дают одну и ту же схему -----------------
-# Сейчас НЕ блокирует: до волны 1 (B-1) базовая схема не штампует версии в
-# schema_migrations, и `migrate` на свежей базе падает. Снять allow_failure
-# в волне 1 вместе с исправлением B-1.
+# Чистая установка (db/01…06 + seed) и `migrate` — no-op; старая база
+# (MIGRATION_BASE_REF) + `migrate` — та же схема (B-1, B-7).
 schema-equivalence:
   extends: [.python, .postgres]
   stage: test
-  allow_failure: true
   variables:
     GIT_DEPTH: "0"
   script:
@@ -128,6 +112,7 @@ schema-equivalence:
       uv run python tools/apply_sql.py
       db/01_schema.sql db/02_contract.sql build/seed.sql
       db/03_substitutions.sql db/04_views.sql db/05_invariants.sql
+      db/06_migration_stamps.sql
     - uv run python tools/migrate.py
     - uv run python tools/schema_fingerprint.py > fresh.txt
     # 2. Старая база: базовые файлы MIGRATION_BASE_REF, затем все миграции.

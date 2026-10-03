@@ -413,8 +413,10 @@ CREATE TABLE task_actuals (
     comment      TEXT,
     clear_actual_start BOOLEAN NOT NULL DEFAULT FALSE,
     clear_actual_end   BOOLEAN NOT NULL DEFAULT FALSE,
-    CHECK (NOT clear_actual_start OR actual_start IS NULL),
-    CHECK (NOT clear_actual_end OR actual_end IS NULL),
+    CONSTRAINT task_actuals_clear_start_requires_null
+        CHECK (NOT clear_actual_start OR actual_start IS NULL),
+    CONSTRAINT task_actuals_clear_end_requires_null
+        CHECK (NOT clear_actual_end OR actual_end IS NULL),
     PRIMARY KEY (upload_id, task_id)
 );
 CREATE TABLE task_actual_spent (

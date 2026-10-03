@@ -3,8 +3,11 @@
 Run in deployment after the database is healthy:
     docker compose run --rm migrate
 
-The initial schema and seed remain Docker-init files for a fresh demo volume.
-All changes made after that bootstrap belong in db/migrations/NNNN_description.sql.
+A fresh install (db/01…06 + seed) already contains every migration present at
+that moment: db/06_migration_stamps.sql records them with checksum "baseline" and
+this script skips them. An older database (no stamps) gets the migrations applied
+in order. All schema changes belong in db/migrations/NNNN_description.sql AND in
+the base files; run tools/gen_migration_stamps.py after adding one.
 """
 from __future__ import annotations
 
@@ -21,6 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS = ROOT / "db" / "migrations"
 MIGRATION_NAME = re.compile(r"^(\d{4}_[a-z0-9_]+)\.sql$")
 LOCK_KEY = 5_427_001
+# db/06_migration_stamps.sql (tools/gen_migration_stamps.py) помечает так миграции,
+# уже учтённые в базовой схеме чистой установки.
+BASELINE_CHECKSUM = "baseline"
 
 
 def discover() -> list[tuple[str, Path]]:
@@ -65,6 +71,9 @@ def main() -> int:
                     )
                     applied = cur.fetchone()
                     if applied:
+                        if applied[0] == BASELINE_CHECKSUM:
+                            print(f"[migrate] included in base schema: {version}")
+                            continue
                         if applied[0] != digest:
                             raise RuntimeError(
                                 f"migration {version} was changed after application; "
