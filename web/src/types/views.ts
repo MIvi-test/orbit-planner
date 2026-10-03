@@ -105,6 +105,24 @@ export interface TaskRemainingHhRow {
   remaining_hours: NumericString
 }
 
+export interface TaskStateRow {
+  run_id: number
+  task_id: string
+  as_of_sprint: number
+  status: TaskStateStatus
+  remaining_hh: NumericString
+  remaining_sp: NumericString
+  forecast_end_sprint: number | null
+}
+
+export interface PlanRoleDemandSnapshotRow {
+  run_id: number
+  task_id: string
+  role_id: number
+  role_name: string
+  needed_hours: NumericString
+}
+
 // --------------------------------------------------------------- звёздная карта
 export interface OrbitMapRow {
   engineer_id: string

@@ -2,10 +2,11 @@ import { useMemo } from 'react'
 import { useRun } from '../../hooks/useRun'
 import {
   usePlanAssignments,
+  usePlanRoleDemandSnapshot,
   usePlanSchedule,
   usePlanTaskSp,
   useSprints,
-  useTaskBoard,
+  useTaskState,
   useTasks,
   useInitiatives,
 } from '../../hooks/useViews'
@@ -14,8 +15,9 @@ import type {
   PlanAssignmentDetailRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
+  PlanRoleDemandSnapshotRow,
   SprintRow,
-  TaskBoardRow,
+  TaskStateRow,
   TaskRow,
 } from '../../types/views'
 
@@ -31,12 +33,10 @@ export function usePlanData() {
   const { runId, runs } = useRun()
 
   const sprintsQ = useSprints()
-  // `tasks` — ВСЕ задачи безусловно; `v_task_board` фильтрует по ТЕКУЩЕМУ статусу
-  // (WHERE status IN ToDo/InProgress) и при просмотре старого прогона потерял бы
-  // задачи, которые с тех пор стали Done. Для группировки нужен `tasks`, для
-  // деталей карточки (остаток часов, спорная оценка) — `v_task_board` отдельно.
+  // Справочник задач содержит все задачи; остаток берём из снимка прогона.
   const tasksQ = useTasks()
-  const boardQ = useTaskBoard()
+  const stateQ = useTaskState(runId)
+  const roleDemandQ = usePlanRoleDemandSnapshot(runId)
   const initiativesQ = useInitiatives()
   const scheduleQ = usePlanSchedule(runId)
   const spQ = usePlanTaskSp(runId)
@@ -52,13 +52,15 @@ export function usePlanData() {
   const isPending =
     sprintsQ.isPending ||
     tasksQ.isPending ||
+    stateQ.isPending ||
+    roleDemandQ.isPending ||
     initiativesQ.isPending ||
     scheduleQ.isPending ||
     spQ.isPending ||
     assignQ.isPending
   const isError =
-    sprintsQ.isError || tasksQ.isError || initiativesQ.isError || scheduleQ.isError || spQ.isError || assignQ.isError
-  const firstError = sprintsQ.error ?? tasksQ.error ?? initiativesQ.error ?? scheduleQ.error ?? spQ.error ?? assignQ.error
+    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || spQ.isError || assignQ.isError
+  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? spQ.error ?? assignQ.error
 
   const groups = useMemo<InitiativeGroup[]>(() => {
     const tasks = tasksQ.data?.items
@@ -119,11 +121,17 @@ export function usePlanData() {
     return map
   }, [assignQ.data])
 
-  const boardByTask = useMemo(() => {
-    const map = new Map<string, TaskBoardRow>()
-    boardQ.data?.items.forEach((row) => map.set(row.task_id, row))
+  const stateByTask = useMemo(() => {
+    const map = new Map<string, TaskStateRow>()
+    stateQ.data?.items.forEach((row) => map.set(row.task_id, row))
     return map
-  }, [boardQ.data])
+  }, [stateQ.data])
+
+  const roleDemandByTask = useMemo(() => {
+    const map = new Map<string, PlanRoleDemandSnapshotRow[]>()
+    roleDemandQ.data?.items.forEach((row) => map.set(row.task_id, [...(map.get(row.task_id) ?? []), row]))
+    return map
+  }, [roleDemandQ.data])
 
   return {
     isPending,
@@ -133,7 +141,8 @@ export function usePlanData() {
     asOf: scheduleQ.data?.as_of ?? null,
     sprints: sprintsQ.data?.items ?? ([] as SprintRow[]),
     groups,
-    boardByTask,
+    stateByTask,
+    roleDemandByTask,
     scheduleByTask,
     baselineByTask,
     hasBaseline: baselineRunId !== null && baselineRunId !== runId,

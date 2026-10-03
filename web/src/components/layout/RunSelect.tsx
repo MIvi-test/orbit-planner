@@ -45,7 +45,7 @@ export function RunSelect() {
       value={runId !== null ? String(runId) : null}
       onChange={(v) => setRunId(v ? Number(v) : null)}
       disabled={isLoading || runs.length === 0}
-      description={isDefault ? 'текущий (последний удачный)' : 'выбран вручную'}
+      description={isDefault ? 'текущий (последний удачный)' : 'исторический план; справочные экраны показывают текущие данные'}
       allowDeselect={false}
     />
   )

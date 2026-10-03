@@ -385,6 +385,7 @@ COMMIT;
 BEGIN;
 
 DROP VIEW IF EXISTS v_sprint_deviation, v_plan_diff, v_team_profile,
+     v_plan_role_demand_snapshot,
      v_engineer_absence_risk, v_bus_factor_skill CASCADE;
 
 -- --------------------------------------------------------------------
@@ -601,6 +602,12 @@ COMMENT ON VIEW v_team_profile IS
 --  cause: completed | own_slip (сама не закрылась к отчётному спринту) |
 --  dependency (сдвинулась блокирующая) | capacity (ресурсы перераспределены)
 -- --------------------------------------------------------------------
+CREATE VIEW v_plan_role_demand_snapshot AS
+SELECT d.run_id, d.task_id, d.role_id, r.canonical_name AS role_name,
+       d.needed_hours
+FROM plan_role_demand_snapshot d
+JOIN roles r ON r.role_id = d.role_id;
+
 CREATE VIEW v_plan_diff AS
 WITH pairs AS (
     SELECT r.run_id, r.as_of_sprint, r.actuals_upload_id,

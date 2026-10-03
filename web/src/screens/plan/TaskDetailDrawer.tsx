@@ -3,7 +3,7 @@
  * показывается как есть, не пересказывается и не сокращается.
  */
 import { Badge, Drawer, Group, List, Stack, Table, Text } from '@mantine/core'
-import type { PlanAssignmentDetailRow, PlanTaskScheduleRow, TaskBoardRow, TaskRow } from '../../types/views'
+import type { PlanAssignmentDetailRow, PlanRoleDemandSnapshotRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
 
 const DECISION_LABEL: Record<string, string> = {
@@ -20,13 +20,15 @@ const DECISION_COLOR: Record<string, string> = {
 
 export function TaskDetailDrawer({
   task,
-  board,
+  state,
+  roleDemand,
   schedule,
   assignments,
   onClose,
 }: {
   task: TaskRow | null
-  board: TaskBoardRow | undefined
+  state: TaskStateRow | undefined
+  roleDemand: PlanRoleDemandSnapshotRow[]
   schedule: PlanTaskScheduleRow | undefined
   assignments: PlanAssignmentDetailRow[]
   onClose: () => void
@@ -73,21 +75,30 @@ export function TaskDetailDrawer({
             </Stack>
           )}
 
-          {board && (
+          {state && (
             <Stack gap={4}>
               <Text size="sm" fw={500}>
-                Часы
+                Состояние на момент прогона
               </Text>
               <Text size="sm" c="dimmed">
-                Остаток: {fmtHours(board.remaining_hh)}
-                {board.estimate_disputed && (
+                {state.status} · остаток: {fmtHours(state.remaining_hh)} и {fmtSp(state.remaining_sp)} SP
+                {task.estimated_hh_declared !== null && task.estimated_hh_matrix_total !== null && task.estimated_hh_declared !== task.estimated_hh_matrix_total && (
                   <>
                     {' '}
-                    · оценка спорная: столбец матрицы {board.estimated_hh_effective} ЧЧ, в
-                    исходнике {board.estimated_hh_declared} ЧЧ
+                    · оценка спорная: столбец матрицы {task.estimated_hh_effective} ЧЧ, в
+                    исходнике {task.estimated_hh_declared} ЧЧ
                   </>
                 )}
               </Text>
+            </Stack>
+          )}
+
+          {roleDemand.length > 0 && (
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>Остаток по ролям на момент прогона</Text>
+              {roleDemand.map((row) => (
+                <Text key={row.role_id} size="sm">{row.role_name}: {fmtHours(row.needed_hours)}</Text>
+              ))}
             </Stack>
           )}
 

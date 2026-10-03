@@ -22,6 +22,7 @@ import type {
   PlanBaselineRow,
   PlanDiffRow,
   PlanRunRow,
+  PlanRoleDemandSnapshotRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
   PlanViolationRow,
@@ -36,6 +37,7 @@ import type {
   SprintRow,
   TaskBoardRow,
   TaskRemainingHhRow,
+  TaskStateRow,
   TaskRow,
   TeamCapacitySpRow,
   TeamProfileRow,
@@ -46,6 +48,10 @@ import type {
 export const useTaskBoard = (p?: ViewParams) => useView<TaskBoardRow>('v_task_board', p)
 export const useTasks = (p?: ViewParams) => useView<TaskRow>('tasks', p)
 export const useTaskRemainingHh = (p?: ViewParams) => useView<TaskRemainingHhRow>('v_task_remaining_hh', p)
+export const useTaskState = (runId?: number | null) =>
+  useView<TaskStateRow>('task_state', { runId: runId ?? undefined, limit: 500 })
+export const usePlanRoleDemandSnapshot = (runId?: number | null) =>
+  useView<PlanRoleDemandSnapshotRow>('v_plan_role_demand_snapshot', { runId: runId ?? undefined, limit: 500 })
 
 // -------------------------------------------------------------- план квартала
 export const usePlanRuns = () => useView<PlanRunRow>('plan_runs', { limit: 500 })

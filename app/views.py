@@ -139,6 +139,22 @@ SOURCES: tuple[Source, ...] = (
         "(заполнен только у 8 задач Done — ADR-004, знаменатель KPI берётся не отсюда).",
     ),
     _source(
+        "task_state",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "as_of_sprint", "status", "remaining_hh", "remaining_sp", "forecast_end_sprint"),
+        run_column="run_id",
+        note="Исторический остаток и статус задачи в выбранном прогоне.",
+    ),
+    _source(
+        "v_plan_role_demand_snapshot",
+        screen="План квартала",
+        order="task_id,role_id",
+        orderable=("run_id", "task_id", "role_id", "role_name", "needed_hours"),
+        run_column="run_id",
+        note="Остаток часов по ролям на момент выбранного прогона.",
+    ),
+    _source(
         "v_task_remaining_hh",
         screen="Доска задач",
         order="task_id,role_id",

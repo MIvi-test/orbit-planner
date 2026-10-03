@@ -14,6 +14,7 @@ import { Group, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import {
   useAlerts,
+  useActualUploads,
   usePlanDiff,
   usePlanViolations,
   useRefDecisionReasons,
@@ -32,17 +33,18 @@ import { ALERT_WORD } from './labels'
 import type { AlertRow, AlertType } from '../../types/views'
 
 export function RisksScreen() {
-  const { runId } = useRun()
+  const { runId, runs } = useRun()
   const [sprint, setSprint] = useState<number | null>(null)
 
   const alertsQ = useAlerts(runId)
   const diffQ = usePlanDiff(runId)
   const violationsQ = usePlanViolations(runId)
   const deviationQ = useSprintDeviation()
+  const uploadsQ = useActualUploads()
   const sprintsQ = useSprints()
   const reasonsQ = useRefDecisionReasons()
 
-  const queries = [alertsQ, diffQ, violationsQ, deviationQ, sprintsQ]
+  const queries = [alertsQ, diffQ, violationsQ, deviationQ, uploadsQ, sprintsQ]
   const error = firstError(queries)
 
   if (anyPending(queries)) {
@@ -65,6 +67,13 @@ export function RisksScreen() {
   }
 
   const alerts = alertsQ.data?.items ?? []
+  const selectedRun = runs.find((run) => run.run_id === runId)
+  const visibleUploads = new Set((uploadsQ.data?.items ?? [])
+    .filter((upload) => selectedRun && upload.pi_id === selectedRun.pi_id
+      && upload.sprint_no < selectedRun.as_of_sprint
+      && new Date(upload.uploaded_at).getTime() <= new Date(selectedRun.created_at).getTime())
+    .map((upload) => upload.upload_id))
+  const deviations = (deviationQ.data?.items ?? []).filter((row) => visibleUploads.has(row.upload_id))
   const sprints = sprintsQ.data?.items ?? []
   const reasonLabels = new Map((reasonsQ.data?.items ?? []).map((r) => [r.code, r.label]))
   const shown = sprint === null ? alerts : alerts.filter((a) => a.sprint_no === sprint)
@@ -165,7 +174,7 @@ export function RisksScreen() {
         title="Факт против плана спринта"
         note="Факт сравнивается с планом, который действовал в том спринте, а не с текущим."
       >
-        <SprintDeviation rows={deviationQ.data?.items ?? []} />
+        <SprintDeviation rows={deviations} />
       </Section>
 
       <Section
