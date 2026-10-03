@@ -628,11 +628,14 @@ def fetch(
     # всплывали бы наверх при DESC — первое, что видит заказчик, было бы «не
     # запланировано» вместо плана.
     order_sql = ", ".join(f"{col} {'DESC' if desc else 'ASC'} NULLS LAST" for col, desc in pairs)
-    sql = f"SELECT * FROM {source.name}{where} ORDER BY {order_sql} LIMIT %s::int OFFSET %s::int"
+    # Даже если выбранные колонки совпадают, разные строки должны иметь
+    # устойчивый порядок между страницами.
+    order_sql += ", to_jsonb(src)::text ASC"
+    sql = f"SELECT * FROM {source.name} src{where} ORDER BY {order_sql} LIMIT %s::int OFFSET %s::int"
     items = db.query_dicts(sql, [*where_params, limit, offset])
 
-    truncated = len(items) == limit
-    if offset or truncated:
+    full_page = len(items) == limit
+    if offset or full_page:
         total = int(db.scalar(f"SELECT COUNT(*) FROM {source.name}{where}", where_params) or 0)
     else:
         total = len(items)  # страница не полная и это её начало: больше строк нет
@@ -651,7 +654,7 @@ def fetch(
         "offset": offset,
         "count": total,
         "returned": len(items),
-        "truncated": truncated,
+        "truncated": offset + len(items) < total,
         "has_more": offset + len(items) < total,
         "columns": list(items[0]) if items else _relation_columns(source.name),
         "items": items,

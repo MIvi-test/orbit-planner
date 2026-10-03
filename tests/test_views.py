@@ -238,6 +238,17 @@ def test_full_page_counts_the_whole_view(fake_db: FakeViewsDB) -> None:
     assert count_params == [2]  # фильтр тот же, что у выборки строк
 
 
+def test_exact_full_page_is_not_marked_truncated(fake_db: FakeViewsDB) -> None:
+    fake_db.rows = [{"alert_id": 1}, {"alert_id": 2}]
+    fake_db.total = 2
+
+    envelope = views.fetch("alerts", limit=2)
+
+    assert envelope["count"] == 2
+    assert envelope["truncated"] is False
+    assert envelope["has_more"] is False
+
+
 def test_offset_recounts_even_on_a_short_page(fake_db: FakeViewsDB) -> None:
     """`offset > 0` — это хвост списка: `count` из длины страницы был бы враньём."""
     fake_db.rows = [{"alert_id": 3}]
