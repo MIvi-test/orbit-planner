@@ -36,13 +36,14 @@ export function RunProvider({ children }: { children: ReactNode }) {
     return ok.length ? Math.max(...ok.map((r) => r.run_id)) : null
   }, [runs])
 
-  const runId = selected ?? defaultRunId
+  const selectedExists = selected !== null && runs.some((run) => run.run_id === selected)
+  const runId = selectedExists ? selected : defaultRunId
 
   const value: RunContextValue = {
     runs,
     runId,
     defaultRunId,
-    isDefault: selected === null || selected === defaultRunId,
+    isDefault: !selectedExists || selected === defaultRunId,
     setRunId: setSelected,
     isLoading: query.isLoading,
     isError: query.isError,

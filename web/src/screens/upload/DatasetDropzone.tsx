@@ -11,7 +11,7 @@ import { uploadDataset } from '../../api/uploads'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
 
-export function DatasetDropzone({ onDone }: { onDone: () => void }) {
+export function DatasetDropzone({ onDone }: { onDone: (runId: number) => void }) {
   const [busy, setBusy] = useState(false)
   const [problems, setProblems] = useState<string[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -29,7 +29,7 @@ export function DatasetDropzone({ onDone }: { onDone: () => void }) {
         title: 'Датасет загружен',
         message: `${result.rows.tasks ?? '?'} задач, план построен: ${result.plan.in_quarter} в квартале, ${result.plan.not_in_quarter} перенесено`,
       })
-      onDone()
+      onDone(result.plan.run_id)
     } catch (err) {
       if (err instanceof ApiError && err.body) {
         const body = err.body as Partial<UploadErrorPayload>

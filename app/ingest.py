@@ -169,8 +169,26 @@ FROM task_role_estimates e JOIN roles r ON r.role_id = e.role_id
 ORDER BY r.role_id
 """
 TEMPLATE_TASKS_SQL = """
-SELECT t.task_id, t.status, t.actual_start, t.summary
-FROM tasks t WHERE t.status <> 'Done'
+SELECT t.task_id, COALESCE(previous.status, seed.status) AS status,
+       CASE WHEN start_event.task_id IS NOT NULL THEN start_event.actual_start
+            ELSE seed.actual_start END AS actual_start,
+       t.summary
+FROM tasks_seed_state seed
+JOIN tasks t ON t.task_id = seed.task_id
+LEFT JOIN LATERAL (
+    SELECT a.status FROM task_actuals a
+    JOIN actual_uploads u ON u.upload_id = a.upload_id
+    WHERE a.task_id = seed.task_id AND u.pi_id = %s AND u.sprint_no < %s
+    ORDER BY u.sprint_no DESC LIMIT 1
+) previous ON TRUE
+LEFT JOIN LATERAL (
+    SELECT a.task_id, a.actual_start FROM task_actuals a
+    JOIN actual_uploads u ON u.upload_id = a.upload_id
+    WHERE a.task_id = seed.task_id AND u.pi_id = %s AND u.sprint_no < %s
+      AND (a.actual_start IS NOT NULL OR a.clear_actual_start)
+    ORDER BY u.sprint_no DESC LIMIT 1
+) start_event ON TRUE
+WHERE COALESCE(previous.status, seed.status) <> 'Done'
 ORDER BY t.task_id
 """
 
@@ -190,9 +208,12 @@ def _last_sprint(pi_id: str) -> int:
 
 
 def actuals_template(sprint_no: int | None = None) -> tuple[str, bytes]:
-    """CSV (UTF-8 с BOM — Excel открывает без кракозябр): живые задачи и роли."""
+    """CSV: задачи и даты на начало выбранного спринта, до его факта."""
     pi = _pi()
-    sprint = sprint_no or min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]))
+    last = _last_sprint(pi["pi_id"])
+    sprint = sprint_no if sprint_no is not None else min(last + 1, int(pi["sprint_count"]))
+    if not 1 <= sprint <= int(pi["sprint_count"]) or sprint > last + 1:
+        raise UploadError(f"шаблон доступен для спринтов 1..{min(last + 1, int(pi['sprint_count']))}")
     roles = db.query_dicts(TEMPLATE_ROLES_SQL)
     out = io.StringIO()
     writer = csv.writer(out)
@@ -200,7 +221,7 @@ def actuals_template(sprint_no: int | None = None) -> tuple[str, bytes]:
         ["task_id", "status", "actual_start", "actual_end", "completed_sp", "comment"]
         + [row["canonical_name"] for row in roles]
     )
-    for row in db.query_dicts(TEMPLATE_TASKS_SQL):
+    for row in db.query_dicts(TEMPLATE_TASKS_SQL, (pi["pi_id"], sprint, pi["pi_id"], sprint)):
         writer.writerow(
             [row["task_id"], row["status"], row["actual_start"] or "", "", "", ""] + [""] * len(roles)
         )
