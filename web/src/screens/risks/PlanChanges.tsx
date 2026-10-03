@@ -75,6 +75,10 @@ export function PlanChanges({ rows }: { rows: PlanDiffRow[] }) {
               <Badge variant="outline" size="sm" styles={{ label: { textTransform: 'none' } }}>
                 {CHANGE_WORD[row.change_type]}
               </Badge>
+              {row.start_changed && row.change_type !== 'start_changed' && <Text size="xs">изменён старт</Text>}
+              {row.assignment_changed && row.change_type !== 'assignment_changed' && <Text size="xs">изменены назначения и часы</Text>}
+              {row.sp_changed && row.change_type !== 'sp_changed' && <Text size="xs">изменены доли SP</Text>}
+              {row.reason_changed && row.change_type !== 'reason_changed' && <Text size="xs">изменена причина решения</Text>}
               {row.cause && (
                 <Text size="xs" c="var(--wax-text)">
                   {CAUSE_WORD[row.cause]}

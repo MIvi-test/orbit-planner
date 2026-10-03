@@ -39,16 +39,22 @@ export const CHANGE_WORD: Record<DiffChangeType, string> = {
   unchanged: 'без изменений',
   newly_planned: 'вошла в квартал',
   newly_deferred: 'перенесена впервые',
+  newly_cancelled: 'отменена',
+  decision_changed: 'изменено решение',
   shifted_later: 'сдвинута позже',
   shifted_earlier: 'сдвинута раньше',
+  start_changed: 'изменён старт',
+  assignment_changed: 'изменены назначения',
+  sp_changed: 'изменены доли SP',
+  reason_changed: 'изменена причина решения',
   completed: 'выполнена',
 }
 
 export const CAUSE_WORD: Record<Exclude<DiffCause, null>, string> = {
   own_slip: 'сама не закрылась в срок',
-  carry_over: 'спринт закрыт, работа продолжается',
+  carry_over: 'работа продолжается в прежний срок',
   dependency: 'сдвинулась блокирующая',
-  capacity: 'не хватило ёмкости',
+  unknown: 'причина не установлена',
   completed: 'выполнена по факту',
 }
 

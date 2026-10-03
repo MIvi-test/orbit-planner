@@ -452,7 +452,7 @@ export interface v_plan_assignment_detail {
   grade: string | null;
 }
 
-/** вьюха public.v_plan_diff — 16 кол. · Сравнение прогона с предыдущим: что изменилось (change_type) и почему (cause, explanation). Ответ на требование ТЗ «какие отклонения вызвали изменения». */
+/** вьюха public.v_plan_diff — сравнение с предыдущим прогоном того же сценария. */
 export interface v_plan_diff {
   run_id: number | null;
   prev_run_id: number | null;
@@ -470,6 +470,10 @@ export interface v_plan_diff {
   change_type: string | null;
   cause: string | null;
   explanation: string | null;
+  start_changed: boolean | null;
+  assignment_changed: boolean | null;
+  sp_changed: boolean | null;
+  reason_changed: boolean | null;
 }
 
 /** вьюха public.v_plan_violations — 5 кол. · Приёмка плана: нет строк с severity = error. Строки severity = warning план не отменяют, но требуют отображения в UI. Правила — docs/PLANNER_SPEC.md, раздел 7; разбор ревью M2 — docs/REVIEW_RESPONSE.md. */

@@ -30,13 +30,19 @@ export type AlertType = 'deadline_miss' | 'cascade_shift' | 'role_deficit'
 export type ViolationSeverity = 'error' | 'warning'
 export type KpiCode = 'pi_predictability' | 'say_do_ratio' | 'bus_factor'
 export type KpiKind = 'forecast' | 'actual'
-export type DiffCause = 'own_slip' | 'carry_over' | 'dependency' | 'capacity' | 'completed' | null
+export type DiffCause = 'own_slip' | 'carry_over' | 'dependency' | 'completed' | 'unknown' | null
 export type DiffChangeType =
   | 'unchanged'
   | 'newly_planned'
   | 'newly_deferred'
   | 'shifted_later'
   | 'shifted_earlier'
+  | 'newly_cancelled'
+  | 'decision_changed'
+  | 'start_changed'
+  | 'assignment_changed'
+  | 'sp_changed'
+  | 'reason_changed'
   | 'completed'
 
 // ---------------------------------------------------------------- доска задач
@@ -481,6 +487,10 @@ export interface PlanDiffRow {
   change_type: DiffChangeType
   cause: DiffCause
   explanation: string | null
+  start_changed: boolean
+  assignment_changed: boolean
+  sp_changed: boolean
+  reason_changed: boolean
 }
 
 export interface SprintDeviationRow {
