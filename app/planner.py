@@ -1471,6 +1471,7 @@ def _assemble(
     alerts = _build_alerts(
         inputs, schedule, baseline_starts,
         assignments=assignments, lower_bounds=lower_bounds or {}, as_of_sprint=as_of_sprint,
+        dependency_mode=(modes or {}).get("dependency_mode", DEPENDENCY_MODE_START_START),
     )
     kpis = _build_kpis(inputs, schedule, baseline_starts, as_of_sprint=as_of_sprint)
     states = _build_states(inputs, schedule, as_of_sprint)
@@ -1611,6 +1612,7 @@ def _build_alerts(
     assignments: list[Assignment] | tuple[Assignment, ...] = (),
     lower_bounds: dict[str, int] | None = None,
     as_of_sprint: int = 0,
+    dependency_mode: str = DEPENDENCY_MODE_START_START,
 ) -> list[AlertRow]:
     """Три типа рисков из ТЗ.
 
@@ -1638,11 +1640,23 @@ def _build_alerts(
         demand: dict[int, Decimal] = defaultdict(Decimal)
         ready_tasks: dict[int, list[str]] = defaultdict(list)
         names: dict[int, str] = {}
+        scheduled = {row.task_id: row for row in schedule}
+        blockers: dict[str, list[tuple[str, int]]] = defaultdict(list)
+        for blocking, blocked, gap in inputs.deps:
+            blockers[blocked].append((blocking, gap))
         for row in schedule:
             task = by_id.get(row.task_id)
             if task is None or row.decision == "cancelled":
                 continue
-            if lower_bounds.get(row.task_id, next_sprint + 1) > next_sprint:
+            earliest = lower_bounds.get(row.task_id, task.earliest_start_sprint)
+            for blocking, gap in blockers.get(row.task_id, ()):
+                predecessor = scheduled.get(blocking)
+                if predecessor is None:
+                    continue  # Done-предшественник уже включён в earliest_start_sprint
+                anchor = (predecessor.end_sprint if dependency_mode == DEPENDENCY_MODE_FINISH_START
+                          else predecessor.start_sprint)
+                earliest = max(earliest, anchor + gap if anchor is not None else next_sprint + 1)
+            if earliest > next_sprint:
                 continue
             for role_id, remaining_hh in task.needed.items():
                 if remaining_hh <= 0:

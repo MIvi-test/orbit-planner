@@ -347,11 +347,22 @@ def test_role_without_engineer_is_deferred_and_raises_orange() -> None:
     assert orange[0].payload["verdict"] == "НАЙМ: закрыть некем"
     assert orange[0].payload["tasks"] == ["T-1"]
     assert orange[0].payload["demand_hh"] == "40"
-
     red = [alert for alert in plan.alerts if alert.level == "red"]
     assert [alert.entity_id for alert in red] == ["PRODF-T-1"]
     assert red[0].alert_type == "deadline_miss"
 
+
+def test_orange_alert_counts_ready_work_delayed_within_pi() -> None:
+    plan = planner.build_plan(inputs(
+        [task("A", roles={1: 80}, topo=1), task("B", roles={1: 80}, topo=2)],
+        [engineer("ENG-1")],
+    ))
+    assert {row.task_id: row.start_sprint for row in plan.schedule} == {"A": 1, "B": 2}
+    orange = [alert for alert in plan.alerts if alert.level == "orange"]
+    assert len(orange) == 1
+    assert orange[0].payload["demand_hh"] == "160"
+    assert Decimal(orange[0].payload["supply_hh"]) == 80
+    assert orange[0].payload["tasks"] == ["A", "B"]
 
 def test_dependency_gap_is_kept() -> None:
     tasks = [task("A", roles={1: 80}, topo=1), task("B", roles={1: 80}, topo=2)]
