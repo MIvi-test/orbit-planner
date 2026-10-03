@@ -192,7 +192,7 @@ SOURCES: tuple[Source, ...] = (
         screen="Доска задач",
         order="task_id,role_id",
         orderable=("task_id", "role_id", "estimated_hours", "spent_hours", "remaining_hours"),
-        note="Строка на «задача × роль»: это не сумма часов задачи (ADR-002), часы ролей не складывать.",
+        note="Строка на «задача × роль»: человеко-часы ролей можно суммировать для трудозатрат задачи, но не для календарной длительности.",
     ),
     _source(
         "v_orbit_map",
@@ -237,7 +237,7 @@ SOURCES: tuple[Source, ...] = (
             "team_id", "history_points", "avg_velocity", "focus_factor",
             "available_sp_per_sprint", "available_sp_per_pi",
         ),
-        note="Ёмкость команды в SP. Для короткого спринта умножать на `v_sprint_fund_factor`, "
+        note="Ёмкость команды в SP. Для спринта иной длины умножать на `v_sprint_fund_factor`, "
         "а не на число спринтов (ADR-017).",
     ),
     _source(
@@ -289,22 +289,22 @@ SOURCES: tuple[Source, ...] = (
         screen="Календарь и фонд",
         order="sprint_no",
         orderable=("pi_id", "sprint_no", "start_date", "end_date", "length_days", "factor"),
-        note="Множитель фонда спринта: спринты 1–6 — 1.0000, 7-й (23–30.09, 8 дней) — 0.5714.",
+        note="Множитель фонда спринта: шесть двухнедельных спринтов, каждый 1.0000.",
     ),
     _source(
         "v_pi_fund_factor",
         screen="Календарь и фонд",
         order="pi_id",
         orderable=("pi_id", "sprint_length_days", "days_total", "factor"),
-        note="Фонд всего PI: 6.5714 при 92 днях. Единственный источник правды для фонда — "
-        "эта витрина и v_sprint_fund_factor, «92 / 14» не считать (ADR-017).",
+        note="Фонд всего PI: 6.0000 при 84 днях. Единственный источник правды для фонда — "
+        "эта витрина и v_sprint_fund_factor, множитель не дублировать (ADR-017).",
     ),
     _source(
         "sprints",
         screen="Календарь и фонд",
         order="sprint_no",
         orderable=("pi_id", "sprint_no", "start_date", "end_date", "length_days"),
-        note="Сетка квартала: 7 спринтов, `length_days` — генерируемая колонка (у 7-го 8 дней).",
+        note="Сетка PI: шесть двухнедельных спринтов; `length_days` вычисляется из дат.",
     ),
     _source(
         "initiatives",

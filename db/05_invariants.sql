@@ -19,9 +19,8 @@ DROP VIEW IF EXISTS v_plan_violations CASCADE;
 
 CREATE VIEW v_plan_violations AS
 
--- A. Ёмкость команды в SP (SP засчитываются в start_sprint) ------------
--- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: 7-й спринт
--- короче (8 дней), значит и SP в нём меньше (ADR-017).
+-- A. Ёмкость команды в SP (SP учитываются по долям plan_task_sp) ------------
+-- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: в текущем PI все шесть спринтов полные (ADR-025).
 SELECT x.run_id, 'SP_OVERFLOW'::text AS check_code, 'error'::text AS severity,
        (t.team_id || ' / спринт ' || x.sprint_no)::text AS entity,
        ('запланировано ' || SUM(x.sp) || ' SP при ёмкости '
@@ -52,7 +51,7 @@ WHERE s.decision = 'in_quarter'
   AND (COALESCE(sh.sp, 0) <> ts.remaining_sp OR sh.outside > 0)
 
 -- B. Перегрузка инженера: считать по СУММЕ ВСЕХ ОРБИТ ------------------
--- Фонд спринта — ставка × 80 ЧЧ × factor спринта (короткий 7-й = ×0.5714).
+-- Фонд спринта — ставка × 80 ЧЧ × factor спринта (в текущем PI factor = 1.0000).
 UNION ALL
 SELECT a.run_id, 'ENGINEER_OVERLOAD', 'error',
        (a.engineer_id || ' / спринт ' || a.sprint_no)::text,

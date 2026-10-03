@@ -287,7 +287,7 @@ CREATE TABLE pi_periods (
     pi_id              TEXT PRIMARY KEY,
     start_date         DATE     NOT NULL,
     end_date           DATE     NOT NULL,
-    sprint_count       SMALLINT NOT NULL DEFAULT 7,
+    sprint_count       SMALLINT NOT NULL DEFAULT 6,
     sprint_length_days SMALLINT NOT NULL DEFAULT 14,
     fte_hours_per_sprint SMALLINT NOT NULL DEFAULT 80,
     CHECK (end_date > start_date)
@@ -299,7 +299,7 @@ CREATE TABLE sprints (
     end_date   DATE     NOT NULL,
     -- Генерируемая: длина спринта — единственный источник множителя фонда
     -- (`v_pi_fund_factor`). Считать её руками в ETL нельзя — разъедется
-    -- с датами, и фонд 7-го спринта станет «обычным» молча.
+    -- с датами, и фонд спринта станет неверным молча.
     length_days SMALLINT GENERATED ALWAYS AS ((end_date - start_date) + 1) STORED,
     PRIMARY KEY (pi_id, sprint_no),
     CHECK (end_date >= start_date)
@@ -308,11 +308,10 @@ COMMENT ON COLUMN pi_periods.fte_hours_per_sprint IS
  'Из онбординга: 1.0 ставки = 80 ЧЧ за 2-недельный спринт (уже с учётом Focus Factor). '
  'Лежит в данных, а не в коде вьюх, — чтобы менялось одной строкой.';
 COMMENT ON TABLE pi_periods IS
- 'Границы PI (ADR-007). С 1.1.0 — КАЛЕНДАРНЫЙ квартал: 01.07..30.09.2026 (92 дня). '
- 'Фонд ставки за весь PI = fte_hours_per_sprint × v_pi_fund_factor.factor = 525.71 ЧЧ.';
+ 'PI начинается 01.07.2026 и длится шесть двухнедельных спринтов до 22.09.2026 (ADR-025). '
+ 'Фонд ставки = 6 × 80 = 480 ЧЧ; остаток календарного квартала не входит в PI.';
 COMMENT ON TABLE sprints IS
- 'Генерится ETL из PI_START по PI_END (ADR-007, ADR-017). Датасет границы квартала явно не задаёт. '
- 'Последний спринт обрезается по PI_END и потому короче: 23.09..30.09.2026 = 8 дней.';
+ 'Шесть двухнедельных спринтов от PI_START до PI_END; календарь задаётся текущей спецификацией.';
 COMMENT ON COLUMN sprints.length_days IS
  'Длина спринта в днях (включительно). Генерируемая колонка: ETL её не пишет. '
  'Множитель фонда = length_days / pi_periods.sprint_length_days.';
@@ -366,7 +365,7 @@ COMMENT ON TABLE ref_decision_reasons IS
 -- =====================================================================
 --  8. ФАКТ СПРИНТОВ (ADR-021)
 --  ТЗ: «раз в две недели пользователь загружает фактические результаты
---  очередного спринта». Загрузки — неизменяемый журнал; текущее состояние
+--  очередного спринта». Загрузки закрытых спринтов — замещаемый журнал; текущее состояние
 --  tasks / task_role_spent ВОСПРОИЗВОДИТСЯ из снимка исходного датасета
 --  плюс все загрузки по порядку (apply_actuals). Поэтому перезагрузка
 --  факта за спринт безопасна: состояние пересобирается с нуля.

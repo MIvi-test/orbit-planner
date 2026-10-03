@@ -1,7 +1,7 @@
 -- СГЕНЕРИРОВАНО etl/load.py — РУКАМИ НЕ ПРАВИТЬ.
 -- Источник: Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx
 -- sha256:   a618cb80279e9931e7706166082d8322fafd41aefefea722e44d9116a1f2f22e
--- ETL:      v1.1.0   PI_START=2026-07-01   оценка=matrix_column_sum
+-- ETL:      v1.2.0   PI_START=2026-07-01   оценка=matrix_column_sum
 BEGIN;
 TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,
          task_role_spent_seed, tasks_seed_state,
@@ -15,7 +15,7 @@ TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,
 
 -- прогон ETL: 1
 INSERT INTO load_batches (batch_id, source_file, source_sha256, etl_version, pi_start, row_counts) VALUES
-  (1, 'Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx', 'a618cb80279e9931e7706166082d8322fafd41aefefea722e44d9116a1f2f22e', '1.1.0', '2026-07-01', '{"roles": 21, "skills": 113, "teams": 6, "engineers": 30, "engineer_orbits": 34, "engineer_skills": 186, "initiatives": 15, "tasks": 45, "task_role_estimates": 258, "task_role_spent": 24, "task_dependencies": 19, "team_history": 12, "sprints": 6, "dq_issues": 39}');
+  (1, 'Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx', 'a618cb80279e9931e7706166082d8322fafd41aefefea722e44d9116a1f2f22e', '1.2.0', '2026-07-01', '{"roles": 21, "skills": 113, "teams": 6, "engineers": 30, "engineer_orbits": 34, "engineer_skills": 186, "initiatives": 15, "tasks": 45, "task_role_estimates": 258, "task_role_spent": 24, "task_dependencies": 19, "team_history": 12, "sprints": 6, "dq_issues": 39}');
 
 -- роли: 21
 INSERT INTO roles (role_id, canonical_name, role_group) VALUES

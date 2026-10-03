@@ -13,9 +13,9 @@ DROP VIEW IF EXISTS v_remaining_pi_fund_factor, v_sprint_fund_factor, v_pi_fund_
 -- --------------------------------------------------------------------
 --  МНОЖИТЕЛЬ ФОНДА. Единственный источник ответа «сколько ЧЧ даёт
 --  ставка в этом спринте / за весь PI». Полный спринт — 1.0000,
---  короткий 7-й (23.09..30.09.2026) — 8/14 = 0.5714 (ADR-017).
+--  сейчас все шесть спринтов полные и имеют factor = 1.0000 (ADR-025).
 --  Дублировать эту арифметику по пяти вьюхам нельзя: разъедется, и
---  короткий спринт молча получит полный фонд.
+--  фонд не совпадёт с календарём.
 -- --------------------------------------------------------------------
 CREATE VIEW v_sprint_fund_factor AS
 SELECT s.pi_id, s.sprint_no, s.start_date, s.end_date, s.length_days,
@@ -23,8 +23,8 @@ SELECT s.pi_id, s.sprint_no, s.start_date, s.end_date, s.length_days,
 FROM sprints s
 JOIN pi_periods p ON p.pi_id = s.pi_id;
 COMMENT ON VIEW v_sprint_fund_factor IS
- 'Фонд спринта = rate × fte_hours_per_sprint × factor. Короткий спринт даёт МЕНЬШЕ часов, '
- 'а не «те же 80»: иначе фонд квартала вылез бы за 92 дня календаря. Проверки ENGINEER_OVERLOAD '
+ 'Фонд спринта = rate × fte_hours_per_sprint × factor. В текущем PI все шесть спринтов полные; '
+ 'для спринта иной длины factor изменит доступные часы. Проверки ENGINEER_OVERLOAD '
  'и ORBIT_OVERLOAD берут фонд именно отсюда.';
 
 CREATE VIEW v_pi_fund_factor AS
@@ -37,7 +37,7 @@ JOIN sprints s ON s.pi_id = p.pi_id
 GROUP BY p.pi_id, p.sprint_length_days;
 COMMENT ON VIEW v_pi_fund_factor IS
  'Фонд ставки за весь PI, выраженный в «полных спринтах»: 1.0000 ставки × 80 ЧЧ × factor. '
- 'На Q3-2026: 92 дня / 14 = 6.5714, то есть 525.71 ЧЧ за квартал (при 6 спринтах × 14 было 480). '
+ 'На Q3-2026: 84 дня / 14 = 6.0000, то есть 480 ЧЧ за PI на полную ставку. '
  'Используется вместо `sprint_count` везде, где считается фонд за квартал.';
 
 CREATE VIEW v_remaining_pi_fund_factor AS
@@ -68,7 +68,7 @@ LEFT JOIN team_history h ON h.team_id = t.team_id
 GROUP BY t.team_id, t.focus_factor;
 COMMENT ON VIEW v_team_capacity_sp IS
  'history_points = 2 на команду: среднее шаткое, на защите оговорить. '
- 'available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта; для короткого умножать на '
+ 'available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта; для иной длины умножать на '
  'v_sprint_fund_factor.factor (так делает проверка SP_OVERFLOW).';
 
 -- --------------------------------------------------------------------
@@ -115,7 +115,7 @@ JOIN pi_periods p ON p.pi_id = s.pi_id
 JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no;
 COMMENT ON VIEW v_satellite_capacity IS
  'hours_own — фонд спутника на орбите в КОНКРЕТНОМ спринте: rate × 80 × factor спринта. '
- 'В коротком 7-м спринте это 0.5714 от обычного.';
+ 'В текущем PI все шесть спринтов полные.';
 
 -- --------------------------------------------------------------------
 --  Предложение часов по роли: в разрезе ядра и по всей компании.
@@ -136,8 +136,7 @@ CROSS JOIN pi_periods p
 GROUP BY r.role_id, r.canonical_name, o.team_id;
 COMMENT ON VIEW v_role_supply_hh IS
  'hh_per_sprint — фонд одного ПОЛНОГО спринта. hh_per_pi — фонд всего квартала: '
- '× v_pi_fund_factor.factor (92/14 = 6.5714), а НЕ × sprint_count, иначе короткий '
- '7-й спринт подарил бы команде лишние 8 дней фонда. hh_remaining_pi — фонд '
+ '× v_pi_fund_factor.factor (сейчас 6.0000). hh_remaining_pi — фонд '
  'будущих спринтов после последнего принятого факта.';
 
 -- --------------------------------------------------------------------
