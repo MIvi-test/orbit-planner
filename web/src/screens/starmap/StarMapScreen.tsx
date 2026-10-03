@@ -89,7 +89,7 @@ export function StarMapScreen() {
     const l = starLevel(o, absenceById.get(o.engineer_id))
     levels.set(l, (levels.get(l) ?? 0) + 1)
   })
-  const critical = skills.filter((s) => s.sole_in_role).length
+  const critical = skills.filter((s) => s.critical).length
   const single = skills.filter((s) => s.bus_factor === 1).length
   const atRisk = (absenceQ.data?.items ?? []).filter((a) => a.tasks_without_backup.length > 0)
   const selectedOrbit = orbits.find((o) => o.engineer_id === selectedId) ?? null

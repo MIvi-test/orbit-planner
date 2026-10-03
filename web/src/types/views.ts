@@ -139,6 +139,8 @@ export interface BusFactorSkillRow {
   in_demand: boolean
   sole_in_role: boolean
   risk: string
+  critical: boolean
+  demand_source: 'confirmed' | 'role_proxy' | 'mixed' | 'none'
 }
 
 export interface EngineerAbsenceRiskRow {

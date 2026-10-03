@@ -238,9 +238,9 @@ ORDER BY bus_factor, role_name
 """
 
 # Bus Factor по компетенциям (ТЗ, ADR-024): навык, носителей, роль нужна бэклогу,
-# единственный носитель и единственный по роли.
+# единственный носитель востребованного навыка.
 SKILL_BUS_FACTOR_SQL = """
-SELECT skill_name, bus_factor, in_demand, sole_in_role
+SELECT skill_name, bus_factor, in_demand, critical
 FROM v_bus_factor_skill
 ORDER BY bus_factor, skill_name
 """
@@ -393,7 +393,7 @@ class Inputs:
     baseline_schedule: dict[str, tuple[str, int | None, int | None]] = field(default_factory=dict)
     baseline_sp: dict[str, Decimal] = field(default_factory=dict)
     baseline_run_id: int | None = None
-    # Bus Factor по компетенциям: (навык, носителей, in_demand, sole_in_role)
+    # Bus Factor по компетенциям: (навык, носителей, in_demand, critical)
     skill_bus_factor: tuple[tuple[str, int, bool, bool], ...] = ()
     skill_requirements: dict[tuple[str, int], frozenset[int]] = field(default_factory=dict)
     skill_reviews: frozenset[tuple[str, int]] = frozenset()
@@ -570,7 +570,7 @@ def load_inputs() -> Inputs:
         baseline_run_id=int(baseline_rows[0]["run_id"]) if baseline_rows else None,
         skill_bus_factor=tuple(
             (row["skill_name"], int(row["bus_factor"]), bool(row["in_demand"]),
-             bool(row["sole_in_role"]))
+             bool(row["critical"]))
             for row in db.query_dicts(SKILL_BUS_FACTOR_SQL)
         ),
         skill_requirements={key: frozenset(ids) for key, ids in skill_requirements.items()},
@@ -2107,12 +2107,15 @@ def _build_kpis(
                 "которые им владеют; значение — минимум по навыкам, чья роль нужна бэклогу",
                 "competencies_n": len(inputs.skill_bus_factor),
                 "single_holder_n": sum(1 for _n, bf, _u, _s in inputs.skill_bus_factor if bf == 1),
-                "critical_n": sum(1 for _n, _bf, _u, sole in inputs.skill_bus_factor if sole),
-                "critical": sorted(name for name, _bf, _u, sole in inputs.skill_bus_factor if sole),
+                "critical_n": sum(1 for _n, _bf, used, critical in inputs.skill_bus_factor
+                                  if used and critical),
+                "critical": sorted(name for name, _bf, used, critical in inputs.skill_bus_factor
+                                   if used and critical),
                 "roles_without_staff": [name for name, bf, _demand in inputs.bus_factor if bf == 0],
-                "note": "«критично» — единственный носитель навыка и единственный специалист "
-                "своей роли: выпал — работу не подхватит никто. Роли без людей в штате — "
-                "отдельная проблема найма",
+                "note": "«критично» — единственный носитель востребованного навыка, "
+                "даже если коллеги той же роли не владеют им. Для непроверенных задач "
+                "спрос оценён через роль и помечен как приближение в звёздной карте. "
+                "Роли без людей в штате — отдельная проблема найма",
             },
             kind="actual",
             calculation_status="calculated" if in_demand else "no_relevant_skills",

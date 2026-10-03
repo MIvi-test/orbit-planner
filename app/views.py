@@ -357,10 +357,10 @@ SOURCES: tuple[Source, ...] = (
         screen="Звёздная карта",
         order="bus_factor,skill_name",
         orderable=("skill_id", "skill_name", "bus_factor", "roles_demand_hh", "in_demand",
-                   "sole_in_role", "risk"),
-        note="Bus Factor ПО КОМПЕТЕНЦИЯМ — то, что требует ТЗ. `risk` = «критично» у навыка, "
-        "чей единственный носитель ещё и единственный специалист своей роли. Покрытие ролей "
-        "(роли без людей в штате) — отдельная витрина v_bus_factor.",
+                   "sole_in_role", "critical", "demand_source", "risk"),
+        note="Bus Factor по компетенциям: confirmed — требование задачи, role_proxy — "
+        "приближение по роли для непроверенной работы. Критичен востребованный навык "
+        "с одним носителем; число коллег без навыка не снимает риск.",
     ),
     _source(
         "v_engineer_absence_risk",

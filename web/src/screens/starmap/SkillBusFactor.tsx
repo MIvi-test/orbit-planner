@@ -11,7 +11,9 @@ import { chip, muted } from './darkStyles'
 import { shortTeam } from './risk'
 
 const GRADES = [
-  { key: 'критично: работу не подхватит никто', label: 'критично', color: 'var(--flare)' },
+  { key: 'нет носителей требуемого навыка', label: 'нет носителей', color: 'var(--flare)' },
+  { key: 'критично: требуемый навык у одного', label: 'критично', color: 'var(--flare)' },
+  { key: 'предварительно: один носитель роли', label: 'оценка по роли', color: 'var(--ember)' },
   { key: 'единственный носитель', label: 'единственный носитель', color: 'var(--ember)' },
   { key: 'два носителя', label: 'два носителя', color: 'var(--orbit)' },
   { key: 'ок', label: 'три и больше', color: 'var(--bloom)' },
@@ -26,7 +28,7 @@ export function SkillBusFactor({
   selectedSkill: number | null
   onSelectSkill: (row: BusFactorSkillRow | null) => void
 }) {
-  const [active, setActive] = useState<Set<string>>(new Set([GRADES[0].key, GRADES[1].key]))
+  const [active, setActive] = useState<Set<string>>(new Set(GRADES.slice(0, 4).map((g) => g.key)))
   const counts = new Map<string, number>()
   rows.forEach((r) => counts.set(r.risk, (counts.get(r.risk) ?? 0) + 1))
   const shown = rows.filter((r) => active.has(r.risk))
@@ -59,7 +61,7 @@ export function SkillBusFactor({
               <th style={{ ...th, textAlign: 'right' }}>Носителей</th>
               <th style={th}>Кто</th>
               <th style={th}>Роль</th>
-              <th style={{ ...th, textAlign: 'right' }}>Спрос роли</th>
+              <th style={{ ...th, textAlign: 'right' }}>Спрос на навык</th>
               <th style={th}>Риск</th>
             </tr>
           </thead>
@@ -93,7 +95,7 @@ export function SkillBusFactor({
                     <span style={muted}> · {r.teams.map(shortTeam).join(', ')}</span>
                   </td>
                   <td style={{ ...td, textAlign: 'right' }} className="mono">
-                    {r.in_demand ? fmtHours(r.roles_demand_hh) : '—'}
+                    {r.in_demand ? `${fmtHours(r.roles_demand_hh)}${r.demand_source === 'role_proxy' ? ' (по роли)' : r.demand_source === 'mixed' ? ' (частично по роли)' : ''}` : '—'}
                   </td>
                   <td style={{ ...td, color: grade?.color }}>{r.risk}</td>
                 </tr>

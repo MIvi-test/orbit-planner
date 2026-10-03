@@ -388,49 +388,77 @@ DROP VIEW IF EXISTS v_sprint_deviation, v_plan_diff, v_team_profile,
      v_engineer_absence_risk, v_bus_factor_skill CASCADE;
 
 -- --------------------------------------------------------------------
---  Bus Factor по компетенциям: сколько инженеров заявили навык.
---  critical = навык есть у кого-то, чья роль нужна живому бэклогу —
---  связи «задача → навык» в датасете нет, поэтому критичность выводится
---  через роль носителя (ADR-024).
+--  Подтверждённый спрос берётся из ручной разметки задача × роль × навык.
+--  Для ещё не проверенных задач сохраняется оценка через роль, но помечается
+--  как приближение. Один коллега без нужного навыка не снимает риск.
 -- --------------------------------------------------------------------
 CREATE VIEW v_bus_factor_skill AS
 WITH holders AS (
     SELECT es.skill_id, e.engineer_id, e.role_id,
            (SELECT COUNT(*) FROM engineers x WHERE x.role_id = e.role_id) AS role_n
     FROM engineer_skills es JOIN engineers e ON e.engineer_id = es.engineer_id
-), role_demand AS (
-    SELECT role_id, SUM(demand_hh) AS demand_hh FROM v_backlog_demand GROUP BY role_id
+), exact_demand AS (
+    SELECT q.skill_id, SUM(rm.remaining_hours) AS demand_hh
+    FROM task_role_skill_requirements q
+    JOIN task_role_skill_reviews review
+      ON review.task_id = q.task_id AND review.role_id = q.role_id
+      AND review.status = 'confirmed'
+    JOIN v_task_remaining_hh rm ON rm.task_id = q.task_id AND rm.role_id = q.role_id
+    JOIN tasks t ON t.task_id = q.task_id
+    WHERE t.status IN ('ToDo', 'InProgress') AND rm.remaining_hours > 0
+    GROUP BY q.skill_id
+), proxy_demand AS (
+    SELECT h.skill_id, SUM(rm.remaining_hours) AS demand_hh
+    FROM (SELECT DISTINCT skill_id, role_id FROM holders) h
+    JOIN v_task_remaining_hh rm ON rm.role_id = h.role_id
+    JOIN tasks t ON t.task_id = rm.task_id
+    LEFT JOIN task_role_skill_reviews review
+      ON review.task_id = rm.task_id AND review.role_id = rm.role_id
+    WHERE t.status IN ('ToDo', 'InProgress') AND rm.remaining_hours > 0
+      AND review.status IS DISTINCT FROM 'confirmed'
+    GROUP BY h.skill_id
 )
 SELECT s.skill_id,
        s.name                                                   AS skill_name,
        COUNT(DISTINCT h.engineer_id)::int                       AS bus_factor,
-       ARRAY_AGG(DISTINCT h.engineer_id ORDER BY h.engineer_id) AS engineers,
+       COALESCE(ARRAY_AGG(DISTINCT h.engineer_id ORDER BY h.engineer_id)
+                FILTER (WHERE h.engineer_id IS NOT NULL), '{}'::text[]) AS engineers,
        ARRAY(SELECT DISTINCT o.team_id FROM engineer_orbits o
               JOIN holders x ON x.engineer_id = o.engineer_id
               WHERE x.skill_id = s.skill_id ORDER BY 1)         AS teams,
        ARRAY(SELECT DISTINCT r.canonical_name FROM holders x
               JOIN roles r ON r.role_id = x.role_id
               WHERE x.skill_id = s.skill_id ORDER BY 1)         AS roles,
-       COALESCE((SELECT SUM(d.demand_hh) FROM role_demand d
-                  WHERE d.role_id IN (SELECT x.role_id FROM holders x
-                                       WHERE x.skill_id = s.skill_id)), 0) AS roles_demand_hh,
-       COALESCE(BOOL_OR(rd.demand_hh > 0), FALSE)               AS in_demand,
+       (COALESCE(ex.demand_hh, 0) + COALESCE(px.demand_hh, 0)) AS roles_demand_hh,
+       (COALESCE(ex.demand_hh, 0) > 0 OR COALESCE(px.demand_hh, 0) > 0) AS in_demand,
        (COUNT(DISTINCT h.engineer_id) = 1 AND MAX(h.role_n) = 1) AS sole_in_role,
        CASE
-         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND MAX(h.role_n) = 1
-              THEN 'критично: работу не подхватит никто'
+         WHEN COUNT(DISTINCT h.engineer_id) = 0 AND COALESCE(ex.demand_hh, 0) > 0
+              THEN 'нет носителей требуемого навыка'
+         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND COALESCE(ex.demand_hh, 0) > 0
+              THEN 'критично: требуемый навык у одного'
+         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND COALESCE(px.demand_hh, 0) > 0
+              THEN 'предварительно: один носитель роли'
          WHEN COUNT(DISTINCT h.engineer_id) = 1 THEN 'единственный носитель'
          WHEN COUNT(DISTINCT h.engineer_id) = 2 THEN 'два носителя'
-         ELSE 'ок' END                                          AS risk
+         ELSE 'ок' END                                          AS risk,
+       (COUNT(DISTINCT h.engineer_id) = 1
+        AND (COALESCE(ex.demand_hh, 0) > 0 OR COALESCE(px.demand_hh, 0) > 0)) AS critical,
+       CASE WHEN COALESCE(ex.demand_hh, 0) > 0 AND COALESCE(px.demand_hh, 0) > 0
+                 THEN 'mixed'
+            WHEN COALESCE(ex.demand_hh, 0) > 0 THEN 'confirmed'
+            WHEN COALESCE(px.demand_hh, 0) > 0 THEN 'role_proxy'
+            ELSE 'none' END AS demand_source
 FROM skills s
-JOIN holders h ON h.skill_id = s.skill_id
-LEFT JOIN role_demand rd ON rd.role_id = h.role_id
-GROUP BY s.skill_id, s.name;
+LEFT JOIN holders h ON h.skill_id = s.skill_id
+LEFT JOIN exact_demand ex ON ex.skill_id = s.skill_id
+LEFT JOIN proxy_demand px ON px.skill_id = s.skill_id
+GROUP BY s.skill_id, s.name, ex.demand_hh, px.demand_hh;
 COMMENT ON VIEW v_bus_factor_skill IS
  'Bus Factor по компетенциям (ТЗ): число инженеров, заявивших навык. Градация риска: '
- '«критично» — единственный носитель, который ещё и единственный специалист своей роли '
- '(выпал — работу не подхватит никто, замещения ролей запрещены); «единственный носитель» — '
- 'навык у одного, но роль есть у других. in_demand — роль носителя нужна живому бэклогу. '
+ '«критично» — единственный носитель требуемого навыка, независимо от числа коллег по роли. '
+ 'demand_source=confirmed — ручная разметка задач; role_proxy — приблизительная оценка '
+ 'по роли на непроверенном бэклоге; mixed — оба источника. '
  'Покрытие ролей (роли без людей в штате) — отдельно: v_bus_factor, v_role_coverage_org.';
 
 -- --------------------------------------------------------------------
@@ -442,7 +470,7 @@ CREATE VIEW v_engineer_absence_risk AS
 WITH role_n AS (
     SELECT role_id, COUNT(*)::int AS n FROM engineers GROUP BY role_id
 ), uniq AS (
-    SELECT UNNEST(engineers) AS engineer_id, skill_name, sole_in_role AS critical
+    SELECT UNNEST(engineers) AS engineer_id, skill_name, critical
     FROM v_bus_factor_skill WHERE bus_factor = 1
 ), asg AS (
     SELECT run_id, engineer_id, task_id, SUM(hours) AS hours
