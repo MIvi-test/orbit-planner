@@ -87,6 +87,20 @@ cycle:
       db/06_migration_stamps.sql
     - uv run python tools/ci_cycle_check.py --sprints 3
 
+# --- Числа README (§8, §9) совпадают с базовым планом на выданном датасете --
+readme-numbers:
+  extends: [.python, .postgres]
+  stage: test
+  script:
+    - uv run python tools/apply_sql.py --wait 60
+    - >
+      uv run python tools/apply_sql.py
+      db/01_schema.sql db/02_contract.sql build/seed.sql
+      db/03_substitutions.sql db/04_views.sql db/05_invariants.sql
+      db/06_migration_stamps.sql
+    - uv run python tools/run_planner.py
+    - uv run python tools/readme_numbers.py --check
+
 # --- Чистая установка и обновление дают одну и ту же схему -----------------
 # Чистая установка (db/01…06 + seed) и `migrate` — no-op; старая база
 # (MIGRATION_BASE_REF) + `migrate` — та же схема (B-1, B-7).
@@ -131,12 +145,9 @@ schema-equivalence:
     expire_in: 1 week
 
 # --- Фронт: сборка и свежесть закоммиченного web/dist ----------------------
-# Сейчас НЕ блокирует: web/dist отстаёт от web/src (B-2). Снять allow_failure
-# в волне 1 после пересборки dist.
 web:
   image: node:22-bookworm-slim
   stage: test
-  allow_failure: true
   variables:
     GIT_DEPTH: "0"
   before_script:
@@ -151,11 +162,10 @@ web:
     key: "npm-$CI_COMMIT_REF_SLUG"
     paths: [web/node_modules/.cache]
 
-# --- Стиль: ruff. Не блокирует, пока в коде есть старые замечания ----------
+# --- Стиль: ruff (правила E, F — pyproject.toml) -----------------------------
 lint:
   image: python:3.14-slim
   stage: test
-  allow_failure: true
   before_script:
     - pip install --quiet ruff
   script:

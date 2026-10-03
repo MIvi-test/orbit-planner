@@ -17,10 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app import __version__ as APP_VERSION
-from app.db import connection
-from app.planner import FORMULA_VERSION
-from etl.config import ETL_VERSION, SOURCE_XLSX
+from app import __version__ as APP_VERSION  # noqa: E402
+from app.db import connection  # noqa: E402
+from app.planner import FORMULA_VERSION  # noqa: E402
+from etl.config import ETL_VERSION, SOURCE_XLSX  # noqa: E402
 
 
 def _revision() -> tuple[str, bool]:
