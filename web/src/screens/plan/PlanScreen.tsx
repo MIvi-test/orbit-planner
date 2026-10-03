@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Alert, Group, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { usePlanData } from './usePlanData'
+import { useRun } from '../../hooks/useRun'
 import { GanttGrid } from './GanttGrid'
 import { TaskDetailDrawer } from './TaskDetailDrawer'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
@@ -9,6 +10,7 @@ import type { TaskRow } from '../../types/views'
 
 export function PlanScreen() {
   const data = usePlanData()
+  const { runId, runs } = useRun()
   const [selected, setSelected] = useState<TaskRow | null>(null)
 
   if (data.isPending) {
@@ -39,6 +41,11 @@ export function PlanScreen() {
   const totalLive = data.groups.reduce((n, g) => n + g.tasks.filter((t) => t.status !== 'Done').length, 0)
   const inQuarter = [...data.scheduleByTask.values()].filter((s) => s.decision === 'in_quarter').length
   const achievedGoals = data.initiativeGoals.filter((row) => row.quarter_goal_status === 'confirmed_achieved').length
+  const selectedRun = runs.find((row) => row.run_id === runId)
+  const stability = (selectedRun?.params as Record<string, unknown> | undefined)?.stability as {
+    continued_role_pairs: number; kept_role_pairs: number; switched_role_pairs: number;
+    people_changed: number; switches: Array<{ task_id: string; role_id: number; before: string[]; after: string[]; cause: string }>
+  } | undefined
 
   return (
     <Stack gap="md" maw={1200}>
@@ -57,6 +64,14 @@ export function PlanScreen() {
         </div>
         <AsOfLabel iso={data.asOf} />
       </Group>
+
+      {stability && stability.continued_role_pairs > 0 && <Alert color={stability.switched_role_pairs ? 'yellow' : 'teal'} title="Стабильность исполнителей">
+        Сохранено {stability.kept_role_pairs} из {stability.continued_role_pairs} продолжающихся связок «задача × роль».
+        Смен: {stability.switched_role_pairs}, затронуто людей: {stability.people_changed}.
+        {stability.switches.map((item) => <Text key={`${item.task_id}-${item.role_id}`} size="xs" mt={4}>
+          {item.task_id}, роль {item.role_id}: {item.before.join(', ') || '—'} → {item.after.join(', ') || '—'} ({item.cause === 'unavailable_or_unqualified' ? 'нет доступного квалифицированного прежнего исполнителя' : item.cause === 'task_deferred' ? 'задача перенесена' : 'ограничение фонда или конкуренция за ресурс'}).
+        </Text>)}
+      </Alert>}
 
       <Paper withBorder p={0} style={{ overflow: 'auto' }}>
         <GanttGrid

@@ -10,10 +10,10 @@ BEGIN;
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
 DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
-    plan_task_schedule, plan_baseline, plan_runs,
+    plan_task_schedule, plan_baseline, plan_capacity_snapshot, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
-    dq_issue_reviews, dq_issues, task_sequence, sprints, pi_periods, team_history,
+    source_provenance, dq_issue_reviews, dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
     task_role_spent, task_role_estimates, tasks, initiatives,
     engineer_skill_declarations, engineer_skills, engineer_orbits, engineers, teams,
@@ -27,6 +27,7 @@ CREATE TABLE load_batches (
     batch_id      SERIAL PRIMARY KEY,
     source_file   TEXT        NOT NULL,
     source_sha256 TEXT        NOT NULL,
+    config_sha256 TEXT,
     etl_version   TEXT        NOT NULL,
     pi_start      DATE        NOT NULL,
     loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -34,6 +35,20 @@ CREATE TABLE load_batches (
 );
 COMMENT ON TABLE  load_batches IS 'Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали.';
 COMMENT ON COLUMN load_batches.row_counts IS 'Счётчики строк по каждой целевой таблице, для быстрой сверки после перезалива.';
+
+CREATE TABLE source_provenance (
+    batch_id INT NOT NULL REFERENCES load_batches(batch_id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    source_sheet TEXT NOT NULL,
+    source_cell TEXT NOT NULL,
+    raw_value TEXT,
+    normalized_value TEXT,
+    rule_version TEXT NOT NULL,
+    PRIMARY KEY (batch_id, entity, entity_id, field_name, source_sheet, source_cell)
+);
+CREATE INDEX ix_source_provenance_entity ON source_provenance(entity, entity_id);
 
 -- =====================================================================
 --  1. СПРАВОЧНИКИ

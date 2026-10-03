@@ -117,11 +117,12 @@ export interface kpi_snapshots {
   calculation_status: 'calculated' | 'no_commitment' | 'no_plan' | 'no_relevant_skills';
 }
 
-/** таблица public.load_batches — 7 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
+/** таблица public.load_batches — 8 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
 export interface load_batches {
   batch_id: number;
   source_file: string;
   source_sha256: string;
+  config_sha256: string | null;
   etl_version: string;
   pi_start: string;
   loaded_at: string;
@@ -158,6 +159,15 @@ export interface plan_baseline {
   task_id: string;
   planned_sp: number;
   committed: boolean;
+}
+
+/** таблица public.plan_capacity_snapshot — 5 кол. */
+export interface plan_capacity_snapshot {
+  run_id: number;
+  engineer_id: string;
+  team_id: string;
+  sprint_no: number;
+  available_hours: number;
 }
 
 /** таблица public.plan_decision_goal_map — 3 кол. */
@@ -283,6 +293,19 @@ export interface skills {
   skill_id: number;
   name: string;
   normalized_name: string;
+}
+
+/** таблица public.source_provenance — 9 кол. */
+export interface source_provenance {
+  batch_id: number;
+  entity: string;
+  entity_id: string;
+  field_name: string;
+  source_sheet: string;
+  source_cell: string;
+  raw_value: string | null;
+  normalized_value: string | null;
+  rule_version: string;
 }
 
 /** таблица public.sprints — 5 кол. · Шесть двухнедельных спринтов от PI_START до PI_END; календарь задаётся текущей спецификацией. */
@@ -843,6 +866,7 @@ export type RelationName =
   | 'pi_periods'
   | 'plan_assignments'
   | 'plan_baseline'
+  | 'plan_capacity_snapshot'
   | 'plan_decision_goal_map'
   | 'plan_dependency_bounds'
   | 'plan_role_demand_snapshot'
@@ -858,6 +882,7 @@ export type RelationName =
   | 'roles'
   | 'skill_aliases'
   | 'skills'
+  | 'source_provenance'
   | 'sprints'
   | 'task_actual_spent'
   | 'task_actuals'

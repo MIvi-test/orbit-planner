@@ -169,6 +169,52 @@ export function fetchPlanQuality(runId: number): Promise<PlanQualityResult> {
   return request<PlanQualityResult>(`/plan-quality?run_id=${runId}`)
 }
 
+export interface TaskTrace {
+  run: { run_id: number; algorithm: string; params: Record<string, unknown>; actuals_upload_id: number | null }
+  state: { status: string; remaining_hh: string; remaining_sp: string }
+  decision: { decision: string; reason_text: string; reason_details: Record<string, unknown> } | null
+  role_demands: Array<{ role_id: number; role_name: string; needed_hours: string }>
+  assignments: Array<{ sprint_no: number; role_id: number; engineer_id: string; home_team_id: string; hours: string; available_hours: string | null }>
+  dependency_bound: { earliest_start_sprint: number } | null
+  source_batch: { source_file: string; source_sha256: string; config_sha256: string | null; etl_version: string } | null
+  source_available: boolean
+  source_records: Array<{ entity: string; entity_id: string; field_name: string; source_sheet: string; source_cell: string; raw_value: string | null; normalized_value: string | null; rule_version: string }>
+}
+
+export function fetchTaskTrace(runId: number, taskId: string): Promise<TaskTrace> {
+  const query = new URLSearchParams({ run_id: String(runId), task_id: taskId })
+  return request<TaskTrace>(`/tasks/trace?${query}`)
+}
+
+export interface WorkforceMeasure {
+  kind: 'hire' | 'train' | 'loan'
+  label: string
+  effective_sprint: number
+  resource_cost: string
+  restored_initiatives: string[]
+  gained_tasks: string[]
+  lost_tasks: string[]
+  net_sp_gain: string
+  earlier_task_sprints: number
+  in_quarter: number
+}
+
+export interface WorkforceResult {
+  run_id: number
+  role_id: number
+  team_id: string
+  start_sprint: number
+  assumptions: string
+  assumed_skill_ids: number[]
+  baseline_in_quarter: number
+  ranked_measures: WorkforceMeasure[]
+}
+
+export function fetchWorkforceScenario(runId: number, roleId: number, teamId: string, startSprint: number): Promise<WorkforceResult> {
+  const query = new URLSearchParams({ run_id: String(runId), role_id: String(roleId), team_id: teamId, start_sprint: String(startSprint) })
+  return request<WorkforceResult>(`/scenarios/workforce?${query}`)
+}
+
 export interface ViewSource {
   name: string
   kind: 'view' | 'table'

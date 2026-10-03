@@ -356,6 +356,14 @@ def parse(path: Path):
     formula_wb = openpyxl.load_workbook(path, data_only=False, read_only=True)
     sh = Sheet(wb.worksheets[0], formula_wb.worksheets[0])
     D: dict = {}
+    provenance: list[tuple] = []
+
+    def record(entity: str, entity_id: str, field: str, row: int, column: int,
+               normalized: object) -> None:
+        cell = sh.ws.cell(row, column)
+        provenance.append((1, entity, entity_id, field, sh.ws.title, cell.coordinate,
+                           None if cell.value is None else str(cell.value),
+                           None if normalized is None else str(normalized), C.ETL_VERSION))
 
     # ---------- справочники ----------
     D["ref_results"], map_result = build_ref(
@@ -411,6 +419,14 @@ def parse(path: Path):
         declared_value = sh.number(r, tc["estimated_hh"], required=True, nonnegative=True,
                                    decimal_places=2)
         rung = int(rung_value) if rung_value is not None else None
+        for field, header, normalized in (
+            ("team_id", "team_id", norm_text(col(r, "team_id"))),
+            ("status", "status", norm_text(col(r, "status"))),
+            ("rung", "rung", rung),
+            ("estimation_sp", "estimation_sp", sp_value),
+            ("estimated_hh_declared", "estimated_hh", declared_value),
+        ):
+            record("tasks", tid, field, r, tc[header], normalized)
 
         ini = initiatives.setdefault(prodf, {"br": br, "first_row": r, "titles": [], "rungs": [], "sps": []})
         if ini["br"] != br:
@@ -457,8 +473,13 @@ def parse(path: Path):
             continue
         total = 0.0
         for canon, rows in role_rows.items():
-            h = sum((sh.number(rr, c, nonnegative=True, decimal_places=2) or Decimal(0)
-                     for rr in rows), Decimal(0))
+            h = Decimal(0)
+            for rr in rows:
+                component = sh.number(rr, c, nonnegative=True, decimal_places=2) or Decimal(0)
+                h += component
+                if component > 0:
+                    record("task_role_estimates", f"{tid}:{role_id[canon]}", "hours", rr, c,
+                           component)
             if h > 0:
                 estimates.append((tid, role_id[canon], float(h)))
                 total += float(h)
@@ -549,6 +570,12 @@ def parse(path: Path):
             dq.add("engineers", eid, "ROLE_ALIAS_APPLIED", "info", f"Роль '{raw_role}' -> '{canon}'.")
         grade = norm_text(sh.cell(r, ec["grade"]))
         rate = float(sh.number(r, ec["capacity_rate"], required=True, nonnegative=True) or 0)
+        for field, header, normalized in (
+            ("role", "role", canon), ("grade", "grade", grade),
+            ("team_id", "team_id", team), ("capacity_rate", "capacity_rate", rate),
+            ("skills_declared", "skills_declared", norm_text(sh.cell(r, ec["skills_declared"]))),
+        ):
+            record("engineers", eid, field, r, ec[header], normalized)
 
         if eid in engineers:
             prev = engineers[eid]
@@ -590,8 +617,9 @@ def parse(path: Path):
     for r in sh.data_rows(h_hdr):
         tm = norm_text(sh.cell(r, hc["team_id"]))
         teams.add(tm)
-        history.append((tm, sh.date(r, hc["snapshot_date"]),
-                        float(sh.number(r, hc["velocity_achieved"], required=True, nonnegative=True) or 0),
+        velocity = float(sh.number(r, hc["velocity_achieved"], required=True, nonnegative=True) or 0)
+        record("team_history", tm, "velocity_achieved", r, hc["velocity_achieved"], velocity)
+        history.append((tm, sh.date(r, hc["snapshot_date"]), velocity,
                         float(sh.number(r, hc["planned_sp"], required=True, nonnegative=True) or 0)))
 
     teams |= {t["team_id"] for t in tasks} | {o[1] for o in orbits}
@@ -625,7 +653,7 @@ def parse(path: Path):
              deps=deps, dep_source_rows=dep_source_rows, engineers=engineers, orbits=orbits,
              skills=[(i, s, k) for k, (i, s) in skills_seen.items()],
              eng_skills=sorted(eng_skills), skill_declarations=skill_declarations,
-             history=history, teams=sorted(teams),
+             history=history, teams=sorted(teams), provenance=provenance,
              role_id=role_id)
     return D
 
@@ -634,12 +662,10 @@ def parse(path: Path):
 #  календарь и граф                                                     #
 # ===================================================================== #
 def build_sprints():
-    """Сетка спринтов внутри ТОЧНЫХ границ PI (ADR-007 + ADR-017).
+    """Сетка спринтов внутри точных границ PI (ADR-025).
 
-    Спринты идут по 14 дней от `PI_START`; последний обрезается по `PI_END`
-    и потому может быть короче. Длина спринта — не косметика: фонд часов
-    масштабируется ею (`v_pi_fund_factor`), и на живых данных 7-й спринт
-    короче всех (23.09..30.09.2026 = 8 дней, множитель 0.5714).
+    Спринты идут по 14 дней от `PI_START`; длина определяет фонд часов.
+    В текущем PI все шесть спринтов полные.
 
     Guard: сетка обязана закрыть квартал ровно — без дыр и нахлёстов.
     Ошибка в `PI_START`/`PI_END`/`SPRINT_COUNT` не должна доехать до
@@ -768,6 +794,7 @@ def emit(D, src_path: Path) -> str:
         "tasks": len(D["tasks"]), "task_role_estimates": len(D["estimates"]),
         "task_role_spent": len(D["spent"]), "task_dependencies": len(D["deps"]),
         "team_history": len(D["history"]), "sprints": len(sprints), "dq_issues": len(dq.rows),
+        "source_provenance": len(D["provenance"]),
     }
 
     o: list[str] = []
@@ -780,7 +807,7 @@ def emit(D, src_path: Path) -> str:
     w("TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,")
     w("         task_role_spent_seed, tasks_seed_state,")
     w("         kpi_snapshots, alerts, task_state, plan_assignments, plan_task_schedule,")
-    w("         plan_baseline, plan_runs, dq_issues, task_sequence, sprints, pi_periods,")
+    w("         plan_capacity_snapshot, plan_baseline, plan_runs, source_provenance, dq_issues, task_sequence, sprints, pi_periods,")
     w("         team_history, task_dependencies, task_role_spent, task_role_estimates,")
     w("         tasks, initiatives, engineer_skill_declarations, engineer_skills,")
     w("         engineer_orbits, engineers, teams,")
@@ -796,8 +823,13 @@ def emit(D, src_path: Path) -> str:
 
     import json
     block("прогон ETL", "load_batches",
-          ["batch_id", "source_file", "source_sha256", "etl_version", "pi_start", "row_counts"],
-          [(1, src_path.name, sha, C.ETL_VERSION, C.PI_START, json.dumps(counts, ensure_ascii=False))])
+          ["batch_id", "source_file", "source_sha256", "config_sha256", "etl_version", "pi_start", "row_counts"],
+          [(1, src_path.name, sha,
+            hashlib.sha256((Path(__file__).parent / "config.py").read_bytes()).hexdigest(),
+            C.ETL_VERSION, C.PI_START, json.dumps(counts, ensure_ascii=False))])
+    block("происхождение значений", "source_provenance",
+          ["batch_id", "entity", "entity_id", "field_name", "source_sheet", "source_cell",
+           "raw_value", "normalized_value", "rule_version"], D["provenance"])
 
     block("роли", "roles", ["role_id", "canonical_name", "role_group"], D["roles"])
     block("алиасы ролей", "role_aliases", ["alias", "role_id"], D["role_aliases"])

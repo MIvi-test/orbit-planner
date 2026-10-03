@@ -415,6 +415,11 @@ class Inputs:
     all_deps: tuple[tuple[str, str, int], ...] = ()
     done_task_dates: dict[str, tuple[date | None, date | None]] = field(default_factory=dict)
     task_actual_starts: dict[str, date] = field(default_factory=dict)
+    source_sha256: str | None = None
+    config_sha256: str | None = None
+    etl_version: str | None = None
+    preferred_engineers: dict[tuple[str, int], frozenset[str]] = field(default_factory=dict)
+    sprint_orbit_rates: dict[tuple[str, str, int], Decimal] = field(default_factory=dict)
 
     @property
     def fund_hours_per_fte(self) -> Decimal:
@@ -525,6 +530,20 @@ def load_inputs() -> Inputs:
     for row in db.query_dicts(DONE_IN_SPRINT_SQL, (pi["pi_id"],)):
         done_in_sprint[int(row["sprint_no"])].add(row["task_id"])
     task_dates = db.query_dicts(TASK_DATES_SQL)
+    source = db.query_one(
+        "SELECT source_sha256, config_sha256, etl_version FROM load_batches "
+        "ORDER BY batch_id DESC LIMIT 1"
+    ) or {}
+    previous_people: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for row in db.query_dicts(
+        "SELECT DISTINCT a.task_id, a.role_id, a.engineer_id "
+        "FROM plan_assignments a JOIN plan_runs r ON r.run_id = a.run_id "
+        "JOIN tasks t ON t.task_id = a.task_id "
+        "WHERE r.run_id = (SELECT MAX(run_id) FROM plan_runs "
+        "WHERE pi_id = %s AND status IN ('ok', 'infeasible')) "
+        "AND t.status = 'InProgress'", (pi["pi_id"],)
+    ):
+        previous_people[(row["task_id"], row["role_id"])].add(row["engineer_id"])
 
     return Inputs(
         pi_id=pi["pi_id"],
@@ -606,6 +625,10 @@ def load_inputs() -> Inputs:
         skill_reviews=frozenset(skill_reviews),
         engineer_skills={key: frozenset(ids) for key, ids in engineer_skills.items()},
         skill_names=skill_names,
+        source_sha256=source.get("source_sha256"),
+        config_sha256=source.get("config_sha256"),
+        etl_version=source.get("etl_version"),
+        preferred_engineers={key: frozenset(people) for key, people in previous_people.items()},
     )
 
 
@@ -701,6 +724,7 @@ class Plan:
     actuals_upload_id: int | None = None
     role_demands: tuple[tuple[str, int, Decimal], ...] = ()
     graph_bounds: tuple[tuple[str, int], ...] = ()
+    capacity_snapshot: tuple[tuple[str, str, int, Decimal], ...] = ()
 
     @property
     def in_quarter(self) -> tuple[ScheduleRow, ...]:
@@ -731,11 +755,8 @@ class _Funds:
         # считаем спринт полным: дефолт для тестовых календарей.
         self.factors: dict[int, Decimal] = dict(inputs.sprint_factors)
         self.engineers: dict[str, EngineerInput] = {e.engineer_id: e for e in inputs.engineers}
-        self._budget: dict[tuple[str, str], Decimal] = {
-            (engineer.engineer_id, team_id): rate * self.fte
-            for engineer in inputs.engineers
-            for team_id, rate in engineer.orbits.items()
-        }
+        self.preferred: dict[tuple[str, int], frozenset[str]] = inputs.preferred_engineers
+        self.sprint_orbit_rates = inputs.sprint_orbit_rates
         self._spent: dict[tuple[str, str, int], Decimal] = defaultdict(Decimal)
         self.used_sp: dict[tuple[str, int], Decimal] = defaultdict(Decimal)
 
@@ -745,20 +766,31 @@ class _Funds:
 
     # ---- часы ------------------------------------------------------------
     def orbit_left(self, engineer_id: str, team_id: str, sprint_no: int) -> Decimal:
+        rate = self.sprint_orbit_rates.get(
+            (engineer_id, team_id, sprint_no),
+            self.engineers[engineer_id].orbits.get(team_id, Decimal(0)),
+        )
         budget = (
-            self._budget.get((engineer_id, team_id), Decimal("0"))
+            rate * self.fte
             * self.sprint_factor(sprint_no)
         )
         return budget - self._spent[(engineer_id, team_id, sprint_no)]
 
     def total_left(self, engineer_id: str, sprint_no: int) -> Decimal:
         engineer = self.engineers[engineer_id]
+        if any((engineer_id, team_id, sprint_no) in self.sprint_orbit_rates
+               for team_id in engineer.orbits):
+            rate = sum((self.sprint_orbit_rates.get(
+                (engineer_id, team_id, sprint_no), orbit_rate)
+                for team_id, orbit_rate in engineer.orbits.items()), Decimal(0))
+        else:
+            rate = engineer.total_capacity_rate
         spent = sum(
             (self._spent[(engineer_id, team_id, sprint_no)] for team_id in engineer.orbits),
             Decimal("0"),
         )
         return (
-            engineer.total_capacity_rate * self.fte * self.sprint_factor(sprint_no) - spent
+            rate * self.fte * self.sprint_factor(sprint_no) - spent
         )
 
     def spend(self, engineer_id: str, team_id: str, sprint_no: int, hours: Decimal) -> None:
@@ -777,7 +809,8 @@ class _Funds:
 
 
 def _candidate_engineers(
-    task_team: str, role_id: int, sprint_no: int, funds: _Funds, by_role: dict[int, list[str]]
+    task_id: str, task_team: str, role_id: int, sprint_no: int,
+    funds: _Funds, by_role: dict[int, list[str]], preferred: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Кого можно поставить на роль: свои орбиты первыми, потом заёмщики.
 
@@ -798,8 +831,8 @@ def _candidate_engineers(
             own.append((funds.orbit_left(engineer_id, task_team, sprint_no), left, engineer_id))
         else:
             loans.append((left, engineer_id))
-    own.sort(key=lambda item: (-item[0], -item[1], item[2]))
-    loans.sort(key=lambda item: (-item[0], item[1]))
+    own.sort(key=lambda item: (item[2] not in preferred, -item[0], -item[1], item[2]))
+    loans.sort(key=lambda item: (item[1] not in preferred, -item[0], item[1]))
     return [item[2] for item in own] + [item[1] for item in loans]
 
 
@@ -880,7 +913,10 @@ def _allocate_task(
             need = remaining[role_id]
             if need <= 0:
                 continue
-            for engineer_id in _candidate_engineers(task.team_id, role_id, sprint_no, funds, by_role):
+            for engineer_id in _candidate_engineers(
+                task.task_id, task.team_id, role_id, sprint_no, funds, by_role,
+                funds.preferred.get((task.task_id, role_id), frozenset()),
+            ):
                 # efficiency: смету закрывают ЧАСЫ ИСПОЛНИТЕЛЯ, а не сметы.
                 efficiency = coverage.get((engineer_id, role_id), Decimal("1"))
                 taken_from = _spend_from(
@@ -1710,9 +1746,46 @@ def _assemble(
         (task.task_id, role_id) for task in inputs.tasks for role_id in task.needed
     }
     unreviewed_skills = sorted(active_role_pairs - inputs.skill_reviews)
+    assigned_people: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for assignment in assignments:
+        assigned_people[(assignment.task_id, assignment.role_id)].add(assignment.engineer_id)
+    switching: list[dict[str, Any]] = []
+    kept = 0
+    engineers_by_id = {engineer.engineer_id: engineer for engineer in inputs.engineers}
+    for (task_id, role_id), before in sorted(inputs.preferred_engineers.items()):
+        after = assigned_people.get((task_id, role_id), set())
+        if after == before:
+            kept += 1
+            continue
+        task = next((item for item in inputs.tasks if item.task_id == task_id), None)
+        required = inputs.skill_requirements.get((task_id, role_id), frozenset())
+        unavailable = any(
+            engineer_id not in engineers_by_id
+            or (engineer_id, role_id) not in inputs.coverage
+            or not required.issubset(inputs.engineer_skills.get(engineer_id, frozenset()))
+            for engineer_id in before
+        )
+        switching.append({
+            "task_id": task_id, "role_id": role_id,
+            "before": sorted(before), "after": sorted(after),
+            "changed_people": len(before.symmetric_difference(after)),
+            "cause": "unavailable_or_unqualified" if unavailable else
+                     "task_deferred" if task is None or not after else "capacity_or_competition",
+        })
 
     params: dict[str, Any] = {
         "algorithm": ALGORITHM,
+        "stability": {
+            "continued_role_pairs": len(inputs.preferred_engineers),
+            "kept_role_pairs": kept,
+            "switched_role_pairs": len(switching),
+            "people_changed": sum(item["changed_people"] for item in switching),
+            "switches": switching,
+            "note": "Продолжающаяся работа сохраняет прежнего исполнителя, если хватает фонда и подтверждённых навыков; смены по конкуренции видны отдельно.",
+        },
+        "source_sha256": inputs.source_sha256,
+        "config_sha256": inputs.config_sha256,
+        "etl_version": inputs.etl_version,
         "estimate_source": ESTIMATE_SOURCE,
         "skill_validation": {
             "confirmed_roles": len(active_role_pairs) - len(unreviewed_skills),
@@ -1801,6 +1874,15 @@ def _assemble(
             for role_id, hours in sorted(task.needed.items())
         ),
         graph_bounds=tuple((task.task_id, task.earliest_start_sprint) for task in inputs.tasks),
+        capacity_snapshot=tuple(
+            (engineer.engineer_id, team_id, sprint_no,
+             inputs.sprint_orbit_rates.get((engineer.engineer_id, team_id, sprint_no), rate)
+             * Decimal(inputs.fte_hours_per_sprint)
+             * inputs.sprint_factors.get(sprint_no, Decimal(1)))
+            for engineer in inputs.engineers
+            for team_id, rate in engineer.orbits.items()
+            for sprint_no in range(1, inputs.sprint_count + 1)
+        ),
     )
 
 
@@ -2374,6 +2456,15 @@ def write_plan(plan: Plan) -> int:
                     )
                     for row in plan.assignments
                 ],
+            )
+
+        if plan.capacity_snapshot:
+            cur.executemany(
+                "INSERT INTO plan_capacity_snapshot "
+                "(run_id, engineer_id, team_id, sprint_no, available_hours) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                [(run_id, engineer_id, team_id, sprint_no, hours)
+                 for engineer_id, team_id, sprint_no, hours in plan.capacity_snapshot],
             )
 
         cur.executemany(

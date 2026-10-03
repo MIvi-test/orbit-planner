@@ -55,13 +55,16 @@ def build_report(source: Path) -> dict[str, object]:
             return dict(row) if row else {}
 
         batch = one("""
-            SELECT batch_id, source_file, source_sha256, etl_version, pi_start,
+            SELECT batch_id, source_file, source_sha256, config_sha256, etl_version, pi_start,
                    row_counts FROM load_batches ORDER BY batch_id DESC LIMIT 1
         """)
         if not batch:
             raise RuntimeError("load_batches is empty: load the dataset first")
         if batch["source_sha256"] != digest:
             raise RuntimeError("Excel SHA256 differs from the loaded dataset")
+        config_digest = hashlib.sha256((ROOT / "etl" / "config.py").read_bytes()).hexdigest()
+        if batch["config_sha256"] and batch["config_sha256"] != config_digest:
+            raise RuntimeError("ETL configuration SHA256 differs from the loaded dataset")
 
         pi = one("""
             SELECT p.pi_id, p.start_date, p.end_date, p.sprint_count,
@@ -89,6 +92,7 @@ def build_report(source: Path) -> dict[str, object]:
             "etl_version": ETL_VERSION,
             "formula_version": FORMULA_VERSION,
             "source": {"file": source.name, "sha256": digest},
+            "config_sha256": config_digest,
             "loaded_batch": batch,
             "pi": pi,
             "counts": counts,

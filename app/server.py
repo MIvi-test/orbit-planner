@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, data_quality, db, ingest, plan_quality, sensitivity, views
+from app import absence, data_quality, db, ingest, plan_quality, sensitivity, trace, views, workforce
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -100,8 +100,9 @@ MIME_OVERRIDES = {
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
-    "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/tasks/goal-confirmation",
-    "/api/dq-issues/review", "/api/plan-quality", "/metrics",
+    "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/scenarios/workforce",
+    "/api/tasks/goal-confirmation",
+    "/api/dq-issues/review", "/api/plan-quality", "/api/tasks/trace", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -473,6 +474,31 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
             return
 
+        if path == "/api/scenarios/workforce":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run = self._query_param(query, "run_id")
+            raw_role = self._query_param(query, "role_id")
+            raw_sprint = self._query_param(query, "start_sprint")
+            team_id = self._query_param(query, "team_id")
+            if not raw_run or not raw_run.isdigit() or not raw_role or not raw_role.isdigit() or not raw_sprint or not raw_sprint.isdigit() or not team_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите run_id, role_id, team_id и start_sprint",
+                })
+                return
+            try:
+                result = workforce.evaluate(int(raw_run), int(raw_role), team_id, int(raw_sprint))
+            except workforce.ScenarioUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
         if path == "/api/plan-quality":
             query = parse_qs(urlparse(self.path).query)
             raw_run_id = self._query_param(query, "run_id")
@@ -485,6 +511,26 @@ class Handler(BaseHTTPRequestHandler):
                 result = plan_quality.evaluate(int(raw_run_id))
             except plan_quality.QualityUnavailable as exc:
                 self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/tasks/trace":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            task_id = self._query_param(query, "task_id")
+            if not raw_run_id or not raw_run_id.isdigit() or not task_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите run_id и task_id",
+                })
+                return
+            try:
+                result = trace.task_trace(int(raw_run_id), task_id)
+            except trace.TraceUnavailable as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(exc)})
                 return
             except Exception as exc:  # noqa: BLE001
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
