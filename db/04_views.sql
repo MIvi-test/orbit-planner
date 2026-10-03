@@ -8,7 +8,7 @@ DROP VIEW IF EXISTS v_dq_summary, v_orbit_map, v_task_board, v_bus_factor,
      v_role_deficit, v_backlog_demand, v_role_supply_hh, v_satellite_capacity,
      v_task_remaining_hh, v_team_capacity_sp CASCADE;
 
-DROP VIEW IF EXISTS v_sprint_fund_factor, v_pi_fund_factor CASCADE;
+DROP VIEW IF EXISTS v_remaining_pi_fund_factor, v_sprint_fund_factor, v_pi_fund_factor CASCADE;
 
 -- --------------------------------------------------------------------
 --  МНОЖИТЕЛЬ ФОНДА. Единственный источник ответа «сколько ЧЧ даёт
@@ -39,6 +39,18 @@ COMMENT ON VIEW v_pi_fund_factor IS
  'Фонд ставки за весь PI, выраженный в «полных спринтах»: 1.0000 ставки × 80 ЧЧ × factor. '
  'На Q3-2026: 92 дня / 14 = 6.5714, то есть 525.71 ЧЧ за квартал (при 6 спринтах × 14 было 480). '
  'Используется вместо `sprint_count` везде, где считается фонд за квартал.';
+
+CREATE VIEW v_remaining_pi_fund_factor AS
+SELECT p.pi_id, COALESCE(u.last_reported_sprint, 0) AS last_reported_sprint,
+       COALESCE(SUM(f.factor) FILTER (
+           WHERE f.sprint_no > COALESCE(u.last_reported_sprint, 0)), 0) AS factor
+FROM pi_periods p
+LEFT JOIN (SELECT pi_id, MAX(sprint_no) AS last_reported_sprint
+           FROM actual_uploads GROUP BY pi_id) u ON u.pi_id = p.pi_id
+JOIN v_sprint_fund_factor f ON f.pi_id = p.pi_id
+GROUP BY p.pi_id, u.last_reported_sprint;
+COMMENT ON VIEW v_remaining_pi_fund_factor IS
+ 'Фонд только ещё не закрытых спринтов. Остаток работ нельзя сравнивать с фондом всего PI.';
 
 -- --------------------------------------------------------------------
 --  Ёмкость ядра в SP. Velocity × Focus Factor (онбординг, раздел 3А).
@@ -114,7 +126,9 @@ SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
        SUM(o.capacity_rate)                                              AS fte,
        ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2)           AS hh_per_sprint,
        ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint)
-             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2)         AS hh_per_pi
+             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2)         AS hh_per_pi,
+       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint)
+             * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1), 2) AS hh_remaining_pi
 FROM roles r
 JOIN engineers       e ON e.role_id = r.role_id
 JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
@@ -123,7 +137,8 @@ GROUP BY r.role_id, r.canonical_name, o.team_id;
 COMMENT ON VIEW v_role_supply_hh IS
  'hh_per_sprint — фонд одного ПОЛНОГО спринта. hh_per_pi — фонд всего квартала: '
  '× v_pi_fund_factor.factor (92/14 = 6.5714), а НЕ × sprint_count, иначе короткий '
- '7-й спринт подарил бы команде лишние 8 дней фонда.';
+ '7-й спринт подарил бы команде лишние 8 дней фонда. hh_remaining_pi — фонд '
+ 'будущих спринтов после последнего принятого факта.';
 
 -- --------------------------------------------------------------------
 --  Потребность живого бэклога по ядру и роли за квартал.
@@ -147,16 +162,23 @@ CREATE VIEW v_role_deficit AS
 SELECT COALESCE(d.team_id, s.team_id)       AS team_id,
        COALESCE(d.role_name, s.role_name)   AS role_name,
        COALESCE(d.demand_hh, 0)             AS demand_hh,
-       COALESCE(s.hh_per_pi, 0)             AS supply_hh,
-       COALESCE(d.demand_hh, 0) - COALESCE(s.hh_per_pi, 0) AS gap_hh,
-       CASE WHEN COALESCE(s.hh_per_pi, 0) = 0 AND COALESCE(d.demand_hh, 0) > 0
-                 THEN 'роли нет в команде'
-            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_per_pi, 0)
+       COALESCE(s.hh_remaining_pi, 0)       AS supply_hh,
+       COALESCE(d.demand_hh, 0) - COALESCE(s.hh_remaining_pi, 0) AS gap_hh,
+       CASE WHEN COALESCE(d.demand_hh, 0) = 0 THEN 'спроса нет'
+            WHEN COALESCE(s.hh_remaining_pi, 0) = 0 AND COALESCE(org.hh, 0) = 0
+                 THEN 'нет доступного фонда в организации'
+            WHEN COALESCE(s.hh_remaining_pi, 0) = 0 THEN 'роли нет в команде — возможен заём'
+            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_remaining_pi, 0)
+                 AND COALESCE(org.hh, 0) >= d.demand_hh THEN 'не хватает часов в команде — возможен заём'
+            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_remaining_pi, 0)
                  THEN 'не хватает часов'
             ELSE 'покрыто' END              AS verdict
 FROM v_backlog_demand d
 FULL OUTER JOIN v_role_supply_hh s
-  ON s.team_id = d.team_id AND s.role_id = d.role_id;
+  ON s.team_id = d.team_id AND s.role_id = d.role_id
+LEFT JOIN (SELECT role_id, SUM(hh_remaining_pi) AS hh
+           FROM v_role_supply_hh GROUP BY role_id) org
+  ON org.role_id = COALESCE(d.role_id, s.role_id);
 
 -- --------------------------------------------------------------------
 --  Bus Factor. Роли без единого инженера тоже попадают сюда —
@@ -264,7 +286,7 @@ CREATE VIEW v_role_deficit_effective AS
 WITH supply AS (
     SELECT c.role_id, o.team_id,
            SUM(o.capacity_rate * p.fte_hours_per_sprint)
-           * (SELECT factor FROM v_pi_fund_factor LIMIT 1) AS hh
+           * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1) AS hh
     FROM v_engineer_role_coverage c
     JOIN engineer_orbits o ON o.engineer_id = c.engineer_id
     CROSS JOIN pi_periods p
@@ -276,11 +298,17 @@ SELECT COALESCE(d.team_id, s.team_id)     AS team_id,
        COALESCE(s.hh, 0)                  AS supply_with_substitution_hh,
        COALESCE(d.demand_hh, 0) - COALESCE(s.hh, 0) AS gap_hh,
        CASE WHEN COALESCE(d.demand_hh, 0) <= COALESCE(s.hh, 0) THEN 'покрыто'
-            WHEN COALESCE(s.hh, 0) = 0 THEN 'НЕ ЗАКРЫТЬ НИКЕМ — нужен наём'
+            WHEN COALESCE(s.hh, 0) = 0 AND COALESCE(org.hh, 0) > 0
+                 THEN 'роли нет в команде — возможен заём'
+            WHEN COALESCE(s.hh, 0) = 0 THEN 'нет доступного фонда в организации'
+            WHEN COALESCE(org.hh, 0) >= d.demand_hh
+                 THEN 'не хватает часов в команде — возможен заём'
             ELSE 'не хватает часов' END   AS verdict
 FROM v_backlog_demand d
 FULL OUTER JOIN supply s ON s.team_id = d.team_id AND s.role_id = d.role_id
-LEFT JOIN roles r ON r.role_id = s.role_id;
+LEFT JOIN roles r ON r.role_id = s.role_id
+LEFT JOIN (SELECT role_id, SUM(hh) AS hh FROM supply GROUP BY role_id) org
+  ON org.role_id = COALESCE(d.role_id, s.role_id);
 COMMENT ON VIEW v_role_deficit_effective IS
  'Сравнивать с v_role_deficit (строгим). Разница между ними — ровно то, что даёт замещение.';
 
@@ -298,7 +326,7 @@ WITH demand AS (
            COUNT(DISTINCT c.engineer_id)                                   AS people,
            COUNT(DISTINCT c.engineer_id) FILTER (WHERE c.is_native)        AS native_people,
            SUM(e.total_capacity_rate * p.fte_hours_per_sprint)
-           * (SELECT factor FROM v_pi_fund_factor LIMIT 1) AS hh
+           * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1) AS hh
     FROM v_engineer_role_coverage c
     JOIN engineers e ON e.engineer_id = c.engineer_id
     CROSS JOIN pi_periods p
@@ -311,6 +339,8 @@ SELECT r.canonical_name                      AS role_name,
        COALESCE(s.hh, 0)                     AS supply_hh,
        COALESCE(d.demand_hh, 0) - COALESCE(s.hh, 0) AS gap_hh,
        CASE WHEN COALESCE(d.demand_hh, 0) = 0                  THEN 'спроса нет'
+            WHEN COALESCE(s.hh, 0) = 0 AND COALESCE(s.people, 0) > 0
+                 THEN 'нет фонда до конца PI'
             WHEN COALESCE(s.hh, 0) = 0                         THEN 'НАЙМ: закрыть некем'
             WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh, 0)  THEN 'НАЙМ: не хватает часов'
             WHEN COALESCE(s.native_people, 0) = 0              THEN 'только замещением'

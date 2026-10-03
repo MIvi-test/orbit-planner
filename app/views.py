@@ -203,7 +203,7 @@ SOURCES: tuple[Source, ...] = (
         screen="Роли и ёмкость",
         order="team_id,role_name",
         orderable=("team_id", "role_name", "demand_hh", "supply_hh", "gap_hh", "verdict"),
-        note="Главная аналитическая витрина: дефицит по «команда × роль» с вердиктом, 76 строк.",
+        note="Остаток живого бэклога против фонда незакрытых спринтов по команде и роли.",
     ),
     _source(
         "v_role_deficit_effective",
@@ -224,8 +224,7 @@ SOURCES: tuple[Source, ...] = (
             "role_name", "demand_hh", "native_people", "people_incl_substitution",
             "supply_hh", "gap_hh", "verdict",
         ),
-        note="Срез по компании: где нужен НАЁМ, а где хватит займов. Сейчас НАЙМ = 665 ЧЧ "
-        "на 6 ролях (РП 449 + четыре 1С-роли 132 + поддержка 84).",
+        note="Срез по компании на остаток PI: где нужен наём, а где возможен заём.",
     ),
     _source(
         "v_bus_factor",
