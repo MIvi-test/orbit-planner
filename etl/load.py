@@ -61,6 +61,23 @@ def split_skills(v) -> list[str]:
     return out
 
 
+# Только проверенные эквиваленты и явно разобранные составные записи. Похожие
+# понятия (Java/JavaScript, Microservices/архитектура микросервисов) не сливаем.
+SKILL_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "apache kafka": ("Kafka",),
+    "core spring": ("Spring Core",),
+    "микросервисы": ("Microservices",),
+    "rest/grpc": ("REST", "gRPC"),
+    "rest/soap интеграции": ("REST", "SOAP"),
+    "ci/cd (gitlab, jenkins)": ("CI/CD", "GitLab", "Jenkins"),
+}
+
+
+def canonical_skills(raw: str) -> tuple[str, ...]:
+    """Сохраняем исходный текст отдельно; здесь только подтверждённые правила."""
+    return SKILL_EXPANSIONS.get(norm_text(raw).casefold(), (norm_text(raw),))
+
+
 def as_date(v):
     if v is None or v == "":
         return None
@@ -517,6 +534,7 @@ def parse(path: Path):
     sh.require_columns(ec, e_hdr, ("engineer_id", "team_id", "role", "grade",
                                     "capacity_rate", "skills_declared"))
     engineers, orbits, skills_seen, eng_skills = {}, [], {}, set()
+    skill_declarations: list[tuple[str, str, int, int]] = []
     engineer_rows = {}
     for r in sh.data_rows(e_hdr):
         eid = norm_text(sh.cell(r, ec["engineer_id"]))
@@ -547,10 +565,16 @@ def parse(path: Path):
             s = norm_text(raw_skill)
             if not s:
                 continue
-            key = s.lower()
-            if key not in skills_seen:
-                skills_seen[key] = (len(skills_seen) + 1, s)
-            eng_skills.add((eid, skills_seen[key][0]))
+            if s.casefold() == "core":
+                dq.add("engineer_skills", eid, "AMBIGUOUS_SKILL", "warning",
+                       f"Строка Excel {r}: «Core» требует ручной классификации.")
+            for canonical in canonical_skills(s):
+                key = canonical.casefold()
+                if key not in skills_seen:
+                    skills_seen[key] = (len(skills_seen) + 1, canonical)
+                skill_id = skills_seen[key][0]
+                eng_skills.add((eid, skill_id))
+                skill_declarations.append((eid, s, skill_id, r))
 
     for eid, e in engineers.items():
         if round(e["total"], 2) > 1.0:
@@ -600,7 +624,8 @@ def parse(path: Path):
     D.update(tasks=tasks, initiatives=ini_rows, estimates=estimates, spent=spent,
              deps=deps, dep_source_rows=dep_source_rows, engineers=engineers, orbits=orbits,
              skills=[(i, s, k) for k, (i, s) in skills_seen.items()],
-             eng_skills=sorted(eng_skills), history=history, teams=sorted(teams),
+             eng_skills=sorted(eng_skills), skill_declarations=skill_declarations,
+             history=history, teams=sorted(teams),
              role_id=role_id)
     return D
 
@@ -757,9 +782,10 @@ def emit(D, src_path: Path) -> str:
     w("         kpi_snapshots, alerts, task_state, plan_assignments, plan_task_schedule,")
     w("         plan_baseline, plan_runs, dq_issues, task_sequence, sprints, pi_periods,")
     w("         team_history, task_dependencies, task_role_spent, task_role_estimates,")
-    w("         tasks, initiatives, engineer_skills, engineer_orbits, engineers, teams,")
+    w("         tasks, initiatives, engineer_skill_declarations, engineer_skills,")
+    w("         engineer_orbits, engineers, teams,")
     w("         ref_closure_results, ref_mismatch_reasons, ref_result_options,")
-    w("         skills, role_aliases, roles, load_batches RESTART IDENTITY CASCADE;")
+    w("         skill_aliases, skills, role_aliases, roles, load_batches RESTART IDENTITY CASCADE;")
 
     def block(title, table, cols, rows):
         w(f"\n-- {title}: {len(rows)}")
@@ -776,6 +802,18 @@ def emit(D, src_path: Path) -> str:
     block("роли", "roles", ["role_id", "canonical_name", "role_group"], D["roles"])
     block("алиасы ролей", "role_aliases", ["alias", "role_id"], D["role_aliases"])
     block("навыки", "skills", ["skill_id", "name", "normalized_name"], D["skills"])
+    skill_names = {row[0]: row[1] for row in D["skills"]}
+    aliases_by_key = {}
+    for _engineer_id, raw, skill_id, _source_row in D["skill_declarations"]:
+        if raw.casefold() != skill_names[skill_id].casefold() or len(canonical_skills(raw)) > 1:
+            aliases_by_key.setdefault(
+                (raw.casefold(), skill_id),
+                (raw.casefold(), skill_id, raw,
+                 "composite" if len(canonical_skills(raw)) > 1 else "synonym"),
+            )
+    aliases = sorted(aliases_by_key.values())
+    block("алиасы навыков", "skill_aliases",
+          ["alias_key", "skill_id", "alias_text", "rule"], aliases)
     block("справочник результатов", "ref_result_options", ["code", "ord", "label"], D["ref_results"])
     block("причины расхождений", "ref_mismatch_reasons", ["code", "ord", "label"], D["ref_mismatch"])
     block("результаты закрытия", "ref_closure_results", ["code", "ord", "label"], D["ref_closure"])
@@ -787,6 +825,8 @@ def emit(D, src_path: Path) -> str:
            for e, v in sorted(D["engineers"].items())])
     block("орбиты", "engineer_orbits", ["engineer_id", "team_id", "capacity_rate"], sorted(D["orbits"]))
     block("стек инженеров", "engineer_skills", ["engineer_id", "skill_id"], D["eng_skills"])
+    block("исходные написания навыков", "engineer_skill_declarations",
+          ["engineer_id", "raw_text", "skill_id", "source_row"], D["skill_declarations"])
     block("инициативы", "initiatives", ["prodf_id", "br_id", "title", "priority_rung"],
           sorted(D["initiatives"]))
     block("задачи", "tasks",

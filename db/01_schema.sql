@@ -16,9 +16,9 @@ DROP TABLE IF EXISTS plan_task_sp, kpi_snapshots, alerts, task_state, plan_assig
     dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
     task_role_spent, task_role_estimates, tasks, initiatives,
-    engineer_skills, engineer_orbits, engineers, teams,
+    engineer_skill_declarations, engineer_skills, engineer_orbits, engineers, teams,
     ref_closure_results, ref_mismatch_reasons, ref_result_options,
-    role_substitutions, skills, role_aliases, roles, load_batches CASCADE;
+    role_substitutions, skill_aliases, skills, role_aliases, roles, load_batches CASCADE;
 
 -- =====================================================================
 --  0. СЛУЖЕБНОЕ
@@ -84,6 +84,13 @@ CREATE TABLE skills (
     normalized_name TEXT NOT NULL UNIQUE
 );
 COMMENT ON COLUMN skills.normalized_name IS 'lower() + схлопнутые пробелы. Матчинг стека идёт по нему, name — первое встреченное написание.';
+CREATE TABLE skill_aliases (
+    alias_key TEXT NOT NULL,
+    skill_id INT NOT NULL REFERENCES skills(skill_id) ON DELETE CASCADE,
+    alias_text TEXT NOT NULL,
+    rule TEXT NOT NULL CHECK (rule IN ('synonym','composite')),
+    PRIMARY KEY (alias_key, skill_id)
+);
 
 CREATE TABLE ref_result_options   (code TEXT PRIMARY KEY, ord SMALLINT NOT NULL, label TEXT NOT NULL);
 CREATE TABLE ref_mismatch_reasons (code TEXT PRIMARY KEY, ord SMALLINT NOT NULL, label TEXT NOT NULL);
@@ -128,6 +135,16 @@ CREATE TABLE engineer_skills (
     PRIMARY KEY (engineer_id, skill_id)
 );
 COMMENT ON TABLE engineer_skills IS 'Звёздная карта: заявленный стек. Развёрнут из skills_declared по запятой (см. ADR-006 про «Java, Core»).';
+CREATE TABLE engineer_skill_declarations (
+    declaration_id BIGSERIAL PRIMARY KEY,
+    engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id) ON DELETE CASCADE,
+    raw_text TEXT NOT NULL,
+    skill_id INT NOT NULL REFERENCES skills(skill_id),
+    source_row INT,
+    UNIQUE (engineer_id, raw_text, skill_id, source_row)
+);
+COMMENT ON TABLE engineer_skill_declarations IS
+ 'Исходное написание навыка и связь с канонической компетенцией. Для составных выражений строк несколько.';
 
 -- =====================================================================
 --  3. БЭКЛОГ
