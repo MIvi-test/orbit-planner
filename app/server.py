@@ -339,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
             log_event("upload_failed", level="error", path=path, error=repr(exc))
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
             return
-        log_event("upload_ok", path=path, run_id=result.get("plan", {}).get("run_id"))
+        log_event("upload_ok", path=path, run_id=(result.get("plan") or {}).get("run_id"))
         self._send_json(HTTPStatus.OK, result)
 
     # ------------------------------------------------------------------- API
