@@ -9,6 +9,8 @@ import psycopg
 from psycopg.rows import dict_row
 import pytest
 
+from pg_support import load_base_file
+
 from app import ingest
 
 
@@ -21,7 +23,7 @@ def test_past_template_includes_task_done_later_and_prior_date(monkeypatch):
             cursor.execute(psycopg.sql.SQL("CREATE SCHEMA {}").format(schema))
             cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
             for name in ("01_schema.sql", "02_contract.sql"):
-                cursor.execute((root / "db" / name).read_text())
+                load_base_file(cursor, root / "db" / name)
             cursor.execute("""
                 INSERT INTO pi_periods (pi_id, start_date, end_date, sprint_count)
                 VALUES ('PI', '2026-07-01', '2026-08-11', 3);
