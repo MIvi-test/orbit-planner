@@ -136,7 +136,7 @@ row.gap_hh.startsWith('-')             // знак дефицита — так, 
 сумма столбца матрицы сметы, ADR-002), `estimated_hh_declared` (что обещали в
 исходнике), `estimate_disputed` (**true у 24 из 45 задач!**), `remaining_hh`
 (сумма по доске 6746 ЧЧ), `planned_start` / `planned_end` / `actual_start` /
-`actual_end`, `topo_order`, `depth`, `earliest_start_sprint`, `on_critical_path`
+`actual_end`, `topo_order`, `edge_depth_at_load`, `earliest_start_sprint_at_load`, `on_longest_edge_chain`
 (19 задач), `blocked_by` / `blocks` (число связей: графа зависимостей по задачам
 эта витрина не отдаёт).
 

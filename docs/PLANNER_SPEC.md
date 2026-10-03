@@ -19,7 +19,7 @@
 | `v_sprint_fund_factor` | **множитель фонда спринта**: сейчас 1.0000 у всех шести (ADR-025) |
 | `v_pi_fund_factor` | **множитель фонда квартала**: 84 дня / 14 = 6.0000 — читать отсюда, не считать |
 | `v_engineer_role_coverage` | **какие роли может закрывать инженер** — только родные: замещения отклонены организаторами (ADR-010), вьюха отдаёт 30 строк с `is_native = true` и `efficiency` (множитель часов, сейчас везде 1.00). Это единственный источник правды о паре «инженер × роль» (ADR-012) |
-| `task_sequence` | `earliest_start_sprint` — нижняя граница из графа, уже посчитана |
+| `task_sequence` | Исходный топологический порядок; нижняя граница графа пересчитывается при прогоне |
 | `task_dependencies` | рёбра и `min_gap_sprints`, если нужно проверять напрямую |
 | `sprints` | сетка квартала: 01.07–30.09.2026, **7 спринтов по 14 дней, последний 8 дней** |
 | `plan_task_schedule` | расписание **канонического** базового прогона — обещание Недели 0 для KPI (§6) |
@@ -164,7 +164,7 @@ finish_start:                start(blocked)  ≥  end(blocking)   + min_gap_spri
 прогона; неизвестный режим отклоняется.
 
 `min_gap_sprints = 1` (⚠ ADR-003). По умолчанию — `start_start`: именно эту
-семантику реализует предпосчитанный `task_sequence.earliest_start_sprint`
+семантику реализует нижняя граница, пересчитанная на дату прогона
 (у `MOB-7012` и `MP-103` он равен 2 при блокирующих с `earliest = 1`), и заново
 топологию считать не нужно. На текущем сиде оба режима дают одинаковый план —
 но правило теперь **выбрано**, а не подразумевается.
@@ -271,7 +271,7 @@ finish_start:                start(blocked)  ≥  end(blocking)   + min_gap_spri
 1. отсортировать инициативы по initiatives.priority_rung DESC        (⚠ ADR-005: MAX(rung))
 2. внутри инициативы — задачи по task_sequence.topo_order ASC
 3. для каждой задачи найти минимальный спринт S, где одновременно:
-      S >= max(as_of_sprint, task_sequence.earliest_start_sprint)
+      S >= max(as_of_sprint, plan_dependency_bounds.earliest_start_sprint)
       S >= готовая_граница(предшественника) + min_gap_sprints
       хватает SP у команды в S
       хватает часов у исполнителей по каждой требуемой роли
@@ -427,7 +427,7 @@ SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';  
 | `ASSIGNMENT_IN_CLOSED_SPRINT` | error | пересчёт не пишет в прошлые спринты |
 | `DEPENDENCY_VIOLATED` | error | зазор между зависимыми (по `dependency_mode`) |
 | `DEPENDENCY_BLOCKER_DEFERRED` | error | перенесённая блокирующая не оставляет потомка |
-| `START_BEFORE_EARLIEST` | error | старт не раньше `task_sequence.earliest_start_sprint` |
+| `START_BEFORE_EARLIEST` | error | старт не раньше границы живого графа, сохранённой в прогоне |
 | `UNDER_ALLOCATED` | error | часов по роли назначено не меньше остатка сметы |
 | `IN_QUARTER_WITHOUT_ASSIGNMENTS` | error | у `in_quarter` есть назначения |
 | `DEFERRED_WITH_ASSIGNMENTS` | error | у перенесённой нет назначений |

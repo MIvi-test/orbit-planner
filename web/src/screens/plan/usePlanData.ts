@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useRun } from '../../hooks/useRun'
 import {
   usePlanAssignments,
+  usePlanDependencyBounds,
   usePlanRoleDemandSnapshot,
   usePlanSchedule,
   usePlanTaskSp,
@@ -16,6 +17,7 @@ import type {
   PlanAssignmentDetailRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
+  PlanDependencyBoundRow,
   PlanTaskProgressRow,
   PlanRoleDemandSnapshotRow,
   SprintRow,
@@ -41,6 +43,7 @@ export function usePlanData() {
   const roleDemandQ = usePlanRoleDemandSnapshot(runId)
   const initiativesQ = useInitiatives()
   const scheduleQ = usePlanSchedule(runId)
+  const boundsQ = usePlanDependencyBounds(runId)
   const spQ = usePlanTaskSp(runId)
   const progressQ = usePlanTaskProgress(runId)
   const assignQ = usePlanAssignments(runId)
@@ -59,12 +62,13 @@ export function usePlanData() {
     roleDemandQ.isPending ||
     initiativesQ.isPending ||
     scheduleQ.isPending ||
+    boundsQ.isPending ||
     spQ.isPending ||
     progressQ.isPending ||
     assignQ.isPending
   const isError =
-    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || spQ.isError || progressQ.isError || assignQ.isError
-  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? spQ.error ?? progressQ.error ?? assignQ.error
+    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || boundsQ.isError || spQ.isError || progressQ.isError || assignQ.isError
+  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? boundsQ.error ?? spQ.error ?? progressQ.error ?? assignQ.error
 
   const groups = useMemo<InitiativeGroup[]>(() => {
     const tasks = tasksQ.data?.items
@@ -98,6 +102,12 @@ export function usePlanData() {
     scheduleQ.data?.items.forEach((row) => map.set(row.task_id, row))
     return map
   }, [scheduleQ.data])
+
+  const boundsByTask = useMemo(() => {
+    const map = new Map<string, PlanDependencyBoundRow>()
+    boundsQ.data?.items.forEach((row) => map.set(row.task_id, row))
+    return map
+  }, [boundsQ.data])
 
   const baselineByTask = useMemo(() => {
     const map = new Map<string, PlanTaskScheduleRow>()
@@ -154,6 +164,7 @@ export function usePlanData() {
     stateByTask,
     roleDemandByTask,
     scheduleByTask,
+    boundsByTask,
     baselineByTask,
     hasBaseline: baselineRunId !== null && baselineRunId !== runId,
     spByTask,

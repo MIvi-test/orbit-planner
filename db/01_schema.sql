@@ -9,7 +9,7 @@ BEGIN;
 
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
-DROP TABLE IF EXISTS plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
+DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
     actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
@@ -308,12 +308,11 @@ CREATE TABLE task_sequence (
     topo_order            INT      NOT NULL,
     depth                 SMALLINT NOT NULL,
     earliest_start_sprint SMALLINT,
-    on_critical_path      BOOLEAN  NOT NULL DEFAULT FALSE
+    on_longest_edge_chain      BOOLEAN  NOT NULL DEFAULT FALSE
 );
 COMMENT ON TABLE task_sequence IS
- 'Топологический порядок живого графа (Done отброшены), считается один раз при загрузке. Планировщик читает '
- 'earliest_start_sprint как нижнюю границу и не пересчитывает граф на каждой итерации. '
- 'ВАЖНО: живых рёбер всего 10 из 19, 27 из 37 задач свободны, глубина ≤2 — зависимости здесь НЕ узкое место.';
+ 'Порядок и длина цепочки на момент загрузки датасета. Планировщик пересчитывает '
+ 'допустимые старты живого графа по фактическим датам при каждом прогоне.';
 
 -- =====================================================================
 --  6. КАЧЕСТВО ДАННЫХ

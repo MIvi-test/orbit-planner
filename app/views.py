@@ -121,7 +121,7 @@ SOURCES: tuple[Source, ...] = (
             "rung", "estimation_sp", "estimated_hh_effective", "estimated_hh_declared",
             "estimated_hh_matrix_total", "remaining_hh", "estimate_disputed",
             "planned_start", "planned_end", "actual_start", "actual_end",
-            "topo_order", "depth", "earliest_start_sprint", "on_critical_path",
+            "topo_order", "edge_depth_at_load", "earliest_start_sprint_at_load", "on_longest_edge_chain",
         ),
         note="Денормализована: задача + инициатива + приоритет + остаток часов + место в графе.",
     ),
@@ -145,6 +145,14 @@ SOURCES: tuple[Source, ...] = (
         orderable=("run_id", "task_id", "as_of_sprint", "status", "remaining_hh", "remaining_sp", "forecast_end_sprint"),
         run_column="run_id",
         note="Исторический остаток и статус задачи в выбранном прогоне.",
+    ),
+    _source(
+        "plan_dependency_bounds",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "earliest_start_sprint"),
+        run_column="run_id",
+        note="Допустимый ранний старт по живому графу и фактическим датам выбранного прогона.",
     ),
     _source(
         "v_plan_role_demand_snapshot",

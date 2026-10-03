@@ -65,9 +65,9 @@ export interface TaskBoardRow {
   actual_start: string | null
   actual_end: string | null
   topo_order: number
-  depth: number
-  earliest_start_sprint: number | null
-  on_critical_path: boolean
+  edge_depth_at_load: number
+  earliest_start_sprint_at_load: number | null
+  on_longest_edge_chain: boolean
   remaining_hh: NumericString
   blocked_by: number
   blocks: number
@@ -121,6 +121,12 @@ export interface PlanRoleDemandSnapshotRow {
   role_id: number
   role_name: string
   needed_hours: NumericString
+}
+
+export interface PlanDependencyBoundRow {
+  run_id: number
+  task_id: string
+  earliest_start_sprint: number
 }
 
 export interface PlanTaskProgressRow {

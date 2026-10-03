@@ -1,3 +1,23 @@
+BEGIN;
+CREATE TABLE plan_dependency_bounds (
+    run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    earliest_start_sprint SMALLINT NOT NULL CHECK (earliest_start_sprint >= 1),
+    PRIMARY KEY (run_id, task_id)
+);
+INSERT INTO plan_dependency_bounds (run_id, task_id, earliest_start_sprint)
+SELECT r.run_id, s.task_id, COALESCE(q.earliest_start_sprint, 1)
+FROM plan_runs r JOIN plan_task_schedule s ON s.run_id = r.run_id
+LEFT JOIN task_sequence q ON q.task_id = s.task_id;
+ALTER TABLE task_sequence RENAME COLUMN on_critical_path TO on_longest_edge_chain;
+ALTER VIEW v_task_board RENAME COLUMN on_critical_path TO on_longest_edge_chain;
+ALTER VIEW v_task_board RENAME COLUMN depth TO edge_depth_at_load;
+ALTER VIEW v_task_board RENAME COLUMN earliest_start_sprint TO earliest_start_sprint_at_load;
+COMMENT ON COLUMN task_sequence.on_longest_edge_chain IS
+ 'Longest chain by edge count at dataset load; not a duration-based critical path. Plan-time dependency bounds are recalculated from actuals.';
+COMMIT;
+
+-- Refresh the acceptance view against per-run graph bounds.
 -- =====================================================================
 --  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
 --

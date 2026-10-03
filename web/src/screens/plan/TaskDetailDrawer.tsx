@@ -3,7 +3,7 @@
  * показывается как есть, не пересказывается и не сокращается.
  */
 import { Badge, Drawer, Group, List, Stack, Table, Text } from '@mantine/core'
-import type { PlanAssignmentDetailRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
+import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
 
 const DECISION_LABEL: Record<string, string> = {
@@ -23,6 +23,7 @@ export function TaskDetailDrawer({
   state,
   roleDemand,
   progress,
+  dependencyBound,
   schedule,
   assignments,
   onClose,
@@ -31,6 +32,7 @@ export function TaskDetailDrawer({
   state: TaskStateRow | undefined
   roleDemand: PlanRoleDemandSnapshotRow[]
   progress: PlanTaskProgressRow[]
+  dependencyBound: PlanDependencyBoundRow | undefined
   schedule: PlanTaskScheduleRow | undefined
   assignments: PlanAssignmentDetailRow[]
   onClose: () => void
@@ -75,6 +77,12 @@ export function TaskDetailDrawer({
               </Text>
               <Text size="sm">{schedule.reason_text}</Text>
             </Stack>
+          )}
+
+          {dependencyBound && dependencyBound.earliest_start_sprint > 1 && (
+            <Text size="sm" c="dimmed">
+              По зависимостям этого прогона старт возможен не раньше спринта {dependencyBound.earliest_start_sprint}.
+            </Text>
           )}
 
           {state && (

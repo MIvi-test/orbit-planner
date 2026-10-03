@@ -95,6 +95,14 @@ CREATE TABLE plan_role_demand_snapshot (
     needed_hours NUMERIC(12,4) NOT NULL CHECK (needed_hours > 0),
     PRIMARY KEY (run_id, task_id, role_id)
 );
+CREATE TABLE plan_dependency_bounds (
+    run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    earliest_start_sprint SMALLINT NOT NULL CHECK (earliest_start_sprint >= 1),
+    PRIMARY KEY (run_id, task_id)
+);
+COMMENT ON TABLE plan_dependency_bounds IS
+ 'Нижняя граница старта из живого графа и фактических дат на момент конкретного прогона.';
 COMMENT ON TABLE plan_task_sp IS
  'Сумма долей по задаче = remaining_sp в снимке прогона; исходная estimation_sp не тратится повторно. '
  'Инвариант SP_OVERFLOW суммирует доли по команде и спринту.';

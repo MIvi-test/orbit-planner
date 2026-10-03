@@ -211,7 +211,8 @@ SELECT t.task_id, t.prodf_id, i.br_id, i.priority_rung, t.team_id, t.summary,
         (t.estimated_hh_matrix_total IS NOT NULL AND
          t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_matrix_total)) AS estimate_disputed,
        t.planned_start, t.planned_end, t.actual_start, t.actual_end,
-       q.topo_order, q.depth, q.earliest_start_sprint, q.on_critical_path,
+       q.topo_order, q.depth AS edge_depth_at_load,
+       q.earliest_start_sprint AS earliest_start_sprint_at_load, q.on_longest_edge_chain,
        COALESCE(rm.remaining_hh, 0) AS remaining_hh,
        (SELECT COUNT(*) FROM task_dependencies d WHERE d.blocked_task_id  = t.task_id) AS blocked_by,
        (SELECT COUNT(*) FROM task_dependencies d WHERE d.blocking_task_id = t.task_id) AS blocks

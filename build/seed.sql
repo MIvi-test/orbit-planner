@@ -1089,7 +1089,7 @@ INSERT INTO sprints (pi_id, sprint_no, start_date, end_date) VALUES
   ('PI-2026-Q3', 6, '2026-09-09', '2026-09-22');
 
 -- порядок задач: 45
-INSERT INTO task_sequence (task_id, topo_order, depth, earliest_start_sprint, on_critical_path) VALUES
+INSERT INTO task_sequence (task_id, topo_order, depth, earliest_start_sprint, on_longest_edge_chain) VALUES
   ('ONK-2475', 19, 0, NULL, FALSE),
   ('ASUKD-5222', 11, 0, NULL, FALSE),
   ('KP-3898', 10, 0, 1, FALSE),

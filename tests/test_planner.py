@@ -798,6 +798,20 @@ def test_big_task_spreads_its_sp_over_several_sprints() -> None:
     assert "растянуты" in row.reason_text
 
 
+def test_completed_blocker_recalculates_live_start_from_fact_date() -> None:
+    base = inputs([task("B", earliest=5)], [engineer("ENG-1")])
+    early = replace(base, all_deps=(("A", "B", 1),),
+                    done_task_dates={"A": (date(2026, 6, 2), date(2026, 6, 2))})
+    late = replace(base, all_deps=(("A", "B", 1),),
+                   done_task_dates={"A": (date(2026, 6, 16), date(2026, 6, 16))})
+
+    assert starts_of(planner.build_plan(early, as_of_sprint=2, simulate_next_pi=False)) == {"B": 2}
+    assert starts_of(planner.build_plan(late, as_of_sprint=3, simulate_next_pi=False)) == {"B": 3}
+    future = planner.build_plan(late, as_of_sprint=2, simulate_next_pi=False)
+    assert future.schedule[0].decision != "in_quarter"
+    assert future.params["dependency_fact_issues"]
+
+
 def test_task_waits_for_a_sprint_where_the_team_has_free_capacity() -> None:
     """Ёмкость спринта исчерпана — задача начинается позже (поведение сохранено)."""
     plan = planner.build_plan(

@@ -73,6 +73,7 @@ export function PlanScreen() {
         state={selected ? data.stateByTask.get(selected.task_id) : undefined}
         roleDemand={selected ? data.roleDemandByTask.get(selected.task_id) ?? [] : []}
         progress={selected ? data.progressByTask.get(selected.task_id) ?? [] : []}
+        dependencyBound={selected ? data.boundsByTask.get(selected.task_id) : undefined}
         schedule={selected ? data.scheduleByTask.get(selected.task_id) : undefined}
         assignments={selected ? data.assignmentsByTask.get(selected.task_id) ?? [] : []}
         onClose={() => setSelected(null)}

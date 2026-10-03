@@ -278,13 +278,13 @@ export interface task_role_spent_seed {
   hours: number;
 }
 
-/** таблица public.task_sequence — 5 кол. · Топологический порядок живого графа (Done отброшены), считается один раз при загрузке. Планировщик читает earliest_start_sprint как нижнюю границу и не пересчитывает граф на каждой итерации. ВАЖНО: живых рёбер всего 10 из 19, 27 из 37 задач свободны, глубина ≤2 — зависимости здесь НЕ узкое место. */
+/** Исходный граф при загрузке. Текущие границы старта сохраняются в plan_dependency_bounds. */
 export interface task_sequence {
   task_id: string;
   topo_order: number;
   depth: number;
   earliest_start_sprint: number | null;
-  on_critical_path: boolean;
+  on_longest_edge_chain: boolean;
 }
 
 /** таблица public.task_state — 7 кол. · Временно́й саттелит: состояние задачи на момент прогона. tasks — ТЕКУЩЕЕ состояние (воспроизводится из датасета и загрузок факта), а здесь — каким его видел каждый прогон. Инварианты сверяют прогон именно с этим слепком, а не с сегодняшним tasks. */
@@ -590,9 +590,9 @@ export interface v_task_board {
   actual_start: string | null;
   actual_end: string | null;
   topo_order: number | null;
-  depth: number | null;
-  earliest_start_sprint: number | null;
-  on_critical_path: boolean | null;
+  edge_depth_at_load: number | null;
+  earliest_start_sprint_at_load: number | null;
+  on_longest_edge_chain: boolean | null;
   remaining_hh: number | null;
   blocked_by: number | null;
   blocks: number | null;

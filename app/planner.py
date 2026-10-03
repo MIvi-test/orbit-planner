@@ -151,7 +151,7 @@ SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung,
        COALESCE(b.estimation_sp, 0)          AS estimation_sp,
        GREATEST(COALESCE(b.estimation_sp, 0) - COALESCE(progress.completed_sp, 0), 0) AS remaining_sp,
        b.summary,
-       COALESCE(b.earliest_start_sprint, 1)  AS earliest_start_sprint,
+       COALESCE(b.earliest_start_sprint_at_load, 1)  AS earliest_start_sprint,
        COALESCE(b.topo_order, 0)             AS topo_order,
        b.estimate_disputed
 FROM v_task_board b
@@ -210,7 +210,8 @@ FROM v_team_capacity_sp
 ORDER BY team_id
 """
 
-# Только живые рёбра: зазоры на задачах Done уже учтены в earliest_start_sprint.
+# Живые рёбра для упаковки; завершённые блокирующие входят в all_deps и
+# пересчитываются по фактическим датам в _refresh_live_graph.
 LIVE_DEPS_SQL = """
 SELECT d.blocking_task_id, d.blocked_task_id, d.min_gap_sprints
 FROM task_dependencies d
@@ -219,6 +220,13 @@ JOIN tasks kt ON kt.task_id = d.blocked_task_id
 WHERE bt.status IN ('ToDo', 'InProgress')
   AND kt.status IN ('ToDo', 'InProgress')
 ORDER BY d.blocking_task_id, d.blocked_task_id
+"""
+ALL_DEPS_SQL = """
+SELECT blocking_task_id, blocked_task_id, min_gap_sprints
+FROM task_dependencies ORDER BY blocking_task_id, blocked_task_id
+"""
+TASK_DATES_SQL = """
+SELECT task_id, status, actual_start, actual_end FROM tasks ORDER BY task_id
 """
 
 # Слепок task_state делается по ВСЕМ задачам, включая Done: это история.
@@ -402,6 +410,9 @@ class Inputs:
     skill_reviews: frozenset[tuple[str, int]] = frozenset()
     engineer_skills: dict[str, frozenset[int]] = field(default_factory=dict)
     skill_names: dict[int, str] = field(default_factory=dict)
+    all_deps: tuple[tuple[str, str, int], ...] = ()
+    done_task_dates: dict[str, tuple[date | None, date | None]] = field(default_factory=dict)
+    task_actual_starts: dict[str, date] = field(default_factory=dict)
 
     @property
     def fund_hours_per_fte(self) -> Decimal:
@@ -511,6 +522,7 @@ def load_inputs() -> Inputs:
     done_in_sprint: dict[int, set[str]] = defaultdict(set)
     for row in db.query_dicts(DONE_IN_SPRINT_SQL, (pi["pi_id"],)):
         done_in_sprint[int(row["sprint_no"])].add(row["task_id"])
+    task_dates = db.query_dicts(TASK_DATES_SQL)
 
     return Inputs(
         pi_id=pi["pi_id"],
@@ -541,6 +553,18 @@ def load_inputs() -> Inputs:
             (row["blocking_task_id"], row["blocked_task_id"], int(row["min_gap_sprints"]))
             for row in db.query_dicts(LIVE_DEPS_SQL)
         ),
+        all_deps=tuple(
+            (row["blocking_task_id"], row["blocked_task_id"], int(row["min_gap_sprints"]))
+            for row in db.query_dicts(ALL_DEPS_SQL)
+        ),
+        done_task_dates={
+            row["task_id"]: (row["actual_start"], row["actual_end"])
+            for row in task_dates if row["status"] == "Done"
+        },
+        task_actual_starts={
+            row["task_id"]: row["actual_start"]
+            for row in task_dates if row["actual_start"] is not None
+        },
         sprints={
             row["sprint_no"]: (row["start_date"], row["end_date"]) for row in sprint_rows
         },
@@ -674,6 +698,7 @@ class Plan:
     sp_shares: tuple[tuple[str, int, Decimal], ...] = ()  # (task_id, sprint_no, sp), ADR-020
     actuals_upload_id: int | None = None
     role_demands: tuple[tuple[str, int, Decimal], ...] = ()
+    graph_bounds: tuple[tuple[str, int], ...] = ()
 
     @property
     def in_quarter(self) -> tuple[ScheduleRow, ...]:
@@ -936,6 +961,58 @@ def _q(value: Decimal) -> str:
 # ---------------------------------------------------------------------------
 #  ЧИСТАЯ ЛОГИКА: вход → план
 # ---------------------------------------------------------------------------
+def _refresh_live_graph(inputs: Inputs, as_of_sprint: int,
+                        dependency_mode: str) -> tuple[Inputs, list[str]]:
+    """Recalculate live lower bounds using completion dates, not ETL-era status."""
+    if not inputs.all_deps:
+        return inputs, []
+    live = {task.task_id: task for task in inputs.tasks}
+    predecessors: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for blocking, blocked, gap in inputs.all_deps:
+        if blocked in live:
+            predecessors[blocked].append((blocking, gap))
+
+    def sprint_of(when: date) -> int:
+        for no, (start, end) in sorted(inputs.sprints.items()):
+            if when < start:
+                return no - 1
+            if start <= when <= end:
+                return no
+        return inputs.sprint_count + 1
+
+    lower: dict[str, int] = {}
+    issues: list[str] = []
+    for task in sorted(inputs.tasks, key=lambda item: item.topo_order):
+        bound = 1
+        for blocking, gap in predecessors.get(task.task_id, ()):
+            if blocking in live:
+                if blocking not in lower:
+                    raise ValueError(f"живой граф не топологичен: {blocking} → {task.task_id}")
+                bound = max(bound, lower[blocking] + gap)
+                continue
+            dates = inputs.done_task_dates.get(blocking)
+            if dates is None:
+                continue
+            anchor = (dates[1] if dependency_mode == DEPENDENCY_MODE_FINISH_START
+                      else dates[0] or dates[1])
+            if anchor is None:
+                issues.append(f"{blocking} → {task.task_id}: у завершённой задачи нет даты события")
+                bound = max(bound, max(1, inputs.last_reported_sprint + gap))
+                continue
+            anchor_sprint = sprint_of(anchor)
+            if anchor_sprint >= as_of_sprint and anchor_sprint > 0:
+                issues.append(f"{blocking} → {task.task_id}: фактическая дата {anchor} позже среза прогона")
+                bound = inputs.sprint_count + 1
+                continue
+            bound = max(bound, anchor_sprint + gap)
+            actual_start = inputs.task_actual_starts.get(task.task_id)
+            if actual_start is not None and sprint_of(actual_start) < anchor_sprint + gap:
+                issues.append(f"{blocking} → {task.task_id}: фактический старт нарушил зазор зависимости")
+        lower[task.task_id] = bound
+    return replace(inputs, tasks=tuple(replace(task, earliest_start_sprint=lower[task.task_id])
+                                       for task in inputs.tasks)), issues
+
+
 def build_plan(
     inputs: Inputs,
     as_of_sprint: int = 0,
@@ -967,6 +1044,8 @@ def build_plan(
     # k начинается «сегодня», всё до него — история. Инвариант
     # `ASSIGNMENT_IN_CLOSED_SPRINT` проверяет это независимо от алгоритма.
     replan_floor = max(1, as_of_sprint)
+
+    inputs, dependency_fact_issues = _refresh_live_graph(inputs, as_of_sprint, dependency_mode)
 
     by_id = {task.task_id: task for task in inputs.tasks}
     # Кандидаты на роль — из покрытия (ADR-012), а не из `engineers.role_id`:
@@ -1371,6 +1450,7 @@ def build_plan(
                     replace(task, earliest_start_sprint=1) for task in ordered if task.task_id in pool
                 ),
                 deps=tuple(dep for dep in inputs.deps if dep[0] in pool and dep[1] in pool),
+                all_deps=(), done_task_dates={}, task_actual_starts={},
                 baseline_schedule={},
             )
             trial_plan = build_plan(
@@ -1525,6 +1605,7 @@ def build_plan(
             "repack": initiative_mode == INITIATIVE_MODE_GREEDY,
             "next_pi_check": next_pi_check,
             "pi_closed": pi_closed,
+            "dependency_fact_issues": dependency_fact_issues,
         },
         sp_shares=tuple(
             (task.task_id, n, sp)
@@ -1717,6 +1798,7 @@ def _assemble(
             for task in inputs.tasks
             for role_id, hours in sorted(task.needed.items())
         ),
+        graph_bounds=tuple((task.task_id, task.earliest_start_sprint) for task in inputs.tasks),
     )
 
 
@@ -2259,6 +2341,13 @@ def write_plan(plan: Plan) -> int:
                    (run_id, task_id, role_id, needed_hours) VALUES (%s, %s, %s, %s)""",
                 [(run_id, task_id, role_id, hours)
                  for task_id, role_id, hours in plan.role_demands],
+            )
+
+        if plan.graph_bounds:
+            cur.executemany(
+                """INSERT INTO plan_dependency_bounds
+                   (run_id, task_id, earliest_start_sprint) VALUES (%s, %s, %s)""",
+                [(run_id, task_id, earliest) for task_id, earliest in plan.graph_bounds],
             )
 
         if plan.assignments:

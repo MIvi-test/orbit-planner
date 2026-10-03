@@ -851,7 +851,7 @@ def emit(D, src_path: Path) -> str:
            "fte_hours_per_sprint"], [pi])
     block("спринты", "sprints", ["pi_id", "sprint_no", "start_date", "end_date"], sprints)
     block("порядок задач", "task_sequence",
-          ["task_id", "topo_order", "depth", "earliest_start_sprint", "on_critical_path"], seq)
+          ["task_id", "topo_order", "depth", "earliest_start_sprint", "on_longest_edge_chain"], seq)
     block("качество данных", "dq_issues",
           ["batch_id", "entity", "entity_id", "rule_code", "severity", "detail"],
           [(1, *r) for r in dq.rows])
