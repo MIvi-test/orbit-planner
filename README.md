@@ -173,7 +173,7 @@ cd web && npm install && npm run dev
      │  app/server.py           │   stdlib HTTP-сервер, без фреймворка
      │   ├ views.py             │   белый список витрин
      │   ├ ingest.py            │   загрузка датасета и факта спринта
-     │   ├ planner.py           │   алгоритм планирования
+     │   ├ planner/             │   алгоритм планирования (пакет)
      │   └ metrics.py           │   /metrics для Prometheus
      └────────────┬─────────────┘
                   │  psycopg 3
@@ -187,7 +187,7 @@ cd web && npm install && npm run dev
 * **Вся аналитика — в SQL.** Витрины (`db/04_views.sql`) считают дефициты,
   Bus Factor, отклонения и KPI. Фронт ничего не пересчитывает: он показывает
   строки витрин как есть.
-* **Планировщик — отдельный детерминированный алгоритм** (`app/planner.py`).
+* **Планировщик — отдельный детерминированный алгоритм** (пакет `app/planner/`).
   Один и тот же вход всегда даёт один и тот же план. Результат прогона пишется
   в `plan_runs` / `plan_task_schedule` / `plan_assignments` вместе с
   объяснением каждого решения.
@@ -636,7 +636,7 @@ docker-compose.yaml     запуск: полный стек; Dockerfile — об
 run.sh / run.bat        запуск без Docker для приложения
 etl/                    config.py — все ручки; load.py — загрузчик датасета
 app/                    server.py (HTTP), views.py (белый список витрин),
-                        planner.py (алгоритм), ingest.py (загрузки), db.py, metrics.py
+                        planner/ (алгоритм: model, loading, funds, core, alerts, kpi, writer), ingest.py (загрузки), db.py, metrics.py
 db/01…05.sql            схема, контракт, замещения, витрины, инварианты приёмки
 db/migrations/          миграции схемы (tools/migrate.py)
 build/seed.sql          результат ETL — данные для заливки
