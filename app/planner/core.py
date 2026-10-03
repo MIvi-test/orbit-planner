@@ -9,6 +9,7 @@ from typing import Any
 
 from app.planner.constants import (
     ALGORITHM,
+    DEFAULT_DEPENDENCY_MODE,
     DEFERRED_REASON,
     DEFERRED_REASON_BLOCKED,
     DEPENDENCY_MODES,
@@ -45,7 +46,7 @@ def build_plan(
     inputs: Inputs,
     as_of_sprint: int = 0,
     baseline_starts: dict[str, int] | None = None,
-    dependency_mode: str = DEPENDENCY_MODE_START_START,
+    dependency_mode: str = DEFAULT_DEPENDENCY_MODE,
     initiative_mode: str = INITIATIVE_MODE_GREEDY,
     simulate_next_pi: bool = True,
 ) -> Plan:

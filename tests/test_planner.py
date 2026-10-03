@@ -639,22 +639,33 @@ def test_plan_is_deterministic() -> None:
 #  пересчёт, одна орбита на назначение, efficiency, кандидаты из вьюхи.
 # ---------------------------------------------------------------------------
 def test_dependency_finish_start_waits_for_the_end_of_the_blocker() -> None:
-    """ADR-013: `finish_start` — старт блокируемой после КОНЦА блокирующей.
+    """ADR-028: по умолчанию блокируемая стартует после КОНЦА блокирующей.
 
     A растянута на спринты 1..2 (120 ЧЧ при фонде 80), B зависит от A.
-    При `start_start` B влезает в спринт 2, при `finish_start` — только в 3-й.
+    При `finish_start` (умолчание) B встаёт только в 3-й, при явном `start_start` — во 2-й.
     """
     tasks = [task("A", roles={1: 120}, topo=1), task("B", roles={1: 40}, topo=2)]
     source = inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),))
 
-    start_start = planner.build_plan(source)
-    assert (start_start.schedule[0].start_sprint, start_start.schedule[0].end_sprint) == (1, 2)
+    default = planner.build_plan(source)
+    assert (default.schedule[0].start_sprint, default.schedule[0].end_sprint) == (1, 2)
+    assert starts_of(default) == {"A": 1, "B": 3}
+    assert default.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
+    assert planner.DEFAULT_DEPENDENCY_MODE == planner.DEPENDENCY_MODE_FINISH_START
+
+    start_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_START_START)
     assert starts_of(start_start) == {"A": 1, "B": 2}
     assert start_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
 
-    finish_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_FINISH_START)
-    assert starts_of(finish_start) == {"A": 1, "B": 3}
-    assert finish_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_FINISH_START
+
+def test_default_mode_never_starts_a_dependent_before_its_blocker_ends() -> None:
+    """Зависимая не завершается раньше предшественника при любых окнах (DA-09)."""
+    tasks = [task("A", roles={1: 240}, topo=1), task("B", roles={2: 40}, topo=2)]
+    source = inputs(tasks, [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),))
+
+    plan = planner.build_plan(source)
+    rows = {row.task_id: row for row in plan.schedule}
+    assert rows["B"].start_sprint > rows["A"].end_sprint
 
 
 def test_unknown_modes_are_rejected() -> None:
@@ -771,7 +782,7 @@ def test_objective_and_modes_are_recorded_in_params() -> None:
 
     assert plan.params["objective"] == planner.OBJECTIVE
     assert plan.params["initiative_mode"] == planner.INITIATIVE_MODE_GREEDY
-    assert plan.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
+    assert plan.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
     assert plan.params["replan_floor"] == 1
     assert plan.params["initiatives_planned"] == 1
     assert plan.params["initiatives_complete"] == 1

@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.planner.constants import (
     DEPENDENCY_MODE_FINISH_START,
-    DEPENDENCY_MODE_START_START,
+    DEFAULT_DEPENDENCY_MODE,
     REASON_ROLE_NOT_IN_STAFF,
 )
 from app.planner.model import AlertRow, Assignment, Inputs, ScheduleRow
@@ -21,7 +21,7 @@ def _build_alerts(
     assignments: list[Assignment] | tuple[Assignment, ...] = (),
     lower_bounds: dict[str, int] | None = None,
     as_of_sprint: int = 0,
-    dependency_mode: str = DEPENDENCY_MODE_START_START,
+    dependency_mode: str = DEFAULT_DEPENDENCY_MODE,
 ) -> list[AlertRow]:
     """Три типа рисков из ТЗ.
 

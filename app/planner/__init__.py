@@ -49,10 +49,9 @@
 Режимы (по умолчанию — как в приёмке M2, оба параметра уезжают в
 `plan_runs.params`):
 
-* `dependency_mode`: `start_start` (по умолчанию) —
-  `start(blocked) ≥ start(blocking) + gap`, как в предпосчитанном
-  `task_sequence.earliest_start_sprint`; `finish_start` —
-  `start(blocked) ≥ end(blocking) + gap` (ADR-013);
+* `dependency_mode`: `finish_start` (по умолчанию, ADR-028) —
+  `start(blocked) ≥ end(blocking) + gap`; `start_start` —
+  `start(blocked) ≥ start(blocking) + gap` (ADR-013);
 * `initiative_mode`: `greedy` (по умолчанию) — задача решается по отдельности,
   частично закрытая инициатива допустима; `atomic` — пробная упаковка всей
   инициативы с откатом: не влезла хоть одна задача, переносится вся
@@ -84,6 +83,7 @@ from app.planner.constants import (  # noqa: F401
     DEFERRED_REASON_BLOCKED,
     DEPENDENCY_MODES,
     DEPENDENCY_MODE_FINISH_START,
+    DEFAULT_DEPENDENCY_MODE,
     DEPENDENCY_MODE_START_START,
     DONE_STATUS,
     EFFICIENCY_NOTE,

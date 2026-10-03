@@ -5,7 +5,7 @@
     uv run python tools/run_planner.py --dry-run          # посчитать, но не писать
 
     # варианты правил (ADR-013); по умолчанию — как в приёмке M2:
-    uv run python tools/run_planner.py --dry-run --dependency-mode finish_start
+    uv run python tools/run_planner.py --dry-run --dependency-mode start_start
     uv run python tools/run_planner.py --dry-run --initiative-mode atomic
 
 Пишет контракт целиком одной транзакцией (`app.planner.write_plan`). Приёмка
@@ -58,10 +58,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dependency-mode",
         choices=planner.DEPENDENCY_MODES,
-        default=planner.DEPENDENCY_MODE_START_START,
+        default=planner.DEFAULT_DEPENDENCY_MODE,
         help=(
-            "start_start (по умолчанию) — старт после СТАРТА блокирующей; "
-            "finish_start — старт после КОНЦА блокирующей (ADR-013)"
+            "finish_start (по умолчанию) — старт после КОНЦА блокирующей; "
+            "start_start — старт после СТАРТА блокирующей (ADR-013, ADR-028)"
         ),
     )
     parser.add_argument(

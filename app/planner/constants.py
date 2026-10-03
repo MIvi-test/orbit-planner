@@ -57,15 +57,13 @@ REASON_NOT_FEASIBLE = "NOT_FEASIBLE_NEXT_PI"
 CANCEL_REASON = "M4"  # «Превышение плана»: не помещается и в следующий квартал
 
 
-# Семантика зависимостей (ADR-013). `start_start` — значение по умолчанию:
-# именно её реализует предпосчитанный `task_sequence.earliest_start_sprint`.
+# Семантика зависимостей (ADR-013, пересмотрена в ADR-028). Блокирующая задача
+# передаёт результат блокируемой, когда ЗАКОНЧЕНА: по умолчанию `finish_start`.
+# `start_start` (старт после старта предшественника) оставлен как явный режим.
 DEPENDENCY_MODE_START_START = "start_start"
-
-
 DEPENDENCY_MODE_FINISH_START = "finish_start"
-
-
 DEPENDENCY_MODES = (DEPENDENCY_MODE_START_START, DEPENDENCY_MODE_FINISH_START)
+DEFAULT_DEPENDENCY_MODE = DEPENDENCY_MODE_FINISH_START
 
 
 # Атомарность инициатив (ADR-013). `greedy` — частичная инициатива допустима.
