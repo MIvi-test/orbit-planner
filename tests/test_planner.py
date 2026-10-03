@@ -619,21 +619,20 @@ def test_atomic_initiatives_defer_the_whole_initiative() -> None:
     assert [(a.task_id, a.hours) for a in atomic.assignments] == [("B1", Decimal("80"))]
 
 
-def test_one_assignment_takes_hours_from_a_single_orbit() -> None:
-    """ADR-015: одна строка `plan_assignments` = одна орбита.
-
-    Парттаймер 0.5 + 0.5: бюджет орбиты — 40 ЧЧ. Задача на 80 ЧЧ получит
-    40 со своей орбиты в спринте 1 и 40 в спринте 2 — но не одной строкой.
-    """
+def test_one_engineer_can_use_two_orbits_on_one_task_in_one_sprint() -> None:
+    """Парттаймер 0.5 + 0.5 отдаёт свои 40 и заёмные 40 ЧЧ за спринт."""
     part_timer = engineer("ENG-1", orbits=(T1, T2))
     plan = planner.build_plan(inputs([task("T-1", team=T1, roles={1: 80})], [part_timer]))
 
     assert [(a.sprint_no, a.hours, a.home_team_id) for a in plan.assignments] == [
         (1, Decimal("40"), T1),
-        (2, Decimal("40"), T1),
+        (1, Decimal("40"), T2),
     ]
-    keys = [(a.task_id, a.sprint_no, a.engineer_id, a.role_id) for a in plan.assignments]
+    keys = [(a.task_id, a.sprint_no, a.engineer_id, a.role_id, a.home_team_id)
+            for a in plan.assignments]
     assert len(keys) == len(set(keys)), "ключ контракта обязан быть уникальным"
+    assert sum((a.hours for a in plan.assignments), Decimal(0)) == Decimal(80)
+    assert plan.schedule[0].end_sprint == 1
 
 
 def test_loan_comes_from_the_other_orbit_of_the_same_engineer() -> None:

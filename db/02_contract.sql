@@ -114,7 +114,7 @@ CREATE TABLE plan_assignments (
     home_team_id    TEXT         NOT NULL REFERENCES teams(team_id),
     serving_team_id TEXT         NOT NULL REFERENCES teams(team_id),
     is_loan         BOOLEAN      GENERATED ALWAYS AS (home_team_id IS DISTINCT FROM serving_team_id) STORED,
-    PRIMARY KEY (run_id, task_id, sprint_no, engineer_id, role_id)
+    PRIMARY KEY (run_id, task_id, sprint_no, engineer_id, role_id, home_team_id)
 );
 COMMENT ON COLUMN plan_assignments.home_team_id    IS 'Ядро, на орбите которого инженер отдал эти часы.';
 COMMENT ON COLUMN plan_assignments.serving_team_id IS 'Ядро, которому принадлежит задача. Отличается от home → это заём (ADR-001).';

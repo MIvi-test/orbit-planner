@@ -39,9 +39,8 @@
   поэтому поведение не меняется, но формула уже верна (ADR-016);
 * фонд часов — по орбитам: сначала своё ядро, невыбранный остаток уходит в заём
   (`is_loan` считает СУБД, ADR-001). Одна строка `plan_assignments` берёт часы
-  РОВНО С ОДНОЙ орбиты: `home_team_id` не входит в первичный ключ
-  `(task_id, sprint_no, engineer_id, role_id)`, поэтому размазать одно
-  назначение по двум орбитам контракт не позволяет (ADR-015);
+  с одной орбиты; `home_team_id` входит в ключ, поэтому один человек может
+  отдать часы с нескольких орбит на задачу в том же спринте;
 * если незакрытая задача исчерпала расчётную смету, но ETC не сообщён,
   остаток считается неизвестным; фиктивные назначения не создаются;
 * в закрытые спринты план не пишется: при `as_of_sprint = k` нижняя граница
@@ -739,16 +738,8 @@ def _candidate_engineers(
 
 def _spend_from(
     engineer: EngineerInput, task_team: str, sprint_no: int, need: Decimal, funds: _Funds
-) -> tuple[Decimal, str | None]:
-    """Списать до `need` часов РОВНО С ОДНОЙ орбиты. Возвращает (часы, home_team_id).
-
-    Одна строка `plan_assignments` = одна орбита: `home_team_id` не входит в
-    первичный ключ `(task_id, sprint_no, engineer_id, role_id)`, поэтому
-    разложить одно назначение по двум орбитам контракт не позволяет, а указать
-    первую орбиту при часах с двух — значит соврать в отчётности по орбитам.
-    Не влезло в одну орбиту — остаток возьмёт следующий кандидат или следующий
-    спринт (`_allocate_task`).
-    """
+) -> list[tuple[Decimal, str]]:
+    """Списать часы с доступных орбит человека, своё ядро — первым."""
     order = [task_team] if task_team in engineer.orbits else []  # своё ядро — первым
     order.extend(
         sorted(
@@ -760,7 +751,10 @@ def _spend_from(
         )
     )
 
+    taken_from: list[tuple[Decimal, str]] = []
     for team_id in order:
+        if need <= 0:
+            break
         left = min(
             funds.orbit_left(engineer.engineer_id, team_id, sprint_no),
             funds.total_left(engineer.engineer_id, sprint_no),
@@ -769,10 +763,11 @@ def _spend_from(
             continue
         take = min(left, need)
         if take <= 0:
-            break
+            continue
         funds.spend(engineer.engineer_id, team_id, sprint_no, take)
-        return take, team_id
-    return Decimal("0"), None
+        taken_from.append((take, team_id))
+        need -= take
+    return taken_from
 
 
 def _allocate_task(
@@ -821,16 +816,17 @@ def _allocate_task(
             for engineer_id in _candidate_engineers(task.team_id, role_id, sprint_no, funds, by_role):
                 # efficiency: смету закрывают ЧАСЫ ИСПОЛНИТЕЛЯ, а не сметы.
                 efficiency = coverage.get((engineer_id, role_id), Decimal("1"))
-                taken, home = _spend_from(
+                taken_from = _spend_from(
                     funds.engineers[engineer_id], task.team_id, sprint_no, need * efficiency, funds
                 )
-                if taken <= 0 or home is None:
+                if not taken_from:
                     continue
-                assignments.append(
-                    Assignment(task.task_id, sprint_no, engineer_id, role_id, taken, home,
-                               task.team_id, taken / efficiency)
-                )
-                need -= taken / efficiency
+                for taken, home in taken_from:
+                    assignments.append(
+                        Assignment(task.task_id, sprint_no, engineer_id, role_id, taken, home,
+                                   task.team_id, taken / efficiency)
+                    )
+                    need -= taken / efficiency
                 remaining[role_id] = need
                 if need <= 0:
                     break
