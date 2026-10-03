@@ -5,6 +5,7 @@ import {
   usePlanRoleDemandSnapshot,
   usePlanSchedule,
   usePlanTaskSp,
+  usePlanTaskProgress,
   useSprints,
   useTaskState,
   useTasks,
@@ -15,6 +16,7 @@ import type {
   PlanAssignmentDetailRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
+  PlanTaskProgressRow,
   PlanRoleDemandSnapshotRow,
   SprintRow,
   TaskStateRow,
@@ -40,6 +42,7 @@ export function usePlanData() {
   const initiativesQ = useInitiatives()
   const scheduleQ = usePlanSchedule(runId)
   const spQ = usePlanTaskSp(runId)
+  const progressQ = usePlanTaskProgress(runId)
   const assignQ = usePlanAssignments(runId)
 
   // Канонический базовый прогон: первый опубликованный, включая старый infeasible.
@@ -57,10 +60,11 @@ export function usePlanData() {
     initiativesQ.isPending ||
     scheduleQ.isPending ||
     spQ.isPending ||
+    progressQ.isPending ||
     assignQ.isPending
   const isError =
-    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || spQ.isError || assignQ.isError
-  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? spQ.error ?? assignQ.error
+    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || spQ.isError || progressQ.isError || assignQ.isError
+  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? spQ.error ?? progressQ.error ?? assignQ.error
 
   const groups = useMemo<InitiativeGroup[]>(() => {
     const tasks = tasksQ.data?.items
@@ -111,6 +115,12 @@ export function usePlanData() {
     return map
   }, [spQ.data])
 
+  const progressByTask = useMemo(() => {
+    const map = new Map<string, PlanTaskProgressRow[]>()
+    progressQ.data?.items.forEach((row) => map.set(row.task_id, [...(map.get(row.task_id) ?? []), row]))
+    return map
+  }, [progressQ.data])
+
   const assignmentsByTask = useMemo(() => {
     const map = new Map<string, PlanAssignmentDetailRow[]>()
     assignQ.data?.items.forEach((row) => {
@@ -147,6 +157,7 @@ export function usePlanData() {
     baselineByTask,
     hasBaseline: baselineRunId !== null && baselineRunId !== runId,
     spByTask,
+    progressByTask,
     assignmentsByTask,
   }
 }

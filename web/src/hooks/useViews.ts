@@ -25,6 +25,7 @@ import type {
   PlanRoleDemandSnapshotRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
+  PlanTaskProgressRow,
   PlanViolationRow,
   RefDecisionReasonRow,
   RefResultOptionRow,
@@ -63,6 +64,8 @@ export const usePlanBaseline = (runId?: number | null) =>
   useView<PlanBaselineRow>('plan_baseline', { runId: runId ?? undefined, limit: 500 })
 export const usePlanTaskSp = (runId?: number | null) =>
   useView<PlanTaskSpRow>('plan_task_sp', { runId: runId ?? undefined, limit: 500 })
+export const usePlanTaskProgress = (runId?: number | null) =>
+  useView<PlanTaskProgressRow>('v_plan_task_progress', { runId: runId ?? undefined, limit: 1000 })
 export const useSprints = () => useView<SprintRow>('sprints', { limit: 20 })
 export const useSprintFundFactor = () => useView<SprintFundFactorRow>('v_sprint_fund_factor', { limit: 20 })
 export const usePiFundFactor = () => useView<PiFundFactorRow>('v_pi_fund_factor', { limit: 5 })

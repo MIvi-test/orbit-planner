@@ -1454,6 +1454,20 @@ def build_plan(
                 f"{_q(task.sp_to_plan)} SP растянуты на {_sprints_word(len(shares))}: "
                 f"это больше свободной ёмкости команды за один спринт"
             )
+        hour_sprints = {row.sprint_no for row in rows}
+        sp_only = sorted(set(shares) - hour_sprints)
+        hours_only = sorted(hour_sprints - set(shares))
+        if sp_only:
+            parts.append(
+                "спринты " + ", ".join(map(str, sp_only))
+                + " содержат только долю SP: отдельный бюджет пропускной способности команды; "
+                "дата результата ждёт последней доли SP"
+            )
+        if hours_only:
+            parts.append(
+                "спринты " + ", ".join(map(str, hours_only))
+                + " содержат только работу инженеров; дата результата ждёт последних часов"
+            )
         text = ". ".join(parts)
         return text, {
             "priority_rung": task.priority_rung,

@@ -3,7 +3,7 @@
  * показывается как есть, не пересказывается и не сокращается.
  */
 import { Badge, Drawer, Group, List, Stack, Table, Text } from '@mantine/core'
-import type { PlanAssignmentDetailRow, PlanRoleDemandSnapshotRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
+import type { PlanAssignmentDetailRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
 
 const DECISION_LABEL: Record<string, string> = {
@@ -22,6 +22,7 @@ export function TaskDetailDrawer({
   task,
   state,
   roleDemand,
+  progress,
   schedule,
   assignments,
   onClose,
@@ -29,6 +30,7 @@ export function TaskDetailDrawer({
   task: TaskRow | null
   state: TaskStateRow | undefined
   roleDemand: PlanRoleDemandSnapshotRow[]
+  progress: PlanTaskProgressRow[]
   schedule: PlanTaskScheduleRow | undefined
   assignments: PlanAssignmentDetailRow[]
   onClose: () => void
@@ -98,6 +100,20 @@ export function TaskDetailDrawer({
               <Text size="sm" fw={500}>Остаток по ролям на момент прогона</Text>
               {roleDemand.map((row) => (
                 <Text key={row.role_id} size="sm">{row.role_name}: {fmtHours(row.needed_hours)}</Text>
+              ))}
+            </Stack>
+          )}
+
+          {progress.length > 0 && (
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>Работа по спринтам</Text>
+              <Text size="xs" c="dimmed">SP — отдельный бюджет команды; перевод SP в часы не применяется. Результат достигается после последнего спринта с часами или SP.</Text>
+              {progress.map((row) => (
+                <Text key={row.sprint_no} size="sm">
+                  Спринт {row.sprint_no}: {fmtHours(row.assigned_hours)}, {fmtSp(row.sp)} SP
+                  {row.progress_basis === 'team_sp_only' ? ' · только бюджет SP команды' : ''}
+                  {row.progress_basis === 'engineer_hours_only' ? ' · только работа инженеров' : ''}
+                </Text>
               ))}
             </Stack>
           )}

@@ -155,6 +155,14 @@ SOURCES: tuple[Source, ...] = (
         note="Остаток часов по ролям на момент выбранного прогона.",
     ),
     _source(
+        "v_plan_task_progress",
+        screen="План квартала",
+        order="task_id,sprint_no",
+        orderable=("run_id", "task_id", "sprint_no", "assigned_hours", "work_hours", "sp", "progress_basis"),
+        run_column="run_id",
+        note="Два независимых бюджета по спринтам: часы инженеров и SP команды; без перевода SP в часы.",
+    ),
+    _source(
         "v_task_remaining_hh",
         screen="Доска задач",
         order="task_id,role_id",

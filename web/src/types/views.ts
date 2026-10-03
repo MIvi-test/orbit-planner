@@ -123,6 +123,16 @@ export interface PlanRoleDemandSnapshotRow {
   needed_hours: NumericString
 }
 
+export interface PlanTaskProgressRow {
+  run_id: number
+  task_id: string
+  sprint_no: number
+  assigned_hours: NumericString
+  work_hours: NumericString
+  sp: NumericString
+  progress_basis: 'both' | 'team_sp_only' | 'engineer_hours_only'
+}
+
 // --------------------------------------------------------------- звёздная карта
 export interface OrbitMapRow {
   engineer_id: string

@@ -385,7 +385,7 @@ COMMIT;
 BEGIN;
 
 DROP VIEW IF EXISTS v_sprint_deviation, v_plan_diff, v_team_profile,
-     v_plan_role_demand_snapshot,
+     v_plan_role_demand_snapshot, v_plan_task_progress,
      v_engineer_absence_risk, v_bus_factor_skill CASCADE;
 
 -- --------------------------------------------------------------------
@@ -607,6 +607,24 @@ SELECT d.run_id, d.task_id, d.role_id, r.canonical_name AS role_name,
        d.needed_hours
 FROM plan_role_demand_snapshot d
 JOIN roles r ON r.role_id = d.role_id;
+
+-- SP are a team throughput budget, not a conversion from engineer hours.
+-- Keep both streams visible for every sprint in a task's planned window.
+CREATE VIEW v_plan_task_progress AS
+WITH activity AS (
+    SELECT run_id, task_id, sprint_no, SUM(hours) AS assigned_hours,
+           SUM(work_hours) AS work_hours, 0::numeric AS sp
+    FROM plan_assignments GROUP BY run_id, task_id, sprint_no
+    UNION ALL
+    SELECT run_id, task_id, sprint_no, 0::numeric, 0::numeric, SUM(sp)
+    FROM plan_task_sp GROUP BY run_id, task_id, sprint_no
+)
+SELECT run_id, task_id, sprint_no, SUM(assigned_hours) AS assigned_hours,
+       SUM(work_hours) AS work_hours, SUM(sp) AS sp,
+       CASE WHEN SUM(assigned_hours) > 0 AND SUM(sp) > 0 THEN 'both'
+            WHEN SUM(sp) > 0 THEN 'team_sp_only'
+            ELSE 'engineer_hours_only' END AS progress_basis
+FROM activity GROUP BY run_id, task_id, sprint_no;
 
 CREATE VIEW v_plan_diff AS
 WITH pairs AS (
