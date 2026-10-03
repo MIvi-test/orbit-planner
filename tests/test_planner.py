@@ -474,7 +474,8 @@ def test_baseline_and_kpis_on_the_first_run() -> None:
 
     say_do = [row for row in plan.kpis if row.kpi_code == "say_do_ratio"]
     assert [row.sprint_no for row in say_do] == [1, 2, 3, 4, 5, 6]
-    assert all(row.value == Decimal("100.00") for row in say_do)
+    assert say_do[0].value == Decimal("100.00")
+    assert all(row.value is None and row.calculation_status == "no_plan" for row in say_do[1:])
     assert all(row.kind == "forecast" for row in say_do)
     assert say_do[0].target_min == Decimal("90") and say_do[0].target_max == Decimal("105")
 
