@@ -114,6 +114,26 @@ class DQ:
 dq = DQ()
 
 
+class DependencyGraphError(ValueError):
+    """Исходные зависимости нельзя безопасно превратить в порядок задач."""
+
+
+def validate_dependency_edge(a, b, typ, source_row, task_ids, previous_rows):
+    """Структурные ошибки рёбер не должны терять ограничения при загрузке."""
+    if a not in task_ids or b not in task_ids:
+        raise DependencyGraphError(f"строка Excel {source_row}: связь {a} → {b} ссылается на неизвестную задачу")
+    if a == b:
+        raise DependencyGraphError(f"строка Excel {source_row}: задача {a} зависит от самой себя")
+    if (a, b) in previous_rows:
+        raise DependencyGraphError(
+            f"строка Excel {source_row}: повтор связи {a} → {b} (впервые в строке {previous_rows[a, b]})"
+        )
+    if typ.lower() not in {"depends on", "has to be done before", "is required for"}:
+        raise DependencyGraphError(
+            f"строка Excel {source_row}: неизвестный тип зависимости «{typ}» для {a} → {b}"
+        )
+
+
 # ===================================================================== #
 #  поиск блоков на листе                                                #
 # ===================================================================== #
@@ -395,19 +415,14 @@ def parse(path: Path):
     d_title = sh.find_block(C.BLOCK_MARKERS["dependencies"])
     d_hdr = sh.header_row(d_title)
     dc = sh.columns(d_hdr)
-    deps, seen = [], set()
+    deps, dep_source_rows = [], {}
     status = {t["task_id"]: t["status"] for t in tasks}
     for r in sh.data_rows(d_hdr):
         a = norm_text(sh.cell(r, dc["blocking_task_id"]))
         b = norm_text(sh.cell(r, dc["blocked_task_id"]))
         typ = norm_text(sh.cell(r, dc["dependency_type"]))
-        if a not in task_ids or b not in task_ids:
-            dq.add("task_dependencies", f"{a}->{b}", "DEP_ORPHAN", "error", "Связь ссылается на неизвестную задачу.")
-            continue
-        if a == b or (a, b) in seen:
-            dq.add("task_dependencies", f"{a}->{b}", "DEP_DUPLICATE_OR_SELF", "error", "Петля или дубль связи.")
-            continue
-        seen.add((a, b))
+        validate_dependency_edge(a, b, typ, r, task_ids, dep_source_rows)
+        dep_source_rows[a, b] = r
         if status.get(a) != "Done" and status.get(b) == "Done":
             dq.add("task_dependencies", f"{a}->{b}", "DEP_VIOLATED_IN_SOURCE", "warning",
                    f"{b} уже Done, хотя блокирующая {a} в статусе {status.get(a)}.")
@@ -495,7 +510,7 @@ def parse(path: Path):
         ini_rows.append((prodf, v["br"], title, pr))
 
     D.update(tasks=tasks, initiatives=ini_rows, estimates=estimates, spent=spent,
-             deps=deps, engineers=engineers, orbits=orbits,
+             deps=deps, dep_source_rows=dep_source_rows, engineers=engineers, orbits=orbits,
              skills=[(i, s, k) for k, (i, s) in skills_seen.items()],
              eng_skills=sorted(eng_skills), history=history, teams=sorted(teams),
              role_id=role_id)
@@ -539,7 +554,7 @@ def build_sprints():
             C.HOURS_PER_SPRINT_FTE), rows
 
 
-def build_sequence(tasks, deps):
+def build_sequence(tasks, deps, dep_source_rows=None):
     """Топологический порядок + самый ранний старт по живому подграфу."""
     status = {t["task_id"]: t["status"] for t in tasks}
     ids = [t["task_id"] for t in tasks]
@@ -563,10 +578,33 @@ def build_sequence(tasks, deps):
                 queue.append(m)
         queue.sort()
     if len(order) != len(ids):
-        cyc = sorted(set(ids) - set(order))
-        dq.add("task_dependencies", None, "DEPENDENCY_CYCLE", "error",
-               f"В графе зависимостей цикл, затронуты: {cyc}. Порядок посчитан частично.")
-        order += cyc
+        remaining = set(ids) - set(order)
+        visiting: dict[str, int] = {}
+        path: list[str] = []
+
+        def find_cycle(node):
+            visiting[node] = 1
+            path.append(node)
+            for successor in sorted(succ_all[node]):
+                if successor not in remaining:
+                    continue
+                if visiting.get(successor) == 1:
+                    return path[path.index(successor):] + [successor]
+                if successor not in visiting:
+                    found = find_cycle(successor)
+                    if found:
+                        return found
+            path.pop()
+            visiting[node] = 2
+            return None
+
+        cycle = next((found for node in sorted(remaining) if node not in visiting
+                      if (found := find_cycle(node))), None)
+        assert cycle is not None
+        source = dep_source_rows or {}
+        locations = [str(source[a, b]) for a, b in zip(cycle, cycle[1:]) if (a, b) in source]
+        suffix = f"; строки Excel: {', '.join(locations)}" if locations else ""
+        raise DependencyGraphError(f"цикл зависимостей: {' → '.join(cycle)}{suffix}")
     topo = {t: i + 1 for i, t in enumerate(order)}
 
     # живой подграф
@@ -607,7 +645,7 @@ def build_sequence(tasks, deps):
 # ===================================================================== #
 def emit(D, src_path: Path) -> str:
     pi, sprints = build_sprints()
-    seq = build_sequence(D["tasks"], D["deps"])
+    seq = build_sequence(D["tasks"], D["deps"], D.get("dep_source_rows"))
     sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
 
     counts = {
