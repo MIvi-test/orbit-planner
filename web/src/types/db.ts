@@ -111,12 +111,16 @@ export interface engineers {
   total_capacity_rate: number;
 }
 
-/** таблица public.initiatives — 4 кол. · Бизнес-инициатива заказчика. PRODF ↔ BR строго 1:1 (проверено на 15 инициативах). */
+/** таблица public.initiatives — 8 кол. · Бизнес-инициатива заказчика. PRODF ↔ BR строго 1:1 (проверено на 15 инициативах). */
 export interface initiatives {
   prodf_id: string;
   br_id: string;
   title: string | null;
   priority_rung: number | null;
+  business_priority: number | null;
+  business_priority_by: string | null;
+  business_priority_at: string | null;
+  business_priority_note: string | null;
 }
 
 /** таблица public.kpi_snapshots — 9 кол. · Нормы: pi_predictability 80–100%, say_do_ratio 90–105%, bus_factor > 1. ТЗ: «прогноз выполнения необходимо отличать от фактического результата» — kind = forecast (по плану) | actual (по загруженному факту). Формулы — ADR-023. */

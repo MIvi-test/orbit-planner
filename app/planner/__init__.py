@@ -84,6 +84,12 @@ from app.planner.constants import (  # noqa: F401
     DEPENDENCY_MODES,
     DEPENDENCY_MODE_FINISH_START,
     DEFAULT_DEPENDENCY_MODE,
+    DEFAULT_PRIORITY_STRATEGY,
+    PRIORITY_COMPLETION_FIRST,
+    PRIORITY_MAX,
+    PRIORITY_STRATEGIES,
+    PRIORITY_TASK,
+    PRIORITY_WEIGHTED,
     DEPENDENCY_MODE_START_START,
     DONE_STATUS,
     EFFICIENCY_NOTE,
@@ -170,6 +176,11 @@ from app.planner.alerts import (  # noqa: F401
 from app.planner.kpi import (  # noqa: F401
     _build_kpis,
     _build_states,
+)
+from app.planner.priority import (  # noqa: F401
+    check_strategy,
+    effective_priority,
+    order_tasks,
 )
 from app.planner.capacity import (  # noqa: F401
     CENT,

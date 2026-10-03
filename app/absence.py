@@ -37,6 +37,7 @@ def evaluate(engineer_id: str, run_id: int) -> dict[str, Any]:
         baseline_starts=planner.load_baseline_starts(),
         dependency_mode=modes.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE),
         initiative_mode=modes.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
+        priority_strategy=modes.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY),
         simulate_next_pi=False,
     )
     previous = db.query_dicts(

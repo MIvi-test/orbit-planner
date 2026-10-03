@@ -18,7 +18,7 @@ class TaskInput:
     prodf_id: str
     team_id: str
     status: str
-    priority_rung: int | None
+    priority_rung: int | None  # приоритет инициативы из датасета (MAX(rung) её задач)
     estimation_sp: Decimal
     summary: str | None
     earliest_start_sprint: int
@@ -30,6 +30,9 @@ class TaskInput:
     # Остаток оценён как смета − факт и не подтверждён ETC (B-6).
     remaining_provisional: bool = False
     remaining_sp: Decimal | None = None
+    # Собственный rung задачи и явный бизнес-приоритет инициативы (DA-11).
+    own_rung: int | None = None
+    business_priority: int | None = None
 
     @property
     def sp_to_plan(self) -> Decimal:

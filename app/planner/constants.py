@@ -66,6 +66,15 @@ DEPENDENCY_MODE_FINISH_START = "finish_start"
 DEPENDENCY_MODES = (DEPENDENCY_MODE_START_START, DEPENDENCY_MODE_FINISH_START)
 DEFAULT_DEPENDENCY_MODE = DEPENDENCY_MODE_FINISH_START
 
+# Стратегии приоритета инициативы (DA-11, ADR-032). Базовый план по умолчанию — `max`:
+# так определён скоринг в ADR-005. Остальные — сравнимые сценарии на тех же ресурсах.
+PRIORITY_MAX = "max"
+PRIORITY_TASK = "task"
+PRIORITY_WEIGHTED = "weighted"
+PRIORITY_COMPLETION_FIRST = "completion_first"
+PRIORITY_STRATEGIES = (PRIORITY_MAX, PRIORITY_TASK, PRIORITY_WEIGHTED, PRIORITY_COMPLETION_FIRST)
+DEFAULT_PRIORITY_STRATEGY = PRIORITY_MAX
+
 
 # Атомарность инициатив (ADR-013). `greedy` — частичная инициатива допустима.
 INITIATIVE_MODE_GREEDY = "greedy"

@@ -74,6 +74,16 @@ def main(argv: list[str] | None = None) -> int:
             "с откатом (ADR-013)"
         ),
     )
+    parser.add_argument(
+        "--priority-strategy",
+        choices=planner.PRIORITY_STRATEGIES,
+        default=planner.DEFAULT_PRIORITY_STRATEGY,
+        help=(
+            "max (по умолчанию) — приоритет инициативы = MAX(rung) её задач; task — по rung самой "
+            "задачи; weighted — средневзвешенный по SP; completion_first — при равном приоритете "
+            "раньше инициатива, которую дешевле завершить (ADR-032)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     # CLI и HTTP-загрузки используют один и тот же DB-lock и снимок входа.
@@ -129,6 +139,7 @@ def _run_locked(args: argparse.Namespace) -> int:
         as_of_sprint=args.as_of_sprint,
         baseline_starts=baseline_starts,
         dependency_mode=args.dependency_mode,
+        priority_strategy=args.priority_strategy,
         initiative_mode=args.initiative_mode,
     )
     build_plan_seconds = time.perf_counter() - phase_started

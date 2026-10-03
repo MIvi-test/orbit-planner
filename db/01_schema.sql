@@ -186,9 +186,15 @@ CREATE TABLE initiatives (
     prodf_id      TEXT PRIMARY KEY,
     br_id         TEXT NOT NULL UNIQUE,
     title         TEXT,
-    priority_rung SMALLINT
+    priority_rung SMALLINT,
+    business_priority SMALLINT CHECK (business_priority BETWEEN 0 AND 1000),
+    business_priority_by TEXT,
+    business_priority_at TIMESTAMPTZ,
+    business_priority_note TEXT
 );
 COMMENT ON TABLE  initiatives IS 'Бизнес-инициатива заказчика. PRODF ↔ BR строго 1:1 (проверено на 15 инициативах).';
+COMMENT ON COLUMN initiatives.business_priority IS
+ 'Явный приоритет инициативы, заданный человеком (в шкале rung); NULL — берётся priority_rung из датасета.';
 COMMENT ON COLUMN initiatives.priority_rung IS 'Скоринг инициативы = MAX(rung) её задач (ADR-005). У 7 из 15 rung внутри инициативы неоднороден.';
 
 CREATE TABLE tasks (

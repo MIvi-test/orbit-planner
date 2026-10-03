@@ -11,6 +11,7 @@ from typing import Any
 from app.planner.constants import (
     ALGORITHM,
     DEFAULT_DEPENDENCY_MODE,
+    DEFAULT_PRIORITY_STRATEGY,
     DEFERRED_REASON,
     DEFERRED_REASON_BLOCKED,
     DEPENDENCY_MODES,
@@ -38,6 +39,7 @@ from app.planner.constants import (
 )
 from app.planner.model import Assignment, BaselineRow, CapacityRow, Inputs, Plan, ScheduleRow, TaskInput
 from app.planner.fmt import _q, _sprints_word
+from app.planner.priority import check_strategy, effective_priority, order_tasks
 from app.planner.funds import _Funds, _allocate_task, _sp_shares
 from app.planner.graph import _refresh_live_graph
 from app.planner.alerts import _build_alerts
@@ -52,6 +54,7 @@ def build_plan(
     dependency_mode: str = DEFAULT_DEPENDENCY_MODE,
     initiative_mode: str = INITIATIVE_MODE_GREEDY,
     simulate_next_pi: bool = True,
+    priority_strategy: str = DEFAULT_PRIORITY_STRATEGY,
 ) -> Plan:
     """Строит план. Ни одного обращения к базе: всё, что нужно, уже во `Inputs`.
 
@@ -71,6 +74,7 @@ def build_plan(
         raise ValueError(f"dependency_mode={dependency_mode!r} не из {DEPENDENCY_MODES}")
     if initiative_mode not in INITIATIVE_MODES:
         raise ValueError(f"initiative_mode={initiative_mode!r} не из {INITIATIVE_MODES}")
+    check_strategy(priority_strategy)
 
     # В закрытые спринты план не пишется (ADR-014): при `as_of_sprint = k` спринт
     # k начинается «сегодня», всё до него — история. Инвариант
@@ -105,11 +109,15 @@ def build_plan(
     for blocking, blocked, gap in inputs.deps:
         deps_by_blocked[blocked].append((blocking, gap))
 
-    # Порядок обхода: инициатива по скорингу (NULL — в конец), внутри — топология.
-    ordered = sorted(
-        inputs.tasks,
-        key=lambda t: (t.priority_rung is None, -(t.priority_rung or 0), t.topo_order, t.task_id),
-    )
+    # Порядок обхода задаёт стратегия приоритета (ADR-032): по умолчанию инициатива по
+    # скорингу MAX(rung) (NULL — в конец), внутри — топология.
+    ordered = order_tasks(inputs.tasks, priority_strategy)
+    groups_by_initiative: dict[str, list[TaskInput]] = defaultdict(list)
+    for item in inputs.tasks:
+        groups_by_initiative[item.prodf_id].append(item)
+    priority_of = {
+        item.task_id: effective_priority(item, priority_strategy, groups_by_initiative) for item in inputs.tasks
+    }
 
     funds = _Funds(inputs)
     starts: dict[str, int] = {}
@@ -651,6 +659,16 @@ def build_plan(
             return DEFERRED_REASON_BLOCKED
         return DEFERRED_REASON
 
+    def _priority_label(task: TaskInput) -> str:
+        """Откуда приоритет: заданный человеком, rung датасета или пересчитанный стратегией."""
+        value = priority_of[task.task_id]
+        shown = "не задан" if value is None else (str(int(value)) if value == int(value) else f"{value:.2f}")
+        if task.business_priority is not None:
+            return f"инициативы {shown} (задан бизнесом)"
+        if priority_strategy == DEFAULT_PRIORITY_STRATEGY:
+            return f"инициативы {shown}"
+        return f"{shown} (стратегия «{priority_strategy}»)"
+
     def explain_planned(task: TaskInput) -> tuple[str, dict[str, Any]]:
         """Почему задача ВКЛЮЧЕНА — ТЗ требует объяснять и это."""
         task_id = task.task_id
@@ -666,7 +684,7 @@ def build_plan(
             else f"спринты {starts[task_id]}–{ends[task_id]}"
         )
         parts = [
-                f"Включена: приоритет инициативы {task.priority_rung} — {rank[task_id]}-я в очереди "
+                f"Включена: приоритет {_priority_label(task)} — {rank[task_id]}-я в очереди "
                 f"из {len(ordered)}, {window}",
                 "Роли закрыты: "
                 + "; ".join(f"{name} — {', '.join(sorted(people))}" for name, people in sorted(roles.items())),
@@ -695,6 +713,9 @@ def build_plan(
         return text, {
             "remaining_provisional": task.remaining_provisional,
             "priority_rung": task.priority_rung,
+            "priority_value": str(priority_of[task_id]) if priority_of[task_id] is not None else None,
+            "priority_strategy": priority_strategy,
+            "priority_source": "business" if task.business_priority is not None else "dataset",
             "queue_rank": rank[task_id],
             "queue_size": len(ordered),
             "roles": {name: sorted(people) for name, people in sorted(roles.items())},
@@ -741,6 +762,8 @@ def build_plan(
         {
             "dependency_mode": dependency_mode,
             "initiative_mode": initiative_mode,
+            "priority_strategy": priority_strategy,
+            "business_priorities": sorted({item.prodf_id for item in inputs.tasks if item.business_priority is not None}),
             "replan_floor": replan_floor,
             "sp_model": "joint",
             "repack": initiative_mode == INITIATIVE_MODE_GREEDY,

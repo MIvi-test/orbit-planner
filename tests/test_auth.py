@@ -111,6 +111,14 @@ def test_viewer_reads_but_cannot_write(secured) -> None:
     assert payload["required_role"] == "planner" and payload["role"] == "viewer"
 
 
+def test_setting_initiative_priority_needs_the_planner_role(secured) -> None:
+    port, _ = secured
+    body = json.dumps({"prodf_id": "P", "business_priority": 90, "note": "решение комитета"}).encode()
+    assert call(port, "POST", "/api/initiatives/priority", token="viewer-token-0123456789", body=body)[0] == 403
+    status, _h, payload = call(port, "POST", "/api/initiatives/priority", token="planner-token-012345678", body=b"{}")
+    assert status == 400 and json.loads(payload)["error"] == "bad_upload"  # шлюз пройден, поля не заполнены
+
+
 def test_planner_cannot_load_the_dataset_but_passes_the_gate_for_actuals(secured) -> None:
     port, _ = secured
     assert call(port, "POST", "/api/dataset", token="planner-token-012345678", body=b"x")[0] == 403

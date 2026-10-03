@@ -32,6 +32,8 @@ export interface InitiativeGroup {
   prodf_id: string
   title: string
   priority_rung: number | null
+  /** Явный бизнес-приоритет (главнее priority_rung датасета), ADR-032. */
+  business_priority: number | null
   team_id: string
   tasks: TaskRow[]
 }
@@ -95,11 +97,13 @@ export function usePlanData() {
         prodf_id,
         title: initiative?.title ?? prodf_id,
         priority_rung: initiative?.priority_rung ?? group[0]?.rung ?? null,
+        business_priority: initiative?.business_priority ?? null,
         team_id: group[0]?.team_id ?? '',
         tasks: group,
       })
     }
-    result.sort((a, b) => (b.priority_rung ?? -1) - (a.priority_rung ?? -1) || a.prodf_id.localeCompare(b.prodf_id))
+    const effective = (g: InitiativeGroup) => g.business_priority ?? g.priority_rung ?? -1
+    result.sort((a, b) => effective(b) - effective(a) || a.prodf_id.localeCompare(b.prodf_id))
     return result
   }, [tasksQ.data, initiativesQ.data])
 

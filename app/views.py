@@ -330,7 +330,7 @@ SOURCES: tuple[Source, ...] = (
         "initiatives",
         screen="Справочники",
         order="priority_rung,prodf_id",
-        orderable=("prodf_id", "br_id", "title", "priority_rung"),
+        orderable=("prodf_id", "br_id", "title", "priority_rung", "business_priority"),
         note="Инициативы заказчика со скорингом. PRODF ↔ BR строго 1:1 (15 инициатив).",
     ),
     _source(

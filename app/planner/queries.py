@@ -29,7 +29,8 @@ ORDER BY s.sprint_no
 
 # Порядок обхода — правило из спеки: инициатива по скорингу, задача по топологии.
 LIVE_TASKS_SQL = """
-SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung,
+SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung, b.rung AS own_rung,
+       i.business_priority,
        COALESCE(b.estimation_sp, 0)          AS estimation_sp,
        GREATEST(COALESCE(b.estimation_sp, 0) - COALESCE(progress.completed_sp, 0), 0) AS remaining_sp,
        b.summary,
@@ -37,6 +38,7 @@ SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung,
        COALESCE(b.topo_order, 0)             AS topo_order,
        b.estimate_disputed
 FROM v_task_board b
+JOIN initiatives i ON i.prodf_id = b.prodf_id
 LEFT JOIN (SELECT a.task_id, SUM(a.completed_sp) AS completed_sp
            FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
            WHERE u.coverage_status = 'complete' GROUP BY a.task_id) progress ON progress.task_id = b.task_id

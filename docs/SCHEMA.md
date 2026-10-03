@@ -288,6 +288,8 @@ ORDER BY sprint_no,
 | `app_users` | пользователи сервиса: имя, роль, SHA-256 токена (ADR-027); загрузка датасета их не стирает |
 | `audit_log` | журнал действий, меняющих данные: кто, что, итог (`ok` / `rejected` / `failed`) |
 
+Явный бизнес-приоритет инициативы — `initiatives.business_priority` (+ `_by`, `_at`, `_note`, ADR-032).
+
 Автор загрузки хранится в `load_batches.loaded_by`, `actual_uploads.uploaded_by`,
 `task_role_etc.revised_by`.
 

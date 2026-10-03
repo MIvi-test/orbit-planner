@@ -364,6 +364,10 @@ export interface InitiativeRow {
   br_id: string
   title: string | null
   priority_rung: number | null
+  business_priority: number | null
+  business_priority_by: string | null
+  business_priority_at: string | null
+  business_priority_note: string | null
 }
 
 export interface RefResultOptionRow {

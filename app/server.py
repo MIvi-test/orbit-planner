@@ -100,7 +100,7 @@ MIME_OVERRIDES = {
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/me", "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
-    "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/metrics",
+    "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/api/initiatives/priority", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -423,6 +423,16 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, InvalidOperation, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля пересмотра роли", [str(exc)]) from None
+            elif path == "/api/initiatives/priority":
+                try:
+                    payload = json.loads(self._read_body())
+                    raw = payload.get("business_priority")
+                    result = ingest.set_initiative_priority(
+                        str(payload["prodf_id"]), None if raw in (None, "") else int(raw),
+                        str(payload.get("note") or ""), actor=self._principal.name,
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля приоритета инициативы", [str(exc)]) from None
             elif path == "/api/tasks/goal-confirmation":
                 try:
                     payload = json.loads(self._read_body())

@@ -5,6 +5,8 @@
  */
 import { Fragment } from 'react'
 import { Badge, Text } from '@mantine/core'
+import { useAuth } from '../../hooks/useAuth'
+import { InitiativePriority } from './InitiativePriority'
 import { sprintGridTemplate } from '../../components/common/sprintGrid'
 import { fmtDateShort, num } from '../../api/wire'
 import type {
@@ -41,6 +43,7 @@ export function GanttGrid({
   assignmentsByTask: Map<string, PlanAssignmentDetailRow[]>
   onSelect: (task: TaskRow) => void
 }) {
+  const { can } = useAuth()
   const n = sprints.length
   const template = sprintGridTemplate(n)
 
@@ -83,9 +86,13 @@ export function GanttGrid({
                 alignItems: 'center',
               }}
             >
-              <Badge variant="outline" color="post" size="sm" className="mono">
-                {group.priority_rung ?? '—'}
+              <Badge variant="outline" color={group.business_priority !== null ? 'orange' : 'post'} size="sm" className="mono"
+                title={group.business_priority !== null ? `задан бизнесом (датасет: ${group.priority_rung ?? '—'})` : 'приоритет из датасета'}>
+                {group.business_priority ?? group.priority_rung ?? '—'}
               </Badge>
+              {can('planner') && (
+                <InitiativePriority prodfId={group.prodf_id} datasetRung={group.priority_rung} business={group.business_priority} />
+              )}
               <Text size="sm" fw={500} className="mono">
                 {group.prodf_id}
               </Text>

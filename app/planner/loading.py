@@ -67,6 +67,8 @@ def load_inputs() -> Inputs:
             team_id=row["team_id"],
             status=row["status"],
             priority_rung=row["priority_rung"],
+            own_rung=row.get("own_rung"),
+            business_priority=row.get("business_priority"),
             estimation_sp=Decimal(row["estimation_sp"]),
             summary=row["summary"],
             earliest_start_sprint=int(row["earliest_start_sprint"]),
