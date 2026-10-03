@@ -85,6 +85,16 @@ CREATE TABLE plan_task_sp (
     sp        NUMERIC(6,2) NOT NULL CHECK (sp > 0),
     PRIMARY KEY (run_id, task_id, sprint_no)
 );
+
+-- Потребность по ролям на момент расчёта: старые прогоны не зависят от
+-- последующих загрузок факта и изменений текущей сметы.
+CREATE TABLE plan_role_demand_snapshot (
+    run_id       INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    task_id      TEXT NOT NULL REFERENCES tasks(task_id),
+    role_id      SMALLINT NOT NULL REFERENCES roles(role_id),
+    needed_hours NUMERIC(12,4) NOT NULL CHECK (needed_hours > 0),
+    PRIMARY KEY (run_id, task_id, role_id)
+);
 COMMENT ON TABLE plan_task_sp IS
  'Сумма долей по задаче = remaining_sp в снимке прогона; исходная estimation_sp не тратится повторно. '
  'Инвариант SP_OVERFLOW суммирует доли по команде и спринту.';
@@ -100,6 +110,7 @@ CREATE TABLE plan_assignments (
     engineer_id     TEXT         NOT NULL REFERENCES engineers(engineer_id),
     role_id         SMALLINT     NOT NULL REFERENCES roles(role_id),
     hours           NUMERIC(8,2) NOT NULL CHECK (hours > 0),
+    work_hours      NUMERIC(12,4) NOT NULL CHECK (work_hours > 0),
     home_team_id    TEXT         NOT NULL REFERENCES teams(team_id),
     serving_team_id TEXT         NOT NULL REFERENCES teams(team_id),
     is_loan         BOOLEAN      GENERATED ALWAYS AS (home_team_id IS DISTINCT FROM serving_team_id) STORED,

@@ -1,23 +1,5 @@
--- =====================================================================
---  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
---
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id;
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
---
---  КРИТЕРИЙ ПРИЁМКИ: нет строк с severity = 'error'.
---  severity = 'warning' план не отменяет, но обязан быть показан в UI
---  (замещение роли, выход за даты исходного плана, разрыв в окне задачи).
---  Каждая строка — нарушение правила из docs/PLANNER_SPEC.md, раздел 7.
---  Проверки только читают, ничего не меняют: гонять можно сколько угодно.
---
---  Проверок 29 (A..AC). Разбор ревью M2 и что из него закрыто —
---  docs/REVIEW_RESPONSE.md.
--- =====================================================================
-BEGIN;
-
-DROP VIEW IF EXISTS v_plan_violations CASCADE;
-
-CREATE VIEW v_plan_violations AS
+-- Rebuild the invariant view after adding immutable role demand snapshots.
+CREATE OR REPLACE VIEW v_plan_violations AS
 
 -- A. Ёмкость команды в SP (SP засчитываются в start_sprint) ------------
 -- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: 7-й спринт
@@ -436,4 +418,3 @@ COMMENT ON VIEW v_plan_violations IS
  'отменяют, но требуют отображения в UI. Правила — docs/PLANNER_SPEC.md, раздел 7; '
  'разбор ревью M2 — docs/REVIEW_RESPONSE.md.';
 
-COMMIT;

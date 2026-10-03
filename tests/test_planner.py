@@ -662,6 +662,8 @@ def test_efficiency_multiplies_the_required_hours() -> None:
     )
 
     assert [(a.sprint_no, a.hours) for a in plan.assignments] == [(1, Decimal("50.00"))]
+    assert [a.work_hours for a in plan.assignments] == [Decimal("40.0000")]
+    assert plan.role_demands == (("T-1", 1, Decimal("40")),)
     assert plan.params["efficiency_note"] == planner.EFFICIENCY_NOTE
 
 

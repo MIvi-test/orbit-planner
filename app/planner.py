@@ -576,6 +576,7 @@ class Assignment:
     hours: Decimal
     home_team_id: str
     serving_team_id: str
+    work_hours: Decimal | None = None  # эквивалент выполненной ролевой сметы
 
 
 @dataclass(frozen=True)
@@ -632,6 +633,7 @@ class Plan:
     states: tuple[StateRow, ...]
     sp_shares: tuple[tuple[str, int, Decimal], ...] = ()  # (task_id, sprint_no, sp), ADR-020
     actuals_upload_id: int | None = None
+    role_demands: tuple[tuple[str, int, Decimal], ...] = ()
 
     @property
     def in_quarter(self) -> tuple[ScheduleRow, ...]:
@@ -825,7 +827,8 @@ def _allocate_task(
                 if taken <= 0 or home is None:
                     continue
                 assignments.append(
-                    Assignment(task.task_id, sprint_no, engineer_id, role_id, taken, home, task.team_id)
+                    Assignment(task.task_id, sprint_no, engineer_id, role_id, taken, home,
+                               task.team_id, taken / efficiency)
                 )
                 need -= taken / efficiency
                 remaining[role_id] = need
@@ -1420,6 +1423,8 @@ def _round_hours(row: Assignment) -> Assignment:
         hours=Decimal(row.hours).quantize(Decimal("0.01")),
         home_team_id=row.home_team_id,
         serving_team_id=row.serving_team_id,
+        work_hours=(row.work_hours.quantize(Decimal("0.0001"))
+                    if row.work_hours is not None else None),
     )
 
 
@@ -1508,6 +1513,7 @@ def _assemble(
             "short_sprints": short_sprints,
         },
         "estimate_validated": inputs.estimate_validated,
+        "role_demand_snapshot_version": 1,
         "baseline_run_id": inputs.baseline_run_id,
         "estimate_conflicts": inputs.estimate_conflicts,
         "estimate_conflicts_note": (
@@ -1569,6 +1575,11 @@ def _assemble(
         states=tuple(states),
         sp_shares=sp_shares,
         actuals_upload_id=inputs.actuals_upload_id,
+        role_demands=tuple(
+            (task.task_id, role_id, hours)
+            for task in inputs.tasks
+            for role_id, hours in sorted(task.needed.items())
+        ),
     )
 
 
@@ -2063,13 +2074,21 @@ def write_plan(plan: Plan) -> int:
                 [(run_id, task_id, sprint_no, sp) for task_id, sprint_no, sp in plan.sp_shares],
             )
 
+        if plan.role_demands:
+            cur.executemany(
+                """INSERT INTO plan_role_demand_snapshot
+                   (run_id, task_id, role_id, needed_hours) VALUES (%s, %s, %s, %s)""",
+                [(run_id, task_id, role_id, hours)
+                 for task_id, role_id, hours in plan.role_demands],
+            )
+
         if plan.assignments:
             cur.executemany(
                 """
                 INSERT INTO plan_assignments
                     (run_id, task_id, sprint_no, engineer_id, role_id, hours,
-                     home_team_id, serving_team_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     home_team_id, serving_team_id, work_hours)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -2081,6 +2100,7 @@ def write_plan(plan: Plan) -> int:
                         row.hours,
                         row.home_team_id,
                         row.serving_team_id,
+                        row.work_hours if row.work_hours is not None else row.hours,
                     )
                     for row in plan.assignments
                 ],
