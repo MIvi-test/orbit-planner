@@ -17,6 +17,7 @@ import re
 import sys
 import unicodedata
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import openpyxl
@@ -58,16 +59,6 @@ def split_skills(v) -> list[str]:
             cur.append(ch)
     out.append("".join(cur))
     return out
-
-
-def num(v) -> float:
-    if v is None or v == "":
-        return 0.0
-    if isinstance(v, str):
-        v = v.replace(",", ".").strip()
-        if not v:
-            return 0.0
-    return float(v)
 
 
 def as_date(v):
@@ -155,8 +146,9 @@ def validate_dependency_edge(a, b, typ, source_row, task_ids, previous_rows):
 #  поиск блоков на листе                                                #
 # ===================================================================== #
 class Sheet:
-    def __init__(self, ws):
+    def __init__(self, ws, formulas=None):
         self.ws = ws
+        self.formulas = formulas
         self.max_row = ws.max_row
         self.max_col = ws.max_column
 
@@ -200,8 +192,68 @@ class Sheet:
         for c in range(1, self.max_col + 1):
             h = norm_text(self.cell(header_row, c))
             if h:
+                if h in out:
+                    raise DataQualityError([
+                        f"лист {self.ws.title}: заголовок «{h}» повторяется в "
+                        f"{self.ws.cell(header_row, out[h]).coordinate} и "
+                        f"{self.ws.cell(header_row, c).coordinate}"
+                    ])
                 out[h] = c
         return out
+
+    def require_columns(self, columns, header_row, names):
+        missing = [name for name in names if name not in columns]
+        if missing:
+            raise DataQualityError([
+                f"лист {self.ws.title}, строка {header_row}: нет обязательной колонки «{name}»"
+                for name in missing
+            ])
+
+    def number(self, row, column, *, required=False, nonnegative=False, integer=False,
+               decimal_places=None):
+        cell = self.ws.cell(row, column)
+        value = cell.value
+        original = self.formulas.cell(row, column) if self.formulas else None
+        if value in (None, ""):
+            if original is not None and original.data_type == "f":
+                problem = "у формулы нет сохранённого вычисленного значения"
+            elif required:
+                problem = "обязательное число пропущено"
+            else:
+                return None
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "MISSING_NUMBER", "error", problem)
+            return None
+        try:
+            number = Decimal(str(value).strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            number = Decimal("NaN")
+        if not number.is_finite():
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "INVALID_NUMBER", "error",
+                   f"некорректное число «{value}»")
+            return None
+        if nonnegative and number < 0:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "NEGATIVE_NUMBER", "error",
+                   f"отрицательное число {number}")
+            return None
+        if integer and number != number.to_integral_value():
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "FRACTIONAL_NUMBER", "error",
+                   f"дробное число {number}, требуется целое")
+            return None
+        if decimal_places is not None and number % Decimal(1).scaleb(-decimal_places) != 0:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "EXCESS_PRECISION", "error",
+                   f"число {number} точнее {decimal_places} знаков после запятой")
+            return None
+        return number
+
+    def date(self, row, column):
+        cell = self.ws.cell(row, column)
+        if cell.value in (None, ""):
+            return None
+        parsed = as_date(cell.value)
+        if parsed is None:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "INVALID_DATE", "error",
+                   f"некорректная дата «{cell.value}»")
+        return parsed
 
     def ref_list(self, title_row: int) -> list[str]:
         vals = []
@@ -284,7 +336,8 @@ def build_ref(values, kind):
 # ===================================================================== #
 def parse(path: Path):
     wb = openpyxl.load_workbook(path, data_only=True)
-    sh = Sheet(wb.worksheets[0])
+    formula_wb = openpyxl.load_workbook(path, data_only=False, read_only=True)
+    sh = Sheet(wb.worksheets[0], formula_wb.worksheets[0])
     D: dict = {}
 
     # ---------- справочники ----------
@@ -327,13 +380,20 @@ def parse(path: Path):
         c = tc.get(name)
         return sh.cell(row, c) if c else None
 
+    sh.require_columns(tc, t_hdr, ("task_id", "Номер инициативы", "parent_id", "team_id",
+                                   "status", "rung", "estimation_sp", "estimated_hh"))
+
     tasks, initiatives = [], {}
     for r in sh.data_rows(t_hdr):
         tid = norm_text(col(r, "task_id"))
         prodf = norm_text(col(r, "Номер инициативы"))
         br = norm_text(col(r, "parent_id"))
         summary = norm_text(col(r, "summary"))
-        rung = int(num(col(r, "rung"))) or None
+        rung_value = sh.number(r, tc["rung"], required=True, nonnegative=True, integer=True)
+        sp_value = sh.number(r, tc["estimation_sp"], required=True, nonnegative=True, integer=True)
+        declared_value = sh.number(r, tc["estimated_hh"], required=True, nonnegative=True,
+                                   decimal_places=2)
+        rung = int(rung_value) if rung_value is not None else None
 
         ini = initiatives.setdefault(prodf, {"br": br, "first_row": r, "titles": [], "rungs": [], "sps": []})
         if ini["br"] != br:
@@ -341,19 +401,22 @@ def parse(path: Path):
                    f"Строки Excel {ini['first_row']} и {r}: у инициативы {prodf} два разных parent_id: {ini['br']} и {br}.")
         ini["titles"].append(summary)
         ini["rungs"].append(rung or 0)
-        ini["sps"].append(num(col(r, "estimation_sp")))
+        ini["sps"].append(int(sp_value) if sp_value is not None else 0)
 
         tasks.append({
             "task_id": tid, "prodf_id": prodf, "team_id": norm_text(col(r, "team_id")),
             "summary": summary, "status": norm_text(col(r, "status")), "rung": rung,
-            "estimation_sp": int(num(col(r, "estimation_sp"))),
-            "declared": num(col(r, "estimated_hh")),
-            "spent_declared": (None if col(r, "spent_time") is None else num(col(r, "spent_time"))),
-            "created_at": as_date(col(r, "created_at")),
-            "planned_start": as_date(col(r, "planned_start")),
-            "planned_end": as_date(col(r, "planned_end")),
-            "actual_start": as_date(col(r, "actual_start")),
-            "actual_end": as_date(col(r, "actual_end")),
+            "estimation_sp": int(sp_value) if sp_value is not None else 0,
+            "declared": float(declared_value) if declared_value is not None else 0.0,
+            "spent_declared": (float(value) if "spent_time" in tc and
+                               (value := sh.number(r, tc["spent_time"], nonnegative=True,
+                                                   decimal_places=2)) is not None
+                               else None),
+            "created_at": sh.date(r, tc["created_at"]) if "created_at" in tc else None,
+            "planned_start": sh.date(r, tc["planned_start"]) if "planned_start" in tc else None,
+            "planned_end": sh.date(r, tc["planned_end"]) if "planned_end" in tc else None,
+            "actual_start": sh.date(r, tc["actual_start"]) if "actual_start" in tc else None,
+            "actual_end": sh.date(r, tc["actual_end"]) if "actual_end" in tc else None,
             "result_planned": map_result(col(r, "плановый результат")),
             "result_customer": map_result(col(r, "заказчик")),
             "result_executor": map_result(col(r, "исполнитель")),
@@ -377,12 +440,14 @@ def parse(path: Path):
             continue
         total = 0.0
         for canon, rows in role_rows.items():
-            h = sum(num(sh.cell(rr, c)) for rr in rows)
+            h = sum((sh.number(rr, c, nonnegative=True, decimal_places=2) or Decimal(0)
+                     for rr in rows), Decimal(0))
             if h > 0:
-                estimates.append((tid, role_id[canon], h))
-                total += h
+                estimates.append((tid, role_id[canon], float(h)))
+                total += float(h)
         col_sum[tid] = total
-        matrix_total[tid] = num(sh.cell(est_total_row, c)) if est_total_row else None
+        matrix_total[tid] = (float(sh.number(est_total_row, c, nonnegative=True, decimal_places=2) or 0)
+                             if est_total_row else None)
     for tid in task_ids - set(est_cols):
         dq.add("tasks", tid, "TASK_WITHOUT_ESTIMATE", "error", f"У задачи {tid} нет столбца в матрице сметы.")
 
@@ -390,6 +455,7 @@ def parse(path: Path):
     sp_title = sh.find_block(C.BLOCK_MARKERS["spent"])
     sp_hdr = sh.header_row(sp_title)
     sp_cols = sh.columns(sp_hdr)
+    sh.require_columns(sp_cols, sp_hdr, ("task_id",))
     spent = []
     for r in sh.data_rows(sp_hdr):
         tid = norm_text(sh.cell(r, sp_cols["task_id"]))
@@ -404,9 +470,9 @@ def parse(path: Path):
                 dq.add("task_role_spent", tid, "SPENT_UNKNOWN_ROLE", "warning",
                        f"Роль '{h}' из блока факта отсутствует в матрице сметы.")
                 continue
-            v = num(sh.cell(r, c))
+            v = sh.number(r, c, nonnegative=True, decimal_places=2) or Decimal(0)
             if v > 0:
-                spent.append((tid, role_id[canon], v))
+                spent.append((tid, role_id[canon], float(v)))
 
     # ---------- трудозатраты: выбор истины (ADR-002) ----------
     src = C.ESTIMATE_SOURCE
@@ -432,6 +498,7 @@ def parse(path: Path):
     d_title = sh.find_block(C.BLOCK_MARKERS["dependencies"])
     d_hdr = sh.header_row(d_title)
     dc = sh.columns(d_hdr)
+    sh.require_columns(dc, d_hdr, ("blocking_task_id", "blocked_task_id", "dependency_type"))
     deps, dep_source_rows = [], {}
     status = {t["task_id"]: t["status"] for t in tasks}
     for r in sh.data_rows(d_hdr):
@@ -449,6 +516,8 @@ def parse(path: Path):
     e_title = sh.find_block(C.BLOCK_MARKERS["engineers"])
     e_hdr = sh.header_row(e_title)
     ec = sh.columns(e_hdr)
+    sh.require_columns(ec, e_hdr, ("engineer_id", "team_id", "role", "grade",
+                                    "capacity_rate", "skills_declared"))
     engineers, orbits, skills_seen, eng_skills = {}, [], {}, set()
     engineer_rows = {}
     for r in sh.data_rows(e_hdr):
@@ -463,7 +532,7 @@ def parse(path: Path):
         if canon != raw_role:
             dq.add("engineers", eid, "ROLE_ALIAS_APPLIED", "info", f"Роль '{raw_role}' -> '{canon}'.")
         grade = norm_text(sh.cell(r, ec["grade"]))
-        rate = num(sh.cell(r, ec["capacity_rate"]))
+        rate = float(sh.number(r, ec["capacity_rate"], required=True, nonnegative=True) or 0)
 
         if eid in engineers:
             prev = engineers[eid]
@@ -494,12 +563,14 @@ def parse(path: Path):
     h_title = sh.find_block(C.BLOCK_MARKERS["team_history"])
     h_hdr = sh.header_row(h_title)
     hc = sh.columns(h_hdr)
+    sh.require_columns(hc, h_hdr, ("team_id", "snapshot_date", "velocity_achieved", "planned_sp"))
     history, teams = [], set()
     for r in sh.data_rows(h_hdr):
         tm = norm_text(sh.cell(r, hc["team_id"]))
         teams.add(tm)
-        history.append((tm, as_date(sh.cell(r, hc["snapshot_date"])),
-                        num(sh.cell(r, hc["velocity_achieved"])), num(sh.cell(r, hc["planned_sp"]))))
+        history.append((tm, sh.date(r, hc["snapshot_date"]),
+                        float(sh.number(r, hc["velocity_achieved"], required=True, nonnegative=True) or 0),
+                        float(sh.number(r, hc["planned_sp"], required=True, nonnegative=True) or 0)))
 
     teams |= {t["team_id"] for t in tasks} | {o[1] for o in orbits}
     for tm in sorted(teams):
