@@ -156,7 +156,8 @@ SELECT b.task_id, b.prodf_id, b.team_id, b.status, b.priority_rung,
        b.estimate_disputed
 FROM v_task_board b
 LEFT JOIN (SELECT a.task_id, SUM(a.completed_sp) AS completed_sp
-           FROM task_actuals a GROUP BY a.task_id) progress ON progress.task_id = b.task_id
+           FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
+           WHERE u.coverage_status = 'complete' GROUP BY a.task_id) progress ON progress.task_id = b.task_id
 WHERE b.status IN ('ToDo', 'InProgress')
 ORDER BY b.priority_rung DESC NULLS LAST, b.topo_order, b.task_id
 """
