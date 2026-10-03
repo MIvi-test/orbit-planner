@@ -8,7 +8,7 @@
  */
 import { Group, Paper, ScrollArea, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
-import { useKpiSnapshots, useSprints } from '../../hooks/useViews'
+import { useKpiSnapshots, useSprintForecastAccuracy, useSprints } from '../../hooks/useViews'
 import { QueryError, anyPending, firstError } from '../../components/common/QueryError'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { KpiStamp, toneOf } from '../../components/common/KpiStamp'
@@ -20,6 +20,7 @@ import type {
   KpiSnapshotRow,
   PiPredictabilityDetails,
   SayDoDetails,
+  SprintForecastAccuracyRow,
 } from '../../types/views'
 
 const n = (v: string | null): number | null => (v === null ? null : num(v))
@@ -28,6 +29,7 @@ export function KpiScreen() {
   const { runId } = useRun()
   const kpiQ = useKpiSnapshots(runId)
   const sprintsQ = useSprints()
+  const accuracyQ = useSprintForecastAccuracy(runId)
   const queries = [kpiQ, sprintsQ]
   const error = firstError(queries)
 
@@ -82,7 +84,7 @@ export function KpiScreen() {
       ) : (
         <>
           <PredictabilityBlock rows={pred} />
-          <SayDoBlock rows={sayDo} sprints={sprints} />
+          <SayDoBlock rows={sayDo} sprints={sprints} accuracy={accuracyQ.data?.items ?? []} />
           {bus && <BusFactorBlock row={bus} />}
         </>
       )}
@@ -99,6 +101,9 @@ function PredictabilityBlock({ rows }: { rows: KpiSnapshotRow[] }) {
   const fd = forecast?.details as unknown as PiPredictabilityDetails | undefined
   const ad = actual?.details as unknown as PiPredictabilityDetails | undefined
   const d = ad ?? fd
+  // Промежуточный факт нельзя сравнивать с итоговой нормой квартала: после 1-го спринта 0% — это ход по плану (DA-30).
+  const intermediate = actual !== undefined && ad?.final === false
+  const cover = (ad ?? fd)?.coverage
 
   return (
     <Paper withBorder p="md">
@@ -113,11 +118,14 @@ function PredictabilityBlock({ rows }: { rows: KpiSnapshotRow[] }) {
           actual={actual ? n(actual.value) : null}
           targetMin={n(any.target_min)}
           targetMax={n(any.target_max)}
-          caption={`норма ${normText(any)}`}
+          neutralActual={intermediate}
+          caption={intermediate ? `промежуточно; норма ${normText(any)} — к концу квартала` : `норма ${normText(any)}`}
         />
         <Stack gap="sm" style={{ flex: 1, minWidth: 260 }} maw={640}>
           <Pair label="Прогноз" row={forecast} />
-          <Pair label="Факт" row={actual} emptyText="Факт появится после загрузки первого спринта." />
+          <Pair label="Факт" row={actual} emptyText="Факт появится после загрузки первого спринта." neutral={intermediate} />
+          {intermediate && ad && <ProgressVsPlan details={ad} />}
+          {cover && <CoverageLine cover={cover} />}
           {d && (
             <Stack gap={4}>
               <Text size="sm">
@@ -148,7 +156,39 @@ function PredictabilityBlock({ rows }: { rows: KpiSnapshotRow[] }) {
   )
 }
 
-function Pair({ label, row, emptyText }: { label: string; row?: KpiSnapshotRow; emptyText?: string }) {
+/** «Охват»: знаменатель мира рядом с процентом, чтобы 100% не читались как «всё сделано» (DA-29). */
+function CoverageLine({ cover }: { cover: NonNullable<PiPredictabilityDetails['coverage']> }) {
+  return (
+    <Stack gap={2}>
+      <Text size="sm">
+        Охват обязательств: <b className="mono">{cover.committed}</b> из <b className="mono">{cover.initiatives_total}</b>{' '}
+        инициатив квартала; частично в плане <b className="mono">{cover.partial}</b>, не обещано{' '}
+        <b className="mono">{cover.not_promised}</b>.
+      </Text>
+      <Text size="xs" c="dimmed">
+        Этот KPI измеряет выполнение обещанного, а не качество самого обещания: 100% на малом охвате — повод смотреть на
+        роли без людей и перенесённые задачи, а не повод успокоиться.
+      </Text>
+    </Stack>
+  )
+}
+
+/** Промежуточный ход сравнивается с плановым накоплением к этому спринту (DA-30). */
+function ProgressVsPlan({ details }: { details: PiPredictabilityDetails }) {
+  const expected = details.expected_completed_by_now ?? 0
+  const done = details.completed_n ?? 0
+  const word =
+    details.progress_vs_plan === 'ahead' ? 'впереди плана' : details.progress_vs_plan === 'behind' ? 'отстаём от плана' : 'по плану'
+  const color = details.progress_vs_plan === 'behind' ? 'var(--stamp)' : 'var(--route-text)'
+  return (
+    <Text size="sm">
+      К концу спринта {details.reported_through_sprint} по плану должно быть завершено{' '}
+      <b className="mono">{expected}</b>, завершено <b className="mono">{done}</b> — <span style={{ color }}>{word}</span>.
+    </Text>
+  )
+}
+
+function Pair({ label, row, emptyText, neutral = false }: { label: string; row?: KpiSnapshotRow; emptyText?: string; neutral?: boolean }) {
   if (!row) {
     return emptyText ? (
       <Text size="sm" c="dimmed">
@@ -157,9 +197,10 @@ function Pair({ label, row, emptyText }: { label: string; row?: KpiSnapshotRow; 
     ) : null
   }
   const value = n(row.value)
-  const tone = value === null ? null : toneOf(value, n(row.target_min), n(row.target_max))
+  const tone = value === null || neutral ? null : toneOf(value, n(row.target_min), n(row.target_max))
   const note = (row.details as { note?: string } | null)?.note
-  const statusText = row.calculation_status === 'no_commitment' ? 'нет обязательств в базовом плане'
+  const statusText = neutral && value !== null ? 'промежуточный ход, итоговая норма — к концу квартала'
+    : row.calculation_status === 'no_commitment' ? 'нет обязательств в базовом плане'
     : row.calculation_status === 'no_plan' ? 'на спринт ничего не планировали'
     : row.calculation_status === 'no_relevant_skills' ? 'нет востребованных компетенций'
     : 'не определено'
@@ -179,9 +220,14 @@ function Pair({ label, row, emptyText }: { label: string; row?: KpiSnapshotRow; 
 }
 
 // ------------------------------------------------- выполнение плана спринта
-function SayDoBlock({ rows, sprints }: { rows: KpiSnapshotRow[]; sprints: { sprint_no: number; start_date: string; end_date: string }[] }) {
+function SayDoBlock({ rows, sprints, accuracy }: {
+  rows: KpiSnapshotRow[]
+  sprints: { sprint_no: number; start_date: string; end_date: string }[]
+  accuracy: SprintForecastAccuracyRow[]
+}) {
   if (rows.length === 0 || sprints.length === 0) return null
   const bySprint = new Map(rows.map((r) => [r.sprint_no, r]))
+  const accuracyBySprint = new Map(accuracy.map((a) => [a.sprint_no, a]))
   const lastActual = [...rows].filter((r) => r.kind === 'actual').sort((a, b) => b.sprint_no - a.sprint_no)[0]
   const formula = (rows[0].details as unknown as SayDoDetails | null)?.formula
   // Шкала чуть выше верхней нормы, чтобы засечка 105% была видна; всё, что выше, — полное кольцо.
@@ -194,6 +240,11 @@ function SayDoBlock({ rows, sprints }: { rows: KpiSnapshotRow[]; sprints: { spri
       <Text size="xs" c="dimmed" mt={2} mb="md">
         {formula}. {lastActual ? `Факт загружен по спринт ${lastActual.sprint_no}, дальше — прогноз.` : 'Факта пока нет — всё прогноз.'}{' '}
         Значение выше шкалы рисует полное кольцо, число в центре — точное.
+      </Text>
+      <Text size="xs" c="dimmed" mb="sm">
+        «План завершений» — SP задач, которые первоначальный план закрывает в спринте. «Бюджет работ» — доли SP, которые
+        текущий план тратит в спринте (длинная задача распределена по спринтам), поэтому два числа могут не совпадать.
+        В закрытых спринтах показан прогноз, сделанный ПЕРЕД спринтом, против факта: пересчёт прошлое обещание не улучшает.
       </Text>
       <ScrollArea type="auto">
         <div style={{ display: 'grid', gridTemplateColumns: sprintGridTemplate(sprints.length, '110px', '0px'), minWidth: 900 }}>
@@ -233,6 +284,16 @@ function SayDoBlock({ rows, sprints }: { rows: KpiSnapshotRow[]; sprints: { spri
                 <Text size="xs" className="mono tabular">
                   {fmtSp(d.done_sp)} из {fmtSp(d.planned_sp)} SP
                 </Text>
+                {r.kind === 'forecast' && d.work_budget_sp != null && (
+                  <Text size="10px" c="dimmed">
+                    бюджет работ {fmtSp(d.work_budget_sp)} SP
+                  </Text>
+                )}
+                {r.kind === 'actual' && accuracyBySprint.get(s.sprint_no)?.forecast_done_sp != null && (
+                  <Text size="10px" c="dimmed">
+                    перед спринтом ждали {fmtSp(accuracyBySprint.get(s.sprint_no)?.forecast_done_sp)} SP
+                  </Text>
+                )}
                 {num(d.planned_sp) === 0 && (
                   <Text size="10px" c="dimmed">
                     план был пуст{num(d.unplanned_sp ?? '0') > 0 ? `; вне плана ${fmtSp(d.unplanned_sp)} SP` : ''}

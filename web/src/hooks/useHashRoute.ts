@@ -8,8 +8,9 @@ export type ScreenId =
   | 'kpi'
   | 'roles'
   | 'profiles'
+  | 'data'
 
-const SCREENS: ScreenId[] = ['upload', 'plan', 'risks', 'starmap', 'kpi', 'roles', 'profiles']
+const SCREENS: ScreenId[] = ['upload', 'plan', 'risks', 'starmap', 'kpi', 'roles', 'profiles', 'data']
 const DEFAULT_SCREEN: ScreenId = 'upload'
 
 function parse(hash: string): ScreenId {

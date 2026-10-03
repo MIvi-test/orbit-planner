@@ -18,7 +18,6 @@ from tests.conftest import FakeViewsDB
 # Внутренняя кухня ETL (docs/SCHEMA.md §3) и промежуточные вьюхи: наружу не отдаём.
 FORBIDDEN = (
     "load_batches",
-    "dq_issues",
     "role_aliases",
     "task_sequence",
     "task_role_estimates",
@@ -57,6 +56,7 @@ def test_whitelist_keeps_etl_internals_out() -> None:
 
     assert not names & set(FORBIDDEN)
     assert "v_task_board" in names and "plan_task_schedule" in names
+    assert "dq_issues" in names  # NEW-06: журнал качества данных открыт для экрана «Данные»
     assert "plan_runs" in names  # список прогонов: фронту нужно чем-то выбирать run_id
 
 

@@ -10,6 +10,7 @@ import { StarMapScreen } from './screens/starmap/StarMapScreen'
 import { KpiScreen } from './screens/kpi/KpiScreen'
 import { RolesScreen } from './screens/roles/RolesScreen'
 import { ProfilesScreen } from './screens/profiles/ProfilesScreen'
+import { DataQualityScreen } from './screens/data/DataQualityScreen'
 
 export default function App() {
   const [screen, go] = useHashRoute()
@@ -33,6 +34,7 @@ export default function App() {
       {screen === 'kpi' && <KpiScreen />}
       {screen === 'roles' && <RolesScreen />}
       {screen === 'profiles' && <ProfilesScreen />}
+      {screen === 'data' && <DataQualityScreen />}
     </Shell>
   )
 }

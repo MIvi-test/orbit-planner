@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Alert, Group, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { usePlanData } from './usePlanData'
 import { GanttGrid } from './GanttGrid'
+import { PlanSummary } from './PlanSummary'
 import { TaskDetailDrawer } from './TaskDetailDrawer'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { ApiError, ServiceUnavailableError } from '../../api/client'
@@ -57,6 +58,8 @@ export function PlanScreen() {
         </div>
         <AsOfLabel iso={data.asOf} />
       </Group>
+
+      <PlanSummary schedule={[...data.scheduleByTask.values()]} />
 
       <Paper withBorder p={0} style={{ overflow: 'auto' }}>
         <GanttGrid
