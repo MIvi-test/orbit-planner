@@ -22,10 +22,6 @@ PI_END = date.fromordinal(PI_START.toordinal() + SPRINT_COUNT * SPRINT_LENGTH_DA
 FOCUS_FACTOR = 0.80
 HOURS_PER_SPRINT_FTE = 80      # 1.0 ставки = 80 ЧЧ за 2-недельный спринт
 
-# --- ADR-002. Источник истины по трудозатратам. ------------------------
-# matrix_column_sum | declared | matrix_total
-ESTIMATE_SOURCE = "matrix_column_sum"
-
 # --- ADR-003. Зазор между блокирующей и блокируемой задачей, в спринтах.
 # На данных v1 выбор 1 vs 2 ни одну задачу за горизонт не выталкивает.
 MIN_GAP_SPRINTS = 1

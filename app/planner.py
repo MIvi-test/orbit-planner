@@ -272,6 +272,16 @@ FROM dq_issues
 WHERE rule_code = 'ESTIMATE_SOURCES_DISAGREE'
 """
 
+ESTIMATE_MISMATCH_SQL = """
+SELECT t.task_id
+FROM tasks t
+LEFT JOIN (SELECT task_id, SUM(hours) AS role_hours
+           FROM task_role_estimates GROUP BY task_id) r ON r.task_id = t.task_id
+WHERE t.estimated_hh_effective IS DISTINCT FROM COALESCE(r.role_hours, 0)
+   OR (COALESCE(t.estimation_sp, 0) > 0 AND COALESCE(r.role_hours, 0) = 0)
+ORDER BY t.task_id
+"""
+
 SUBSTITUTION_ROWS_SQL = """
 SELECT COUNT(*) AS active FROM role_substitutions WHERE status <> 'rejected'
 """
@@ -359,6 +369,7 @@ class Inputs:
     estimate_conflicts: int
     estimate_conflict_warnings: int
     active_substitutions: int
+    estimate_validated: bool = True
     # --- факт спринтов и первоначальный план (ADR-021, ADR-023) ---------
     actuals_upload_id: int | None = None
     last_reported_sprint: int = 0  # последний спринт, по которому загружен факт
@@ -450,6 +461,12 @@ def load_inputs() -> Inputs:
 
     conflicts = db.query_one(ESTIMATE_CONFLICT_SQL) or {}
     substitutions = db.query_one(SUBSTITUTION_ROWS_SQL) or {}
+    estimate_mismatches = db.query_dicts(ESTIMATE_MISMATCH_SQL)
+    if estimate_mismatches:
+        raise RuntimeError(
+            "оценка задач расходится с ролевой сметой: " +
+            ", ".join(row["task_id"] for row in estimate_mismatches[:10])
+        )
 
     last_upload = db.query_one(LAST_UPLOAD_SQL, (pi["pi_id"],)) or {}
     done_in_sprint: dict[int, set[str]] = defaultdict(set)
@@ -504,6 +521,7 @@ def load_inputs() -> Inputs:
         estimate_conflicts=int(conflicts.get("issues") or 0),
         estimate_conflict_warnings=int(conflicts.get("warnings") or 0),
         active_substitutions=int(substitutions.get("active") or 0),
+        estimate_validated=not estimate_mismatches,
         actuals_upload_id=last_upload.get("upload_id"),
         last_reported_sprint=int(last_upload.get("sprint_no") or 0),
         done_in_sprint={no: frozenset(ids) for no, ids in done_in_sprint.items()},
@@ -1483,7 +1501,7 @@ def _assemble(
             "fund_hh_per_fte": str(inputs.fund_hours_per_fte),
             "short_sprints": short_sprints,
         },
-        "estimate_validated": True,
+        "estimate_validated": inputs.estimate_validated,
         "estimate_conflicts": inputs.estimate_conflicts,
         "estimate_conflicts_note": (
             "три источника часов расходятся; авторитетен столбец матрицы сметы "

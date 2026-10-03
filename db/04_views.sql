@@ -185,7 +185,9 @@ CREATE VIEW v_task_board AS
 SELECT t.task_id, t.prodf_id, i.br_id, i.priority_rung, t.team_id, t.summary,
        t.status, t.rung, t.estimation_sp,
        t.estimated_hh_effective, t.estimated_hh_declared, t.estimated_hh_matrix_total,
-       (t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_declared) AS estimate_disputed,
+       (t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_declared OR
+        (t.estimated_hh_matrix_total IS NOT NULL AND
+         t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_matrix_total)) AS estimate_disputed,
        t.planned_start, t.planned_end, t.actual_start, t.actual_end,
        q.topo_order, q.depth, q.earliest_start_sprint, q.on_critical_path,
        COALESCE(rm.remaining_hh, 0) AS remaining_hh,

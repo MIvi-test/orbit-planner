@@ -474,23 +474,21 @@ def parse(path: Path):
             if v > 0:
                 spent.append((tid, role_id[canon], float(v)))
 
-    # ---------- трудозатраты: выбор истины (ADR-002) ----------
-    src = C.ESTIMATE_SOURCE
+    # ---------- трудозатраты: авторитетна ролевая матрица (ADR-002) ----------
     for t in tasks:
         tid = t["task_id"]
         cand = {"matrix_column_sum": col_sum.get(tid, 0.0),
                 "declared": t["declared"],
-                "matrix_total": matrix_total.get(tid) or 0.0}
-        eff = cand.get(src, 0.0)
-        if not eff:
-            eff = t["declared"]
-            dq.add("tasks", tid, "ESTIMATE_SOURCE_FALLBACK", "warning",
-                   f"Источник '{src}' дал 0 ЧЧ, взята declared-оценка {eff}.")
-        vals = {k: round(v, 2) for k, v in cand.items() if v}
+                "matrix_total": matrix_total.get(tid)}
+        eff = cand["matrix_column_sum"]
+        if eff == 0 and (t["declared"] > 0 or t["estimation_sp"] > 0):
+            dq.add("tasks", tid, "MISSING_ROLE_ESTIMATE", "error",
+                   "Ролевая смета пуста при ненулевой оценке: часы нельзя распределить по ролям.")
+        vals = {k: round(v, 2) for k, v in cand.items() if v is not None}
         if len(set(vals.values())) > 1:
             dq.add("tasks", tid, "ESTIMATE_SOURCES_DISAGREE", "warning",
                    "Расходятся оценки ЧЧ: " + ", ".join(f"{k}={v:g}" for k, v in vals.items()) +
-                   f". Выбрано {src}={eff:g}.")
+                   f". Выбрано matrix_column_sum={eff:g}.")
         t["effective"] = eff
         t["matrix_total"] = matrix_total.get(tid)
 
@@ -752,7 +750,7 @@ def emit(D, src_path: Path) -> str:
     w("-- СГЕНЕРИРОВАНО etl/load.py — РУКАМИ НЕ ПРАВИТЬ.")
     w(f"-- Источник: {src_path.name}")
     w(f"-- sha256:   {sha}")
-    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={C.PI_START}   оценка={C.ESTIMATE_SOURCE}")
+    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={C.PI_START}   оценка=matrix_column_sum")
     w("BEGIN;")
     w("TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,")
     w("         task_role_spent_seed, tasks_seed_state,")
