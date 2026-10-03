@@ -152,7 +152,7 @@ from app.planner.funds import (  # noqa: F401
     _Funds,
     _allocate_task,
     _candidate_engineers,
-    _sp_flow,
+    _sp_shares,
     _spend_from,
 )
 from app.planner.graph import (  # noqa: F401

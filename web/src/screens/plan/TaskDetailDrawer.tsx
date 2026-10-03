@@ -192,7 +192,7 @@ export function TaskDetailDrawer({
           {progress.length > 0 && (
             <Stack gap={4}>
               <Text size="sm" fw={500}>Работа по спринтам</Text>
-              <Text size="xs" c="dimmed">SP — отдельный бюджет команды; перевод SP в часы не применяется. Результат достигается после последнего спринта с часами или SP.</Text>
+              <Text size="xs" c="dimmed">Часы и SP идут вместе: за спринт задача выполняет не больше доли работы, на которую хватает свободной ёмкости команды, а доля SP пропорциональна выполненным часам. Перевода SP в часы нет.</Text>
               {progress.map((row) => (
                 <Text key={row.sprint_no} size="sm">
                   Спринт {row.sprint_no}: {fmtHours(row.assigned_hours)}, {fmtSp(row.sp)} SP

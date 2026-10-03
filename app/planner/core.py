@@ -36,7 +36,7 @@ from app.planner.constants import (
 )
 from app.planner.model import Assignment, BaselineRow, Inputs, Plan, ScheduleRow, TaskInput
 from app.planner.fmt import _q, _sprints_word
-from app.planner.funds import _Funds, _allocate_task, _sp_flow
+from app.planner.funds import _Funds, _allocate_task, _sp_shares
 from app.planner.graph import _refresh_live_graph
 from app.planner.alerts import _build_alerts
 from app.planner.kpi import _build_kpis, _build_states
@@ -185,30 +185,35 @@ def build_plan(
     def place(task: TaskInput, lower: int) -> bool:
         """Поставить задачу в минимальный подходящий спринт. False — не влезла.
 
-        Часы раскладываются первыми, затем SP текут по спринтам начиная со
-        спринта ФАКТИЧЕСКОГО старта (ADR-020): в каждом спринте команда берёт не
-        больше свободной ёмкости, остаток — в следующих. Окно задачи —
-        от первого спринта с часами до последнего спринта с часами или с SP.
+        Часы и SP размещаются вместе (ADR-029): за спринт задача выполняет не больше
+        доли работы, на которую хватает свободной ёмкости команды в SP, а доля SP в
+        спринте пропорциональна выполненным в нём часам. Окно задачи — от первого до
+        последнего спринта с работой.
         """
         if task.remaining_unknown or not task.needed:
             return False
         capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
+
+        def sp_free(sprint_no: int) -> Decimal:
+            left = capacity * funds.sprint_factor(sprint_no) - funds.used_sp[(task.team_id, sprint_no)]
+            return left if left > 0 else Decimal("0")
+
         for candidate in range(max(replan_floor, lower), inputs.sprint_count + 1):
             result = _allocate_task(
                 task, candidate, funds, qualified_by_task[task.task_id],
-                inputs.sprint_count, inputs.coverage
+                inputs.sprint_count, inputs.coverage, sp_free=sp_free,
             )
             if result is None:
                 continue
             rows, start_used, end_hours = result
-            shares = _sp_flow(task, start_used, funds, capacity, inputs.sprint_count)
+            shares = _sp_shares(task, rows, sp_free)
             if shares is None:
-                funds.free(rows)  # SP не укладываются от этого старта — пробуем позже
+                funds.free(rows)  # доли SP не раздаются без превышения ёмкости — пробуем позже
                 continue
             for sprint_no, sp in shares.items():
                 funds.take_sp(task.team_id, sprint_no, sp)
             starts[task.task_id] = start_used
-            ends[task.task_id] = max([end_hours, *shares])
+            ends[task.task_id] = end_hours
             placed[task.task_id] = rows
             sp_shares[task.task_id] = shares
             deferred.pop(task.task_id, None)
@@ -563,22 +568,16 @@ def build_plan(
             parts.append(f"{_q(loan_hh)} ЧЧ взяты в заём у других команд")
         if len(shares) > 1:
             parts.append(
-                f"{_q(task.sp_to_plan)} SP растянуты на {_sprints_word(len(shares))}: "
-                f"это больше свободной ёмкости команды за один спринт"
+                f"{_q(task.sp_to_plan)} SP и часы выполняются вместе на протяжении "
+                f"{_sprints_word(len(shares))}: за спринт задача выполняет не больше доли работы, "
+                f"на которую хватает свободной ёмкости команды"
             )
         hour_sprints = {row.sprint_no for row in rows}
-        sp_only = sorted(set(shares) - hour_sprints)
-        hours_only = sorted(hour_sprints - set(shares))
-        if sp_only:
+        no_sp = sorted(hour_sprints - set(shares))
+        if no_sp and task.sp_to_plan > 0:
             parts.append(
-                "спринты " + ", ".join(map(str, sp_only))
-                + " содержат только долю SP: отдельный бюджет пропускной способности команды; "
-                "дата результата ждёт последней доли SP"
-            )
-        if hours_only:
-            parts.append(
-                "спринты " + ", ".join(map(str, hours_only))
-                + " содержат только работу инженеров; дата результата ждёт последних часов"
+                "в спринтах " + ", ".join(map(str, no_sp))
+                + " доля SP меньше сотой и не списывается с ёмкости команды"
             )
         if task.remaining_provisional:
             parts.append(

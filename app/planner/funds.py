@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from decimal import Decimal, ROUND_DOWN
 
+from app.planner.constants import MIN_CHUNK_HH
 from app.planner.model import Assignment, EngineerInput, Inputs, TaskInput
 
 
@@ -140,8 +142,15 @@ def _allocate_task(
     by_role: dict[int, list[str]],
     sprint_count: int,
     coverage: dict[tuple[str, int], Decimal],
+    sp_free: Callable[[int], Decimal] | None = None,
 ) -> tuple[list[Assignment], int, int] | None:
     """Разложить остаток задачи по спринтам и людям, начиная со `start_sprint`.
+
+    `sp_free(sprint_no)` — свободная ёмкость команды в SP в этом спринте. Если она
+    передана и у задачи есть SP, часы и SP идут ВМЕСТЕ (ADR-029): за спринт
+    выполняется не больше доли работы `свободные SP / SP задачи`, поэтому доля SP
+    в спринте — ровно доля выполненных в нём часов, а спринт без часов не списывает
+    SP и наоборот. Без `sp_free` (диагностика отказа) ограничение — только часы.
 
     Механика распределения часов (ADR-015, ревью M2, пункт 5):
 
@@ -169,18 +178,34 @@ def _allocate_task(
     if not needed:
         return None
 
+    total_work = sum(needed.values(), Decimal("0"))
+    sp_total = task.sp_to_plan
+    capped = sp_free is not None and sp_total > 0
     assignments: list[Assignment] = []
     remaining = dict(needed)
     for sprint_no in range(start_sprint, sprint_count + 1):
+        budget: Decimal | None = None
+        if capped:
+            free_sp = sp_free(sprint_no)  # type: ignore[misc]
+            if free_sp <= 0:
+                continue  # команде нечем оплатить работу в этом спринте
+            budget = total_work * free_sp / sp_total
+        sprint_work = Decimal("0")
         for role_id in sorted(remaining):
             need = remaining[role_id]
             if need <= 0:
                 continue
             for engineer_id in _candidate_engineers(task.team_id, role_id, sprint_no, funds, by_role):
+                want = need
+                if budget is not None:
+                    room = budget - sprint_work
+                    if room < MIN_CHUNK_HH and room < need:
+                        break  # остаток бюджета спринта меньше значимого куска работы
+                    want = min(need, room)
                 # efficiency: смету закрывают ЧАСЫ ИСПОЛНИТЕЛЯ, а не сметы.
                 efficiency = coverage.get((engineer_id, role_id), Decimal("1"))
                 taken_from = _spend_from(
-                    funds.engineers[engineer_id], task.team_id, sprint_no, need * efficiency, funds
+                    funds.engineers[engineer_id], task.team_id, sprint_no, want * efficiency, funds
                 )
                 if not taken_from:
                     continue
@@ -190,6 +215,7 @@ def _allocate_task(
                                    task.team_id, taken / efficiency)
                     )
                     need -= taken / efficiency
+                    sprint_work += taken / efficiency
                 remaining[role_id] = need
                 if need <= 0:
                     break
@@ -201,40 +227,40 @@ def _allocate_task(
     return None
 
 
-def _sp_flow(
-    task: TaskInput, start_sprint: int, funds: _Funds, capacity: Decimal, sprint_count: int
+def _sp_shares(
+    task: TaskInput, rows: list[Assignment], sp_free: Callable[[int], Decimal]
 ) -> dict[int, Decimal] | None:
-    """Story Points задачи как поток по спринтам (ADR-020).
+    """Доли SP по спринтам пропорционально выполненной в них работе (ADR-029).
 
-    Команда за спринт закрывает не больше `available_sp_per_sprint × factor`.
-    Задача, начатая в спринте `start_sprint`, списывает SP с ёмкости команды
-    начиная с него: сколько свободно в этом спринте, остаток — в следующих.
-    Так задача с SP больше ёмкости одного спринта растягивается, а не
-    переносится навсегда — ровно как требует пример онбординга с DB-202
-    («алгоритм должен растянуть эту задачу минимум на 2 спринта»).
-
-    В спринте старта у команды должна быть хоть какая-то свободная ёмкость:
-    задача не может «начаться» там, где команде взять её не из чего.
-    Возвращает {спринт: SP} или None, если SP не укладываются в квартал.
+    Работа спринта — сумма `work_hours` его назначений. Доли округляются вниз до
+    сотой, недостающие сотые раздаются по наибольшим остаткам, но только туда, где
+    у команды ещё есть место; иначе `None` (кандидат старта отвергается, и задача
+    пробуется позже). Сумма долей ровно равна SP к планированию: так требует
+    инвариант `SP_SHARES_MISMATCH`.
     """
-    need = task.sp_to_plan
-    if need <= 0:
+    sp_total = task.sp_to_plan
+    if sp_total <= 0:
         return {}
-
-    def free(sprint_no: int) -> Decimal:
-        left = capacity * funds.sprint_factor(sprint_no) - funds.used_sp[(task.team_id, sprint_no)]
-        return left.quantize(Decimal("0.01"), rounding=ROUND_DOWN) if left > 0 else Decimal("0")
-
-    if free(start_sprint) <= 0:
+    work: dict[int, Decimal] = defaultdict(Decimal)
+    for row in rows:
+        work[row.sprint_no] += row.work_hours if row.work_hours is not None else row.hours
+    total = sum(work.values(), Decimal("0"))
+    if total <= 0:
         return None
-    shares: dict[int, Decimal] = {}
-    for sprint_no in range(start_sprint, sprint_count + 1):
-        available = free(sprint_no)
-        if available <= 0:
-            continue
-        take = min(available, need)
-        shares[sprint_no] = take
-        need -= take
-        if need <= 0:
-            return shares
-    return None
+    cent = Decimal("0.01")
+    raw = {sprint_no: sp_total * hours / total for sprint_no, hours in work.items()}
+    shares = {sprint_no: value.quantize(cent, rounding=ROUND_DOWN) for sprint_no, value in raw.items()}
+    steps = int((sp_total - sum(shares.values(), Decimal("0"))) / cent)
+    by_leftover = sorted(raw, key=lambda sprint_no: (-(raw[sprint_no] - shares[sprint_no]), sprint_no))
+    while steps > 0:
+        progressed = False
+        for sprint_no in by_leftover:
+            if steps == 0:
+                break
+            if shares[sprint_no] + cent <= sp_free(sprint_no):
+                shares[sprint_no] += cent
+                steps -= 1
+                progressed = True
+        if not progressed:
+            return None
+    return {sprint_no: value for sprint_no, value in sorted(shares.items()) if value > 0}

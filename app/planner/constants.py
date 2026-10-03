@@ -102,3 +102,8 @@ KPI_TARGETS: dict[str, tuple[Decimal | None, Decimal | None]] = {
     "say_do_ratio": (Decimal("90"), Decimal("105")),
     "bus_factor": (Decimal("2"), None),  # онбординг: «Bus Factor > 1»
 }
+
+
+# Минимальный кусок работы, который имеет смысл планировать в спринт при ограничении
+# по SP (ADR-029): меньше часа не раздробляет назначение, если задача этим не закрывается.
+MIN_CHUNK_HH = Decimal("1")

@@ -806,7 +806,7 @@ def test_big_task_spreads_its_sp_over_several_sprints() -> None:
         1: Decimal("7"),
         2: Decimal("1"),
     }
-    assert "растянуты" in row.reason_text
+    assert "выполняются вместе" in row.reason_text
 
 
 def test_completed_blocker_recalculates_live_start_from_fact_date() -> None:
@@ -907,3 +907,47 @@ def test_all_deferred_is_published_as_the_current_result() -> None:
     assert plan.status == "ok"
     assert plan.params["business_outcome"] == "nothing_scheduled"
     assert plan.schedule[0].decision == "deferred_next_pi"
+
+
+def test_sp_and_hours_move_together_in_every_sprint() -> None:
+    """ADR-029 (DA-07): спринт с долей SP содержит часы, спринт с часами — долю SP,
+    доли пропорциональны выполненной работе, сумма равна SP задачи, ёмкость цела."""
+    capacity = Decimal("3")
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 120}), task("U", sp=2, roles={1: 20}, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: capacity})
+    )
+    shares: dict[str, dict[int, Decimal]] = {}
+    for task_id, sprint, sp in plan.sp_shares:
+        shares.setdefault(task_id, {})[sprint] = sp
+    for row in plan.in_quarter:
+        hours: dict[int, Decimal] = {}
+        for item in plan.assignments:
+            if item.task_id == row.task_id:
+                hours[item.sprint_no] = hours.get(item.sprint_no, Decimal(0)) + item.work_hours
+        task_shares = shares.get(row.task_id, {})
+        assert set(task_shares) <= set(hours), "SP без часов"
+        assert set(hours) <= set(task_shares) or all(
+            hours[n] * Decimal(8) / sum(hours.values()) < Decimal("0.01") for n in set(hours) - set(task_shares)
+        ), "часы без SP"
+        total_sp = Decimal(8) if row.task_id == "T" else Decimal(2)
+        assert sum(task_shares.values()) == total_sp
+        total_hours = sum(hours.values())
+        for sprint, value in task_shares.items():
+            assert abs(value - total_sp * hours[sprint] / total_hours) <= Decimal("0.02")
+    for sprint in range(1, 7):
+        used = sum((sp for _t, n, sp in plan.sp_shares if n == sprint), Decimal(0))
+        assert used <= capacity
+
+
+def test_sp_cap_limits_hours_per_sprint_so_a_big_task_stretches() -> None:
+    """Часов у людей много, но ёмкость команды 2 SP за спринт: 8 SP — минимум 4 спринта."""
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 40})], [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: Decimal("2")})
+    )
+    row = plan.schedule[0]
+    assert row.decision == "in_quarter" and row.end_sprint - row.start_sprint + 1 >= 4
+    by_sprint: dict[int, Decimal] = {}
+    for item in plan.assignments:
+        by_sprint[item.sprint_no] = by_sprint.get(item.sprint_no, Decimal(0)) + item.work_hours
+    assert all(hours <= Decimal("10.01") for hours in by_sprint.values())  # 40 ч × 2/8 SP
