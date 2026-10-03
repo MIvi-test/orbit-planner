@@ -253,7 +253,10 @@ def _read_table(data: bytes, name: str) -> list[list[Any]]:
         except Exception as exc:  # noqa: BLE001
             raise UploadError("файл не прочитан как xlsx", [str(exc)]) from None
         return [list(row) for row in wb.worksheets[0].iter_rows(values_only=True)]
-    text = data.decode("utf-8-sig", errors="replace")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise UploadError("CSV должен быть в кодировке UTF-8", [str(exc)]) from None
     try:
         dialect = csv.Sniffer().sniff(text.split("\n", 1)[0], delimiters=",;\t")
     except csv.Error:
@@ -299,15 +302,26 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
 
     columns: dict[int, str] = {}
     role_columns: dict[int, int] = {}
-    unknown: list[str] = []
+    unknown: dict[int, str] = {}
+    canonical_headers: dict[str, int] = {}
     for index, title in enumerate(header):
         key = title.lower()
         if key in FIXED_COLUMNS:
-            columns[index] = FIXED_COLUMNS[key]
+            canonical = FIXED_COLUMNS[key]
+            columns[index] = canonical
         elif key in role_by_name:
-            role_columns[index] = role_by_name[key]
-        elif title:
-            unknown.append(title)
+            role_id = role_by_name[key]
+            canonical = f"role:{role_id}"
+            role_columns[index] = role_id
+        else:
+            unknown[index] = title
+            continue
+        if canonical in canonical_headers:
+            first = canonical_headers[canonical]
+            raise UploadError("повторяются колонки факта", [
+                f"колонки {first + 1} «{header[first]}» и {index + 1} «{title}» обозначают одно поле"
+            ])
+        canonical_headers[canonical] = index
     if "task_id" not in columns.values() or "status" not in columns.values():
         raise UploadError(
             "нет обязательных колонок task_id и status",
@@ -316,10 +330,15 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
 
     known = {row["task_id"] for row in db.query_dicts("SELECT task_id FROM tasks")}
     errors: list[str] = []
-    warnings = [f"колонка «{title}» не распознана и пропущена" for title in unknown]
+    warnings = [f"колонка «{title}» не распознана и пропущена" for title in unknown.values() if title]
     rows: list[ParsedRow] = []
     seen: set[str] = set()
     for line_no, raw in enumerate(table[1:], start=2):
+        for index, title in unknown.items():
+            if index < len(raw) and _norm(raw[index]):
+                errors.append(
+                    f"строка {line_no}: данные в неизвестной колонке {index + 1} «{title}»"
+                )
         cells = {columns[i]: raw[i] for i in columns if i < len(raw)}
         task_id = _norm(cells.get("task_id"))
         if not task_id:
@@ -358,8 +377,9 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
                 errors.append(f"{where}: выполнено SP «{raw_sp}» — не число")
                 continue
             if (not completed_sp.is_finite() or completed_sp < 0
-                    or completed_sp.as_tuple().exponent < -2):
-                errors.append(f"{where}: выполнено SP должно быть конечным неотрицательным числом с точностью 0,01")
+                    or completed_sp > Decimal("9999.99")
+                    or completed_sp % Decimal("0.01") != 0):
+                errors.append(f"{where}: выполнено SP должно быть конечным числом от 0 до 9999,99 с точностью 0,01")
                 continue
         hours: dict[int, Decimal] = {}
         bad_hours = False
@@ -373,12 +393,13 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
                 errors.append(f"{where}: часы «{value}» в колонке «{header[index]}» — не число")
                 bad_hours = True
                 continue
-            if amount < 0:
-                errors.append(f"{where}: отрицательные часы в колонке «{header[index]}»")
+            if (not amount.is_finite() or amount < 0 or amount > Decimal("999999.99")
+                    or amount % Decimal("0.01") != 0):
+                errors.append(f"{where}: часы в колонке «{header[index]}» должны быть конечным числом от 0 до 999999,99 с точностью 0,01")
                 bad_hours = True
                 continue
             if amount > 0:
-                hours[role_id] = hours.get(role_id, Decimal("0")) + amount
+                hours[role_id] = amount
         if bad_hours:
             continue
         rows.append(ParsedRow(task_id, status, start, end, _norm(cells.get("comment")) or None,
