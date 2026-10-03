@@ -65,7 +65,9 @@ GROUP BY s.skill_id, s.name, ex.demand_hh, px.demand_hh;
 COMMENT ON VIEW v_bus_factor_skill IS
  'Bus Factor по компетенциям (ТЗ): число инженеров, заявивших навык. Градация риска: '
  '«критично» — единственный носитель требуемого навыка, независимо от числа коллег по роли. '
- 'demand_source=confirmed — ручная разметка задач;
+ 'demand_source=confirmed — ручная разметка задач; role_proxy — приблизительная оценка '
+ 'по роли на непроверенном бэклоге; mixed — оба источника. '
+ 'Покрытие ролей (роли без людей в штате) — отдельно: v_bus_factor, v_role_coverage_org.';
 
 CREATE OR REPLACE VIEW v_engineer_absence_risk AS
 WITH role_n AS (
