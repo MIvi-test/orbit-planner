@@ -243,9 +243,8 @@ def test_pi_fund_is_proportional_to_calendar_length() -> None:
     assert sum(a.hours for a in plan.assignments) == Decimal("525")
     assert plan.schedule[0].end_sprint == 7
 
-    # 526 ЧЧ не помещаются ни в этот квартал, ни в следующий с тем же штатом,
-    # поэтому планировщик не переносит задачу, а рекомендует пересогласовать
-    # её объём (ADR-022): перенос означал бы «в следующий раз получится».
+    # 526 ЧЧ не помещаются при тех же ресурсах; это повод пересмотреть объём,
+    # но не автоматическая рекомендация отменить бизнес-задачу.
     too_much = planner.build_plan(
         inputs(
             [task("T-1", roles={1: 526})],
@@ -254,10 +253,28 @@ def test_pi_fund_is_proportional_to_calendar_length() -> None:
             sprint_lengths={7: 8},
         )
     )
-    assert too_much.schedule[0].decision == "cancelled"
-    assert too_much.schedule[0].reason_code == planner.REASON_NOT_FEASIBLE
-    assert "ни в следующий" in too_much.schedule[0].reason_text
+    assert too_much.schedule[0].decision == "deferred_next_pi"
+    assert too_much.schedule[0].reason_details["next_pi_scenario"] == "needs_scope_or_capacity_review"
+    assert "Отдельно" in too_much.schedule[0].reason_text
     assert too_much.assignments == ()
+
+
+def test_next_pi_competition_does_not_make_a_feasible_task_cancelled() -> None:
+    source = inputs(
+        [task("A", roles={1: 80}, topo=1),
+         task("B", roles={1: 80}, topo=2),
+         task("C", roles={1: 80}, topo=3)],
+        [engineer("E")], sprint_count=1,
+    )
+    plan = planner.build_plan(source)
+    by_id = {row.task_id: row for row in plan.schedule}
+
+    assert by_id["A"].decision == "in_quarter"
+    assert by_id["B"].decision == "deferred_next_pi"
+    assert by_id["C"].decision == "deferred_next_pi"
+    assert by_id["C"].reason_details["next_pi_scenario"] == "competing_capacity"
+    assert "отдельно она помещается" in by_id["C"].reason_text
+    assert plan.params["next_pi_check"]["not_selected"] == ["C"]
 
 
 def test_calendar_lands_in_params() -> None:

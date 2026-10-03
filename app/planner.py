@@ -905,9 +905,10 @@ def build_plan(
 ) -> Plan:
     """Строит план. Ни одного обращения к базе: всё, что нужно, уже во `Inputs`.
 
-    `simulate_next_pi` — проверка для рекомендации отмены (ADR-022): задачи,
-    перенесённые из-за нехватки часов или ёмкости, пробно раскладываются в
-    «следующий квартал» с тем же штатом; не влезли и туда — `cancelled`.
+    `simulate_next_pi` — пробный сценарий (ADR-022): задачи, перенесённые
+    из-за нехватки часов или ёмкости, раскладываются в следующий квартал
+    с тем же штатом. Конкуренция и самостоятельная невместимость объясняются
+    отдельно; сценарий не принимает решение об отмене бизнес-задачи.
     Внутренний вызов симуляции идёт с False, чтобы не уйти в рекурсию.
 
     `dependency_mode` и `initiative_mode` — решения ADR-013; оба уезжают
@@ -1265,9 +1266,12 @@ def build_plan(
 
     reasons = {task.task_id: diagnose(task) for task in ordered if task.task_id in deferred}
 
-    # ---- рекомендация отмены: не влезает и в следующий квартал (ADR-022) ---
-    cancelled: dict[str, tuple[str, str, dict[str, Any]]] = {}
-    next_pi_check: dict[str, Any] = {"simulated": [], "fits_next_pi": []}
+    # Пробный следующий PI — сценарий с тем же штатом, не доказательство
+    # невозможности задачи и не основание автоматически рекомендовать отмену.
+    next_pi_check: dict[str, Any] = {
+        "simulated": [], "fits_next_pi": [], "not_selected": [],
+        "assumptions": "тот же штат и календарь, без новых задач и найма",
+    }
     if simulate_next_pi and not pi_closed and initiative_mode == INITIATIVE_MODE_GREEDY:
         pool = {
             task_id for task_id, (code, _text, _details) in reasons.items()
@@ -1299,22 +1303,46 @@ def build_plan(
                 simulate_next_pi=False,
             )
             fits_next = {row.task_id for row in trial_plan.schedule if row.decision == "in_quarter"}
-            next_pi_check = {"simulated": sorted(pool), "fits_next_pi": sorted(fits_next)}
+            next_pi_check.update({
+                "simulated": sorted(pool), "fits_next_pi": sorted(fits_next),
+                "not_selected": sorted(pool - fits_next),
+            })
             for task_id in sorted(pool - fits_next):
                 code, text, details = reasons[task_id]
-                cancelled[task_id] = (
-                    REASON_NOT_FEASIBLE,
-                    "Рекомендуем отменить или пересогласовать: задача не помещается ни в этот "
-                    "квартал, ни в следующий при текущем штате. " + text,
-                    {**details, "cause_code": code},
+                alone = replace(
+                    simulated, tasks=(next(task for task in simulated.tasks
+                                            if task.task_id == task_id),), deps=(),
+                )
+                standalone_plan = build_plan(
+                    alone, as_of_sprint=0, dependency_mode=dependency_mode,
+                    initiative_mode=initiative_mode, simulate_next_pi=False,
+                )
+                standalone_fits = any(
+                    row.task_id == task_id and row.decision == "in_quarter"
+                    for row in standalone_plan.schedule
+                )
+                if standalone_fits:
+                    scenario_note = (
+                        "В выбранный сценарий следующего PI задача не вошла из-за "
+                        "конкуренции за ресурс; отдельно она помещается."
+                    )
+                    scenario_result = "competing_capacity"
+                else:
+                    scenario_note = (
+                        "Отдельно при том же штате и календаре задача также не помещается; "
+                        "нужно пересмотреть объём, декомпозицию или ресурс."
+                    )
+                    scenario_result = "needs_scope_or_capacity_review"
+                reasons[task_id] = (
+                    code, text + " " + scenario_note,
+                    {**details, "next_pi_scenario": scenario_result,
+                     "next_pi_assumptions": next_pi_check["assumptions"]},
                 )
 
     def legacy_reason(code: str, details: dict[str, Any]) -> str:
         """Старый код расхождений для колонки decision_reason (совместимость)."""
         if code == REASON_BLOCKED and details.get("other_team"):
             return DEFERRED_REASON_BLOCKED
-        if code == REASON_NOT_FEASIBLE:
-            return CANCEL_REASON
         return DEFERRED_REASON
 
     def explain_planned(task: TaskInput) -> tuple[str, dict[str, Any]]:
@@ -1358,12 +1386,7 @@ def build_plan(
     schedule: list[ScheduleRow] = []
     for task in ordered:
         task_id = task.task_id
-        if task_id in cancelled:
-            code, text, details = cancelled[task_id]
-            schedule.append(
-                ScheduleRow(task_id, None, None, None, "cancelled", CANCEL_REASON, code, text, details)
-            )
-        elif task_id in deferred:
+        if task_id in deferred:
             code, text, details = reasons[task_id]
             schedule.append(
                 ScheduleRow(
