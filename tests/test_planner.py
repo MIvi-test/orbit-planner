@@ -510,17 +510,32 @@ def test_yellow_alert_when_a_task_with_dependents_shifts() -> None:
     deps = (("A", "B", 1), ("B", "C", 1))
     plain = inputs(tasks, [engineer("ENG-1")], deps=deps)
 
-    shifted = planner.build_plan(plain, as_of_sprint=1, baseline_starts={"B": 1})
+    shifted = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=deps,
+               baseline_schedule={"B": ("in_quarter", 2, 2), "C": ("in_quarter", 3, 3)}),
+        as_of_sprint=2, baseline_starts={"B": 2},
+    )
     yellow = [alert for alert in shifted.alerts if alert.level == "yellow"]
     assert [alert.entity_id for alert in yellow] == ["B"]
     assert yellow[0].alert_type == "cascade_shift"
-    assert yellow[0].payload["baseline_start_sprint"] == 1
-    assert yellow[0].payload["new_start_sprint"] == 2
+    assert yellow[0].payload["baseline_start_sprint"] == 2
+    assert yellow[0].payload["new_start_sprint"] == 3
     assert yellow[0].payload["dependents"] == ["C"]
+    assert yellow[0].payload["affected_dependents"][0]["delay_sprints"] == 1
 
     # Первый прогон: сравнивать не с чем — жёлтых алертов нет.
     first = planner.build_plan(plain)
     assert not [alert for alert in first.alerts if alert.level == "yellow"]
+
+
+def test_continuing_work_without_downstream_delay_is_not_a_cascade() -> None:
+    tasks = [task("A", roles={1: 160}, topo=1), task("B", roles={1: 80}, topo=2)]
+    plan = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),),
+               baseline_schedule={"A": ("in_quarter", 1, 3), "B": ("in_quarter", 4, 4)}),
+        as_of_sprint=2,
+    )
+    assert not [alert for alert in plan.alerts if alert.level == "yellow"]
 
 
 def test_say_do_ratio_compares_fact_with_the_original_promise() -> None:
