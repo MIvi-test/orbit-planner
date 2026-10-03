@@ -13,7 +13,7 @@ DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts
     plan_task_schedule, plan_baseline, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
-    dq_issues, task_sequence, sprints, pi_periods, team_history,
+    dq_issue_reviews, dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
     task_role_spent, task_role_estimates, tasks, initiatives,
     engineer_skill_declarations, engineer_skills, engineer_orbits, engineers, teams,
@@ -344,6 +344,17 @@ CREATE TABLE dq_issues (
 );
 COMMENT ON TABLE dq_issues IS 'Журнал находок ETL. Не блокирует загрузку — материал для слайда «что не так с исходными данными».';
 CREATE INDEX ix_dq_rule ON dq_issues(rule_code);
+
+CREATE TABLE dq_issue_reviews (
+    review_id BIGSERIAL PRIMARY KEY,
+    issue_id INT NOT NULL REFERENCES dq_issues(issue_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('acknowledged', 'resolved', 'reopened')),
+    reviewer TEXT NOT NULL CHECK (length(trim(reviewer)) > 0),
+    note TEXT NOT NULL CHECK (length(trim(note)) > 0),
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_dq_issue_reviews_issue ON dq_issue_reviews(issue_id, review_id DESC);
+COMMENT ON TABLE dq_issue_reviews IS 'История решений по находке. Исходная находка ETL не перезаписывается.';
 
 -- =====================================================================
 --  7. ПРИЧИНЫ РЕШЕНИЙ ПЛАНИРОВЩИКА (ADR-022)

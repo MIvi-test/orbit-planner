@@ -129,6 +129,46 @@ export function fetchAbsenceScenario(engineerId: string, runId: number): Promise
   return request<AbsenceScenario>(`/scenarios/absence?${query}`)
 }
 
+export interface SensitivityScenario {
+  kind: string
+  label: string
+  in_quarter: number
+  deferred: number
+  delayed_tasks: Array<{
+    task_id: string
+    previous_end_sprint: number
+    scenario_end_sprint: number | null
+    decision: string
+  }>
+}
+
+export interface SensitivityResult {
+  run_id: number
+  method: string
+  baseline: { in_quarter: number; deferred: number }
+  scenarios: SensitivityScenario[]
+}
+
+export function fetchSensitivity(runId: number): Promise<SensitivityResult> {
+  return request<SensitivityResult>(`/scenarios/sensitivity?run_id=${runId}`)
+}
+
+export interface PlanQualityResult {
+  run_id: number
+  completed_value: { tasks: number; sp: string }
+  partial_initiatives: Array<{ prodf_id: string; total: number; planned: number }>
+  dependency_wait: { tasks: number; earliest_wait_sprints: number }
+  deferred_commitments: { tasks: number; sp: string }
+  unplanned_completed_sp: string
+  scarce_unused_roles: Array<{ role: string; demand_hh: string; supply_hh: string; unused_hh: string }>
+  people_switches: Array<{ task_id: string; role_id: number; before: string[]; after: string[] }>
+  method: string
+}
+
+export function fetchPlanQuality(runId: number): Promise<PlanQualityResult> {
+  return request<PlanQualityResult>(`/plan-quality?run_id=${runId}`)
+}
+
 export interface ViewSource {
   name: string
   kind: 'view' | 'table'

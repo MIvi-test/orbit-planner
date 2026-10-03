@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, db, ingest, views
+from app import absence, data_quality, db, ingest, plan_quality, sensitivity, views
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -100,7 +100,8 @@ MIME_OVERRIDES = {
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
-    "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/metrics",
+    "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/tasks/goal-confirmation",
+    "/api/dq-issues/review", "/api/plan-quality", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -330,6 +331,15 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля подтверждения результата", [str(exc)]) from None
+            elif path == "/api/dq-issues/review":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = data_quality.review_issue(
+                        int(payload["issue_id"]), str(payload["decision"]),
+                        str(payload["reviewer"]), str(payload["note"]),
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля решения по находке", [str(exc)]) from None
             else:
                 self._send_json(
                     HTTPStatus.NOT_FOUND,
@@ -439,6 +449,44 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(exc)})
                 return
             except Exception as exc:  # noqa: BLE001 — тот же контракт 503, что у витрин
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/scenarios/sensitivity":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            if not raw_run_id or not raw_run_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите числовой run_id",
+                })
+                return
+            try:
+                result = sensitivity.evaluate(int(raw_run_id))
+            except sensitivity.ScenarioUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/plan-quality":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            if not raw_run_id or not raw_run_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите числовой run_id",
+                })
+                return
+            try:
+                result = plan_quality.evaluate(int(raw_run_id))
+            except plan_quality.QualityUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
                 return
             self._send_json(HTTPStatus.OK, result)

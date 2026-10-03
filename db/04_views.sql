@@ -4,7 +4,7 @@
 -- =====================================================================
 BEGIN;
 
-DROP VIEW IF EXISTS v_dq_summary, v_orbit_map, v_task_board, v_bus_factor,
+DROP VIEW IF EXISTS v_dq_issue_worklist, v_dq_summary, v_orbit_map, v_task_board, v_bus_factor,
      v_role_deficit, v_backlog_demand, v_role_supply_hh, v_satellite_capacity,
      v_task_remaining_hh, v_team_capacity_sp CASCADE;
 
@@ -243,6 +243,19 @@ SELECT rule_code, severity, COUNT(*) AS n,
        MIN(detail) AS example
 FROM dq_issues GROUP BY rule_code, severity ORDER BY
      CASE severity WHEN 'error' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, COUNT(*) DESC;
+
+CREATE VIEW v_dq_issue_worklist AS
+SELECT i.issue_id, i.batch_id, i.entity, i.entity_id, i.rule_code,
+       i.severity, i.detail,
+       COALESCE(r.decision, 'open') AS review_status,
+       r.reviewer, r.note AS review_note, r.reviewed_at,
+       (i.severity = 'error' AND COALESCE(r.decision, 'open') <> 'resolved') AS is_blocking
+FROM dq_issues i
+LEFT JOIN LATERAL (
+    SELECT decision, reviewer, note, reviewed_at
+    FROM dq_issue_reviews WHERE issue_id = i.issue_id
+    ORDER BY review_id DESC LIMIT 1
+) r ON TRUE;
 
 COMMIT;
 

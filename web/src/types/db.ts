@@ -45,6 +45,16 @@ export interface alerts {
   payload: Json;
 }
 
+/** таблица public.dq_issue_reviews — 6 кол. · История решений по находке. Исходная находка ETL не перезаписывается. */
+export interface dq_issue_reviews {
+  review_id: number;
+  issue_id: number;
+  decision: 'acknowledged' | 'resolved' | 'reopened';
+  reviewer: string;
+  note: string;
+  reviewed_at: string;
+}
+
 /** таблица public.dq_issues — 7 кол. · Журнал находок ETL. Не блокирует загрузку — материал для слайда «что не так с исходными данными». */
 export interface dq_issues {
   issue_id: number;
@@ -475,6 +485,22 @@ export interface v_bus_factor_skill {
   demand_source: string | null;
 }
 
+/** вьюха public.v_dq_issue_worklist — 12 кол. */
+export interface v_dq_issue_worklist {
+  issue_id: number | null;
+  batch_id: number | null;
+  entity: string | null;
+  entity_id: string | null;
+  rule_code: string | null;
+  severity: string | null;
+  detail: string | null;
+  review_status: string | null;
+  reviewer: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+  is_blocking: boolean | null;
+}
+
 /** вьюха public.v_dq_summary — 4 кол. */
 export interface v_dq_summary {
   rule_code: string | null;
@@ -805,6 +831,7 @@ export type RelationName =
   | 'actual_report_issues'
   | 'actual_uploads'
   | 'alerts'
+  | 'dq_issue_reviews'
   | 'dq_issues'
   | 'engineer_orbits'
   | 'engineer_skill_declarations'
@@ -851,6 +878,7 @@ export type RelationName =
   | 'v_backlog_demand'
   | 'v_bus_factor'
   | 'v_bus_factor_skill'
+  | 'v_dq_issue_worklist'
   | 'v_dq_summary'
   | 'v_engineer_absence_risk'
   | 'v_engineer_role_coverage'

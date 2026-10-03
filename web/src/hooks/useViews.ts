@@ -13,6 +13,8 @@ import type {
   BusFactorRow,
   BusFactorSkillRow,
   DqSummaryRow,
+  DqIssueRow,
+  DqIssueReviewRow,
   EngineerAbsenceRiskRow,
   EngineerRoleCoverageRow,
   InitiativeRow,
@@ -103,6 +105,8 @@ export const useTeams = () => useView<TeamRow>('teams', { limit: 20 })
 export const useEngineerRoleCoverage = () =>
   useView<EngineerRoleCoverageRow>('v_engineer_role_coverage', { limit: 500 })
 export const useDqSummary = () => useView<DqSummaryRow>('v_dq_summary', { limit: 100 })
+export const useDqIssues = () => useView<DqIssueRow>('v_dq_issue_worklist', { limit: 5000 })
+export const useDqIssueReviews = () => useView<DqIssueReviewRow>('dq_issue_reviews', { limit: 5000 })
 export const useInitiatives = () => useView<InitiativeRow>('initiatives', { limit: 100 })
 export const useRefResultOptions = () => useView<RefResultOptionRow>('ref_result_options', { limit: 50 })
 export const useRefDecisionReasons = () => useView<RefDecisionReasonRow>('ref_decision_reasons', { limit: 50 })

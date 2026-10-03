@@ -24,10 +24,12 @@
 параметризации SQL под каждый экран. Появится нужда — добавим `where` по тому же
 белому списку колонок, а не «универсальный» фильтр.
 
-Внутренняя кухня ETL (`load_batches`, `dq_issues`, `role_aliases`,
+Внутренняя кухня ETL (`load_batches`, `role_aliases`,
 `task_sequence`, оценки, `pi_periods`) в белый список не входит: наружу ей нечего
 отдавать (docs/SCHEMA.md §3). Промежуточные вьюхи (`v_role_supply_hh`,
 `v_backlog_demand`) тоже не отдаются — у экранов есть готовые витрины с вердиктом.
+Находки ETL доступны через `v_dq_issue_worklist`, а история их разбора — через
+`dq_issue_reviews`.
 """
 from __future__ import annotations
 
@@ -327,6 +329,21 @@ SOURCES: tuple[Source, ...] = (
         orderable=("rule_code", "severity", "n", "example"),
         note="Сводка по качеству исходных данных: 6 правил, материал для слайда "
         "«что не так с исходными данными».",
+    ),
+    _source(
+        "v_dq_issue_worklist",
+        screen="Диагностика",
+        order="-is_blocking,-issue_id",
+        orderable=("issue_id", "batch_id", "entity", "entity_id", "rule_code",
+                   "severity", "review_status", "is_blocking"),
+        note="Каждая находка ETL, текущее решение и блокирующий статус.",
+    ),
+    _source(
+        "dq_issue_reviews",
+        screen="Диагностика",
+        order="-review_id",
+        orderable=("review_id", "issue_id", "decision", "reviewer", "reviewed_at"),
+        note="История рассмотрения находок; исходные находки не перезаписываются.",
     ),
     # ------------------------------------------- контракт прогона (SCHEMA.md §2)
     _source(
