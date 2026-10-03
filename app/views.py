@@ -155,6 +155,23 @@ SOURCES: tuple[Source, ...] = (
         note="Допустимый ранний старт по живому графу и фактическим датам выбранного прогона.",
     ),
     _source(
+        "v_plan_goal_outcome",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "prodf_id", "decision", "proposal_action",
+                   "proposed_goal_code", "confirmed_closure_code", "confirmation_state"),
+        run_column="run_id",
+        note="Исходная цель, предложение планировщика и подтверждённый бизнес результат отдельно.",
+    ),
+    _source(
+        "v_initiative_goal_progress",
+        screen="План квартала",
+        order="prodf_id",
+        orderable=("run_id", "prodf_id", "task_count", "confirmed_target_count", "quarter_goal_status"),
+        run_column="run_id",
+        note="Цель инициативы достигнута только при подтверждении целевого результата каждой задачи.",
+    ),
+    _source(
         "v_plan_role_demand_snapshot",
         screen="План квартала",
         order="task_id,role_id",

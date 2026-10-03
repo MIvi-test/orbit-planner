@@ -62,3 +62,12 @@ JOIN roles req ON req.canonical_name = v.required
 JOIN roles cov ON cov.canonical_name = v.covering;
 
 COMMIT;
+
+-- Отображение решения планировщика на предлагаемую цель. Рекомендация
+-- отмены не является подтверждённой отменой заказчиком.
+INSERT INTO plan_decision_goal_map (decision, proposal_action, fallback_result_code) VALUES
+  ('in_quarter', 'pursue_goal', NULL),
+  ('deferred_next_pi', 'defer', 'NOT_IN_PI'),
+  ('cancelled', 'recommend_cancel', 'NOT_IN_PI')
+ON CONFLICT (decision) DO UPDATE SET proposal_action = EXCLUDED.proposal_action,
+    fallback_result_code = EXCLUDED.fallback_result_code;

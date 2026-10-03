@@ -24,6 +24,8 @@ import type {
   PlanDiffRow,
   PlanRunRow,
   PlanDependencyBoundRow,
+  PlanGoalOutcomeRow,
+  InitiativeGoalProgressRow,
   PlanRoleDemandSnapshotRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
@@ -62,6 +64,10 @@ export const usePlanSchedule = (runId?: number | null) =>
   useView<PlanTaskScheduleRow>('plan_task_schedule', { runId: runId ?? undefined, limit: 500 })
 export const usePlanDependencyBounds = (runId?: number | null) =>
   useView<PlanDependencyBoundRow>('plan_dependency_bounds', { runId: runId ?? undefined, limit: 500 })
+export const usePlanGoalOutcome = (runId?: number | null) =>
+  useView<PlanGoalOutcomeRow>('v_plan_goal_outcome', { runId: runId ?? undefined, limit: 500 })
+export const useInitiativeGoalProgress = (runId?: number | null) =>
+  useView<InitiativeGoalProgressRow>('v_initiative_goal_progress', { runId: runId ?? undefined, limit: 100 })
 export const usePlanAssignments = (runId?: number | null) =>
   useView<PlanAssignmentDetailRow>('v_plan_assignment_detail', { runId: runId ?? undefined, limit: 5000 })
 export const usePlanBaseline = (runId?: number | null) =>

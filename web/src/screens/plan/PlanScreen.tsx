@@ -38,6 +38,7 @@ export function PlanScreen() {
 
   const totalLive = data.groups.reduce((n, g) => n + g.tasks.filter((t) => t.status !== 'Done').length, 0)
   const inQuarter = [...data.scheduleByTask.values()].filter((s) => s.decision === 'in_quarter').length
+  const achievedGoals = data.initiativeGoals.filter((row) => row.quarter_goal_status === 'confirmed_achieved').length
 
   return (
     <Stack gap="md" maw={1200}>
@@ -48,6 +49,10 @@ export function PlanScreen() {
             {data.scheduleByTask.size > 0
               ? `В квартал взято ${inQuarter} задач из ${data.scheduleByTask.size} — остальные перенесены на следующий PI. Это решение планировщика, а не сокращение бэклога.`
               : `Живых задач: ${totalLive}`}
+          </Text>
+          <Text c="dimmed" size="sm">
+            Цель подтверждена у {achievedGoals} из {data.initiativeGoals.length} инициатив.
+            Включение задачи в план ещё не означает бизнес приёмку.
           </Text>
         </div>
         <AsOfLabel iso={data.asOf} />
@@ -74,6 +79,7 @@ export function PlanScreen() {
         roleDemand={selected ? data.roleDemandByTask.get(selected.task_id) ?? [] : []}
         progress={selected ? data.progressByTask.get(selected.task_id) ?? [] : []}
         dependencyBound={selected ? data.boundsByTask.get(selected.task_id) : undefined}
+        goalOutcome={selected ? data.goalsByTask.get(selected.task_id) : undefined}
         schedule={selected ? data.scheduleByTask.get(selected.task_id) : undefined}
         assignments={selected ? data.assignmentsByTask.get(selected.task_id) ?? [] : []}
         onClose={() => setSelected(null)}

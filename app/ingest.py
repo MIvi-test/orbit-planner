@@ -746,3 +746,31 @@ def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,
         plan = run_plan(min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]) + 1))
     return {"task_id": task_id, "role_id": role_id,
             "remaining_hours": str(remaining_hours), "revision_id": revision_id, "plan": plan}
+
+
+def confirm_task_goal(task_id: str, closure_code: str, goal_code: str | None,
+                      confirmed_by: str, note: str) -> dict[str, Any]:
+    """Record business acceptance separately from technical Done and proposals."""
+    if closure_code not in {"ACHIEVED", "NOT_ACHIEVED", "CANCELLED_BY_CUSTOMER"}:
+        raise UploadError("неизвестный результат закрытия")
+    if closure_code == "ACHIEVED" and goal_code not in {f"R{n}" for n in range(1, 7)}:
+        raise UploadError("для достигнутого результата укажите этап R1–R6")
+    if goal_code is not None and goal_code not in {f"R{n}" for n in range(1, 7)}:
+        raise UploadError("этап результата должен быть R1–R6")
+    if not confirmed_by.strip() or not note.strip():
+        raise UploadError("укажите подтвердившего и основание решения")
+    with WRITE_LOCK, db.atomic_transaction():
+        task = db.query_one("SELECT status FROM tasks WHERE task_id = %s", (task_id,))
+        if task is None or task["status"] != "Done":
+            raise UploadError("бизнес результат можно подтвердить после фактического завершения задачи")
+        with db.transaction() as cur:
+            cur.execute(
+                """INSERT INTO task_goal_confirmations
+                   (task_id, goal_code, closure_code, confirmed_by, note)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING confirmation_id""",
+                (task_id, goal_code, closure_code, confirmed_by.strip(), note.strip()),
+            )
+            confirmation_id = cur.fetchone()["confirmation_id"]
+        pi = _pi()
+        plan = run_plan(min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]) + 1))
+    return {"confirmation_id": confirmation_id, "task_id": task_id, "plan": plan}

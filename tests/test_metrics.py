@@ -202,6 +202,7 @@ def test_known_api_routes_are_frozen() -> None:
         "/api/actuals/template",
         "/api/actuals/role-review",
         "/api/scenarios/absence",
+        "/api/tasks/goal-confirmation",
         "/metrics",
     )
 

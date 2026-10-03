@@ -11,7 +11,7 @@ BEGIN;
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
 DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
-    actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
+    task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
     dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
@@ -95,6 +95,11 @@ CREATE TABLE skill_aliases (
 CREATE TABLE ref_result_options   (code TEXT PRIMARY KEY, ord SMALLINT NOT NULL, label TEXT NOT NULL);
 CREATE TABLE ref_mismatch_reasons (code TEXT PRIMARY KEY, ord SMALLINT NOT NULL, label TEXT NOT NULL);
 CREATE TABLE ref_closure_results  (code TEXT PRIMARY KEY, ord SMALLINT NOT NULL, label TEXT NOT NULL);
+CREATE TABLE plan_decision_goal_map (
+    decision TEXT PRIMARY KEY CHECK (decision IN ('in_quarter','deferred_next_pi','cancelled')),
+    proposal_action TEXT NOT NULL CHECK (proposal_action IN ('pursue_goal','defer','recommend_cancel')),
+    fallback_result_code TEXT REFERENCES ref_result_options(code)
+);
 COMMENT ON TABLE ref_result_options IS 'Справочник «Варианты выбора цели» — в т.ч. статусы переноса/отмены для задач, не влезших в квартал.';
 COMMENT ON TABLE ref_mismatch_reasons IS 'Причины расхождения планов заказчика и исполнителя. В датасете v1 не используется (заказчик=исполнитель везде) — задел под UI согласования.';
 
@@ -190,6 +195,18 @@ COMMENT ON COLUMN tasks.committed_week0 IS
 CREATE INDEX ix_tasks_status  ON tasks(status);
 CREATE INDEX ix_tasks_team    ON tasks(team_id);
 CREATE INDEX ix_tasks_prodf   ON tasks(prodf_id);
+
+CREATE TABLE task_goal_confirmations (
+    confirmation_id BIGSERIAL PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    goal_code TEXT REFERENCES ref_result_options(code),
+    closure_code TEXT NOT NULL REFERENCES ref_closure_results(code),
+    confirmed_by TEXT NOT NULL CHECK (btrim(confirmed_by) <> ''),
+    note TEXT NOT NULL CHECK (btrim(note) <> ''),
+    confirmed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (closure_code <> 'ACHIEVED' OR (goal_code IS NOT NULL AND goal_code ~ '^R[1-6]$'))
+);
+CREATE INDEX ix_task_goal_confirmations_latest ON task_goal_confirmations(task_id, confirmed_at DESC, confirmation_id DESC);
 
 CREATE TABLE task_role_estimates (
     task_id TEXT         NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,

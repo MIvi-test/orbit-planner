@@ -3,6 +3,8 @@ import { useRun } from '../../hooks/useRun'
 import {
   usePlanAssignments,
   usePlanDependencyBounds,
+  usePlanGoalOutcome,
+  useInitiativeGoalProgress,
   usePlanRoleDemandSnapshot,
   usePlanSchedule,
   usePlanTaskSp,
@@ -18,6 +20,7 @@ import type {
   PlanTaskScheduleRow,
   PlanTaskSpRow,
   PlanDependencyBoundRow,
+  PlanGoalOutcomeRow,
   PlanTaskProgressRow,
   PlanRoleDemandSnapshotRow,
   SprintRow,
@@ -44,6 +47,8 @@ export function usePlanData() {
   const initiativesQ = useInitiatives()
   const scheduleQ = usePlanSchedule(runId)
   const boundsQ = usePlanDependencyBounds(runId)
+  const goalsQ = usePlanGoalOutcome(runId)
+  const initiativeGoalsQ = useInitiativeGoalProgress(runId)
   const spQ = usePlanTaskSp(runId)
   const progressQ = usePlanTaskProgress(runId)
   const assignQ = usePlanAssignments(runId)
@@ -63,12 +68,13 @@ export function usePlanData() {
     initiativesQ.isPending ||
     scheduleQ.isPending ||
     boundsQ.isPending ||
+    goalsQ.isPending || initiativeGoalsQ.isPending ||
     spQ.isPending ||
     progressQ.isPending ||
     assignQ.isPending
   const isError =
-    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || boundsQ.isError || spQ.isError || progressQ.isError || assignQ.isError
-  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? boundsQ.error ?? spQ.error ?? progressQ.error ?? assignQ.error
+    sprintsQ.isError || tasksQ.isError || stateQ.isError || roleDemandQ.isError || initiativesQ.isError || scheduleQ.isError || boundsQ.isError || goalsQ.isError || initiativeGoalsQ.isError || spQ.isError || progressQ.isError || assignQ.isError
+  const firstError = sprintsQ.error ?? tasksQ.error ?? stateQ.error ?? roleDemandQ.error ?? initiativesQ.error ?? scheduleQ.error ?? boundsQ.error ?? goalsQ.error ?? initiativeGoalsQ.error ?? spQ.error ?? progressQ.error ?? assignQ.error
 
   const groups = useMemo<InitiativeGroup[]>(() => {
     const tasks = tasksQ.data?.items
@@ -108,6 +114,12 @@ export function usePlanData() {
     boundsQ.data?.items.forEach((row) => map.set(row.task_id, row))
     return map
   }, [boundsQ.data])
+
+  const goalsByTask = useMemo(() => {
+    const map = new Map<string, PlanGoalOutcomeRow>()
+    goalsQ.data?.items.forEach((row) => map.set(row.task_id, row))
+    return map
+  }, [goalsQ.data])
 
   const baselineByTask = useMemo(() => {
     const map = new Map<string, PlanTaskScheduleRow>()
@@ -165,6 +177,8 @@ export function usePlanData() {
     roleDemandByTask,
     scheduleByTask,
     boundsByTask,
+    goalsByTask,
+    initiativeGoals: initiativeGoalsQ.data?.items ?? [],
     baselineByTask,
     hasBaseline: baselineRunId !== null && baselineRunId !== runId,
     spByTask,

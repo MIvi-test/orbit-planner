@@ -129,6 +129,40 @@ export interface PlanDependencyBoundRow {
   earliest_start_sprint: number
 }
 
+export interface PlanGoalOutcomeRow {
+  run_id: number
+  task_id: string
+  prodf_id: string
+  status: TaskStateStatus
+  decision: Decision | null
+  result_planned: string | null
+  result_customer: string | null
+  result_executor: string | null
+  proposal_action: 'pursue_goal' | 'defer' | 'recommend_cancel' | null
+  proposed_goal_code: string | null
+  confirmed_closure_code: string | null
+  confirmed_goal_code: string | null
+  confirmation_source: 'user' | 'dataset' | null
+  requested_goal_label: string | null
+  proposed_goal_label: string | null
+  confirmed_goal_label: string | null
+  confirmed_closure_label: string | null
+  confirmation_state: 'confirmed_achieved' | 'customer_cancelled' | 'confirmed_not_achieved' | 'unconfirmed_done' | 'pending'
+  target_goal_rank: number | null
+  confirmed_goal_rank: number | null
+}
+
+export interface InitiativeGoalProgressRow {
+  run_id: number
+  prodf_id: string
+  task_count: number
+  target_task_count: number
+  confirmed_target_count: number
+  proposed_in_pi_count: number
+  highest_requested_stage: number | null
+  quarter_goal_status: 'goal_unknown' | 'confirmed_achieved' | 'forecast_in_pi' | 'at_risk'
+}
+
 export interface PlanTaskProgressRow {
   run_id: number
   task_id: string

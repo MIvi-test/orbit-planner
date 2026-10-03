@@ -2,9 +2,14 @@
  * Причина решения — готовый текст (docs/UI_DESIGN.md §8): `reason_text`
  * показывается как есть, не пересказывается и не сокращается.
  */
-import { Badge, Drawer, Group, List, Stack, Table, Text } from '@mantine/core'
-import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { notifications } from '@mantine/notifications'
+import { Badge, Button, Drawer, Group, List, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanGoalOutcomeRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
+import { confirmTaskGoal } from '../../api/goals'
+import { useRun } from '../../hooks/useRun'
 
 const DECISION_LABEL: Record<string, string> = {
   in_quarter: 'В квартале',
@@ -24,6 +29,7 @@ export function TaskDetailDrawer({
   roleDemand,
   progress,
   dependencyBound,
+  goalOutcome,
   schedule,
   assignments,
   onClose,
@@ -33,10 +39,40 @@ export function TaskDetailDrawer({
   roleDemand: PlanRoleDemandSnapshotRow[]
   progress: PlanTaskProgressRow[]
   dependencyBound: PlanDependencyBoundRow | undefined
+  goalOutcome: PlanGoalOutcomeRow | undefined
   schedule: PlanTaskScheduleRow | undefined
   assignments: PlanAssignmentDetailRow[]
   onClose: () => void
 }) {
+  const queryClient = useQueryClient()
+  const { isDefault, setRunId } = useRun()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [closureCode, setClosureCode] = useState<string | null>('ACHIEVED')
+  const [goalCode, setGoalCode] = useState<string | null>(null)
+  const [confirmedBy, setConfirmedBy] = useState('')
+  const [confirmationNote, setConfirmationNote] = useState('')
+  const [confirmBusy, setConfirmBusy] = useState(false)
+
+  async function saveConfirmation() {
+    if (!task || !closureCode) return
+    setConfirmBusy(true)
+    try {
+      const result = await confirmTaskGoal(task.task_id, closureCode,
+        closureCode === 'ACHIEVED' ? goalCode : null,
+        confirmedBy, confirmationNote)
+      await queryClient.invalidateQueries()
+      setRunId(result.plan.run_id)
+      setConfirmOpen(false)
+      notifications.show({ color: 'teal', title: 'Бизнес результат подтверждён',
+        message: `План пересчитан: прогон ${result.plan.run_id}.` })
+    } catch (error) {
+      notifications.show({ color: 'red', title: 'Не удалось подтвердить результат',
+        message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setConfirmBusy(false)
+    }
+  }
+
   return (
     <Drawer
       opened={task !== null}
@@ -83,6 +119,42 @@ export function TaskDetailDrawer({
             <Text size="sm" c="dimmed">
               По зависимостям этого прогона старт возможен не раньше спринта {dependencyBound.earliest_start_sprint}.
             </Text>
+          )}
+
+          {goalOutcome && (
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>Цель и результат</Text>
+              <Text size="sm">Исходная цель исполнителя: {goalOutcome.result_executor ?? 'не указана'}
+                {goalOutcome.requested_goal_label ? ` · ${goalOutcome.requested_goal_label}` : ''}</Text>
+              <Text size="sm">Цель заказчика: {goalOutcome.result_customer ?? 'не указана'}</Text>
+              <Text size="sm">Предложение плана: {goalOutcome.proposal_action === 'recommend_cancel'
+                ? 'рекомендовать отмену, без согласия заказчика'
+                : goalOutcome.proposed_goal_label ?? 'решение не требуется'}</Text>
+              <Text size="sm">Подтверждённый результат: {goalOutcome.confirmed_closure_label ?? 'не подтверждён'}
+                {goalOutcome.confirmed_goal_label ? ` · ${goalOutcome.confirmed_goal_label}` : ''}</Text>
+              {isDefault && goalOutcome.status === 'Done' && (
+                <>
+                  <Button size="xs" variant="subtle" onClick={() => setConfirmOpen(!confirmOpen)}>
+                    Подтвердить или исправить бизнес результат
+                  </Button>
+                  {confirmOpen && (
+                    <Stack gap="xs">
+                      <Select label="Итог" value={closureCode} onChange={setClosureCode}
+                        data={[{ value: 'ACHIEVED', label: 'Цель достигнута' },
+                          { value: 'NOT_ACHIEVED', label: 'Цель не достигнута' },
+                          { value: 'CANCELLED_BY_CUSTOMER', label: 'Отменено заказчиком' }]} />
+                      {closureCode === 'ACHIEVED' && <Select label="Достигнутый этап" value={goalCode}
+                        onChange={setGoalCode} data={[1, 2, 3, 4, 5, 6].map((n) => ({ value: `R${n}`, label: `R${n}` }))} />}
+                      <TextInput label="Кто подтвердил" value={confirmedBy}
+                        onChange={(event) => setConfirmedBy(event.currentTarget.value)} />
+                      <TextInput label="Основание" value={confirmationNote}
+                        onChange={(event) => setConfirmationNote(event.currentTarget.value)} />
+                      <Button size="xs" loading={confirmBusy} onClick={saveConfirmation}>Сохранить подтверждение</Button>
+                    </Stack>
+                  )}
+                </>
+              )}
+            </Stack>
           )}
 
           {state && (

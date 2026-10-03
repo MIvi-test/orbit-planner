@@ -100,7 +100,7 @@ MIME_OVERRIDES = {
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
-    "/api/scenarios/absence", "/metrics",
+    "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -320,6 +320,16 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, InvalidOperation, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля пересмотра роли", [str(exc)]) from None
+            elif path == "/api/tasks/goal-confirmation":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = ingest.confirm_task_goal(
+                        str(payload["task_id"]), str(payload["closure_code"]),
+                        str(payload["goal_code"]) if payload.get("goal_code") else None,
+                        str(payload["confirmed_by"]), str(payload["note"]),
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля подтверждения результата", [str(exc)]) from None
             else:
                 self._send_json(
                     HTTPStatus.NOT_FOUND,
