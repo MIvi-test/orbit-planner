@@ -20,12 +20,18 @@ export function RunSelect() {
     const outcome = r.params && typeof r.params === 'object' && !Array.isArray(r.params)
       ? r.params.business_outcome
       : null
+    const skillValidation = r.params && typeof r.params === 'object' && !Array.isArray(r.params)
+      ? r.params.skill_validation
+      : null
+    const stackUnverified = skillValidation && typeof skillValidation === 'object'
+      && !Array.isArray(skillValidation) && skillValidation.status === 'unverified'
     return {
       value: String(r.run_id),
       label:
         `Прогон ${r.run_id} · спринт ${r.as_of_sprint}` +
         (r.run_id === defaultRunId ? ' · текущий' : '') +
         (typeof outcome === 'string' && outcomeLabels[outcome] ? ` · ${outcomeLabels[outcome]}` : '') +
+        (stackUnverified ? ' · стек не подтверждён' : '') +
         (r.status !== 'ok' ? ` · ${r.status}` : ''),
     }
   })

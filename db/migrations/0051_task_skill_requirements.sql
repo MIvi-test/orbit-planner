@@ -1,23 +1,27 @@
--- =====================================================================
---  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
---
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id;
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
---
---  КРИТЕРИЙ ПРИЁМКИ: нет строк с severity = 'error'.
---  severity = 'warning' план не отменяет, но обязан быть показан в UI
---  (замещение роли, выход за даты исходного плана, разрыв в окне задачи).
---  Каждая строка — нарушение правила из docs/PLANNER_SPEC.md, раздел 7.
---  Проверки только читают, ничего не меняют: гонять можно сколько угодно.
---
---  Проверок 29 (A..AC). Разбор ревью M2 и что из него закрыто —
---  docs/REVIEW_RESPONSE.md.
--- =====================================================================
-BEGIN;
+CREATE TABLE IF NOT EXISTS task_role_skill_reviews (
+    task_id TEXT NOT NULL,
+    role_id SMALLINT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('proposed','confirmed')),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    reviewed_by TEXT,
+    reviewed_at TIMESTAMPTZ,
+    PRIMARY KEY (task_id, role_id),
+    FOREIGN KEY (task_id, role_id) REFERENCES task_role_estimates(task_id, role_id) ON DELETE CASCADE,
+    CHECK (status <> 'confirmed' OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS task_role_skill_requirements (
+    task_id TEXT NOT NULL,
+    role_id SMALLINT NOT NULL,
+    skill_id INT NOT NULL REFERENCES skills(skill_id),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    PRIMARY KEY (task_id, role_id, skill_id),
+    FOREIGN KEY (task_id, role_id) REFERENCES task_role_skill_reviews(task_id, role_id) ON DELETE CASCADE
+);
+INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason)
+VALUES ('SKILL_UNAVAILABLE', 10, 'deferred_next_pi', 'Нет инженера с подтверждённым стеком задачи', 'M2')
+ON CONFLICT (code) DO NOTHING;
 
-DROP VIEW IF EXISTS v_plan_violations CASCADE;
-
-CREATE VIEW v_plan_violations AS
+CREATE OR REPLACE VIEW v_plan_violations AS
 
 -- A. Ёмкость команды в SP (SP засчитываются в start_sprint) ------------
 -- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: 7-й спринт
@@ -472,4 +476,3 @@ COMMENT ON VIEW v_plan_violations IS
  'отменяют, но требуют отображения в UI. Правила — docs/PLANNER_SPEC.md, раздел 7; '
  'разбор ревью M2 — docs/REVIEW_RESPONSE.md.';
 
-COMMIT;

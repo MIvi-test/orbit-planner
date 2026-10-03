@@ -14,7 +14,8 @@ DROP TABLE IF EXISTS plan_task_sp, kpi_snapshots, alerts, task_state, plan_assig
     task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
     dq_issues, task_sequence, sprints, pi_periods, team_history,
-    task_dependencies, task_role_spent, task_role_estimates, tasks, initiatives,
+    task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
+    task_role_spent, task_role_estimates, tasks, initiatives,
     engineer_skills, engineer_orbits, engineers, teams,
     ref_closure_results, ref_mismatch_reasons, ref_result_options,
     role_substitutions, skills, role_aliases, roles, load_batches CASCADE;
@@ -180,6 +181,29 @@ CREATE TABLE task_role_estimates (
     PRIMARY KEY (task_id, role_id)
 );
 COMMENT ON TABLE task_role_estimates IS 'Матрица сметы 22×45, развёрнутая в long. Нулевые ячейки не хранятся.';
+
+CREATE TABLE task_role_skill_reviews (
+    task_id TEXT NOT NULL,
+    role_id SMALLINT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('proposed','confirmed')),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    reviewed_by TEXT,
+    reviewed_at TIMESTAMPTZ,
+    PRIMARY KEY (task_id, role_id),
+    FOREIGN KEY (task_id, role_id) REFERENCES task_role_estimates(task_id, role_id) ON DELETE CASCADE,
+    CHECK (status <> 'confirmed' OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
+);
+CREATE TABLE task_role_skill_requirements (
+    task_id TEXT NOT NULL,
+    role_id SMALLINT NOT NULL,
+    skill_id INT NOT NULL REFERENCES skills(skill_id),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    PRIMARY KEY (task_id, role_id, skill_id),
+    FOREIGN KEY (task_id, role_id) REFERENCES task_role_skill_reviews(task_id, role_id) ON DELETE CASCADE
+);
+COMMENT ON TABLE task_role_skill_reviews IS
+ 'Ручная проверка стека для задачи и роли. Отсутствие записи означает неизвестные требования, '
+ 'confirmed без строк требований означает подтверждённое отсутствие технологических ограничений.';
 
 CREATE TABLE task_role_spent (
     task_id TEXT         NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
@@ -429,6 +453,7 @@ INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VAL
   ('PLANNED',              1, 'in_quarter',       'Включена в квартал: хватает ролей, часов и ёмкости команды', NULL),
   ('ROLE_NOT_IN_STAFF',    2, 'deferred_next_pi', 'В штате нет требуемой роли — нужен наём или дообучение',     'M2'),
   ('ROLE_HOURS_EXHAUSTED', 3, 'deferred_next_pi', 'Не хватает часов специалистов роли до конца квартала',      'M2'),
+  ('SKILL_UNAVAILABLE',    10, 'deferred_next_pi', 'Нет инженера с подтверждённым стеком задачи',              'M2'),
   ('TEAM_SP_EXHAUSTED',    4, 'deferred_next_pi', 'Не хватает ёмкости команды в Story Points',                 'M2'),
   ('BLOCKED_BY_DEFERRED',  5, 'deferred_next_pi', 'Ждёт задачу, которая сама перенесена',                      'M3'),
   ('INITIATIVE_ATOMIC',    6, 'deferred_next_pi', 'Перенесена вместе со своей инициативой',                    'M2'),

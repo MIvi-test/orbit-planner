@@ -82,6 +82,7 @@ DONE_STATUS = "Done"
 REASON_PLANNED = "PLANNED"
 REASON_ROLE_NOT_IN_STAFF = "ROLE_NOT_IN_STAFF"
 REASON_ROLE_HOURS = "ROLE_HOURS_EXHAUSTED"
+REASON_SKILL_UNAVAILABLE = "SKILL_UNAVAILABLE"
 REASON_TEAM_SP = "TEAM_SP_EXHAUSTED"
 REASON_BLOCKED = "BLOCKED_BY_DEFERRED"
 REASON_ATOMIC = "INITIATIVE_ATOMIC"
@@ -187,6 +188,19 @@ SELECT e.engineer_id, e.role_id, e.grade, e.total_capacity_rate,
 FROM engineers e
 JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
 ORDER BY e.engineer_id, o.team_id
+"""
+
+TASK_SKILL_REVIEWS_SQL = """
+SELECT r.task_id, r.role_id, r.status, q.skill_id, s.name AS skill_name
+FROM task_role_skill_reviews r
+LEFT JOIN task_role_skill_requirements q
+  ON q.task_id = r.task_id AND q.role_id = r.role_id
+LEFT JOIN skills s ON s.skill_id = q.skill_id
+ORDER BY r.task_id, r.role_id, q.skill_id
+"""
+
+ENGINEER_SKILLS_SQL = """
+SELECT engineer_id, skill_id FROM engineer_skills ORDER BY engineer_id, skill_id
 """
 
 TEAM_CAPACITY_SQL = """
@@ -381,6 +395,10 @@ class Inputs:
     baseline_run_id: int | None = None
     # Bus Factor по компетенциям: (навык, носителей, in_demand, sole_in_role)
     skill_bus_factor: tuple[tuple[str, int, bool, bool], ...] = ()
+    skill_requirements: dict[tuple[str, int], frozenset[int]] = field(default_factory=dict)
+    skill_reviews: frozenset[tuple[str, int]] = frozenset()
+    engineer_skills: dict[str, frozenset[int]] = field(default_factory=dict)
+    skill_names: dict[int, str] = field(default_factory=dict)
 
     @property
     def fund_hours_per_fte(self) -> Decimal:
@@ -438,6 +456,21 @@ def load_inputs() -> Inputs:
         )
         for row in db.query_dicts(LIVE_TASKS_SQL)
     )
+
+    skill_requirements: dict[tuple[str, int], set[int]] = defaultdict(set)
+    skill_reviews: set[tuple[str, int]] = set()
+    skill_names: dict[int, str] = {}
+    for row in db.query_dicts(TASK_SKILL_REVIEWS_SQL):
+        if row["status"] != "confirmed":
+            continue
+        key = (row["task_id"], row["role_id"])
+        skill_reviews.add(key)
+        if row["skill_id"] is not None:
+            skill_requirements[key].add(row["skill_id"])
+            skill_names[row["skill_id"]] = row["skill_name"]
+    engineer_skills: dict[str, set[int]] = defaultdict(set)
+    for row in db.query_dicts(ENGINEER_SKILLS_SQL):
+        engineer_skills[row["engineer_id"]].add(row["skill_id"])
 
     engineers: dict[str, dict[str, Any]] = {}
     for row in db.query_dicts(ENGINEERS_SQL):
@@ -540,6 +573,10 @@ def load_inputs() -> Inputs:
              bool(row["sole_in_role"]))
             for row in db.query_dicts(SKILL_BUS_FACTOR_SQL)
         ),
+        skill_requirements={key: frozenset(ids) for key, ids in skill_requirements.items()},
+        skill_reviews=frozenset(skill_reviews),
+        engineer_skills={key: frozenset(ids) for key, ids in engineer_skills.items()},
+        skill_names=skill_names,
     )
 
 
@@ -936,6 +973,16 @@ def build_plan(
         by_role[role_id].append(engineer_id)
     for ids in by_role.values():
         ids.sort()
+    qualified_by_task: dict[str, dict[int, list[str]]] = {}
+    for task in inputs.tasks:
+        eligible: dict[int, list[str]] = {}
+        for role_id in task.needed:
+            required = inputs.skill_requirements.get((task.task_id, role_id), frozenset())
+            eligible[role_id] = [
+                engineer_id for engineer_id in by_role.get(role_id, ())
+                if required.issubset(inputs.engineer_skills.get(engineer_id, frozenset()))
+            ]
+        qualified_by_task[task.task_id] = eligible
 
     deps_by_blocked: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for blocking, blocked, gap in inputs.deps:
@@ -1016,6 +1063,14 @@ def build_plan(
         """Роли задачи, на которые в штате нет НИ ОДНОГО инженера."""
         return [role_id for role_id in sorted(task.needed) if not by_role.get(role_id)]
 
+    def missing_skills(task: TaskInput) -> list[int]:
+        return [
+            role_id for role_id in sorted(task.needed)
+            if inputs.skill_requirements.get((task.task_id, role_id))
+            and by_role.get(role_id)
+            and not qualified_by_task[task.task_id][role_id]
+        ]
+
     def place(task: TaskInput, lower: int) -> bool:
         """Поставить задачу в минимальный подходящий спринт. False — не влезла.
 
@@ -1029,7 +1084,8 @@ def build_plan(
         capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
         for candidate in range(max(replan_floor, lower), inputs.sprint_count + 1):
             result = _allocate_task(
-                task, candidate, funds, by_role, inputs.sprint_count, inputs.coverage
+                task, candidate, funds, qualified_by_task[task.task_id],
+                inputs.sprint_count, inputs.coverage
             )
             if result is None:
                 continue
@@ -1184,6 +1240,20 @@ def build_plan(
                 f"Нужен наём или дообучение; замещения ролей запрещены организаторами",
                 {"missing_roles": items},
             )
+        skill_gaps = missing_skills(task)
+        if skill_gaps:
+            details = [
+                {"role": task.role_names.get(role_id, str(role_id)),
+                 "skills": sorted(inputs.skill_names.get(skill_id, str(skill_id))
+                                  for skill_id in inputs.skill_requirements[(task.task_id, role_id)])}
+                for role_id in skill_gaps
+            ]
+            return (
+                REASON_SKILL_UNAVAILABLE,
+                "Перенесена: нет инженера требуемой роли с подтверждёнными навыками "
+                + "; ".join(f"{item['role']}: {', '.join(item['skills'])}" for item in details),
+                {"skill_gaps": details},
+            )
         blockers = sorted(b for b, _gap in deps_by_blocked.get(task_id, ()) if b in deferred)
         if blockers:
             return (
@@ -1196,7 +1266,10 @@ def build_plan(
                 },
             )
         lower = lower_bound(task)
-        trial = _allocate_task(task, lower, funds, by_role, inputs.sprint_count, inputs.coverage)
+        trial = _allocate_task(
+            task, lower, funds, qualified_by_task[task.task_id],
+            inputs.sprint_count, inputs.coverage,
+        )
         if trial is not None:
             funds.free(trial[0])  # пробное распределение не должно залипнуть в фонде
             if task_id in atomic_deferred:
@@ -1233,7 +1306,7 @@ def build_plan(
             free = sum(
                 (
                     max(funds.total_left(engineer_id, n), Decimal("0"))
-                    for engineer_id in by_role.get(role_id, ())
+                    for engineer_id in qualified_by_task[task.task_id].get(role_id, ())
                     for n in range(lower, inputs.sprint_count + 1)
                 ),
                 Decimal("0"),
@@ -1534,10 +1607,22 @@ def _assemble(
         for no, factor in sorted(inputs.sprint_factors.items())
         if factor < 1
     }
+    active_role_pairs = {
+        (task.task_id, role_id) for task in inputs.tasks for role_id in task.needed
+    }
+    unreviewed_skills = sorted(active_role_pairs - inputs.skill_reviews)
 
     params: dict[str, Any] = {
         "algorithm": ALGORITHM,
         "estimate_source": ESTIMATE_SOURCE,
+        "skill_validation": {
+            "confirmed_roles": len(active_role_pairs) - len(unreviewed_skills),
+            "total_roles": len(active_role_pairs),
+            "unreviewed": [{"task_id": task_id, "role_id": role_id}
+                           for task_id, role_id in unreviewed_skills],
+            "status": "confirmed" if not unreviewed_skills else "unverified",
+            "note": "Отсутствие подтверждённых требований не доказывает соответствие стеку",
+        },
         "calendar": {
             "pi_start": str(pi_start) if pi_start else None,
             "pi_end": str(pi_end) if pi_end else None,

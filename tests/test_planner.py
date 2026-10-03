@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -159,6 +160,40 @@ def test_task_fits_in_first_sprint_with_own_engineer() -> None:
         (a.engineer_id, a.hours, a.home_team_id, a.serving_team_id) for a in plan.assignments
     ] == [("ENG-1", Decimal("40"), T1, T1)]
     assert plan.status == "ok"
+
+
+def test_confirmed_task_skill_filters_same_role_candidates() -> None:
+    source = replace(
+        inputs([task("T-1")], [engineer("E-1"), engineer("E-2")]),
+        skill_requirements={("T-1", 1): frozenset({10})},
+        skill_reviews=frozenset({("T-1", 1)}),
+        engineer_skills={"E-1": frozenset({20}), "E-2": frozenset({10})},
+        skill_names={10: "Kafka"},
+    )
+    plan = planner.build_plan(source)
+    assert {row.engineer_id for row in plan.assignments} == {"E-2"}
+    assert plan.params["skill_validation"]["status"] == "confirmed"
+
+
+def test_missing_confirmed_skill_has_distinct_reason() -> None:
+    source = replace(
+        inputs([task("T-1")], [engineer("E-1")]),
+        skill_requirements={("T-1", 1): frozenset({10})},
+        skill_reviews=frozenset({("T-1", 1)}),
+        engineer_skills={"E-1": frozenset({20})},
+        skill_names={10: "Kafka"},
+    )
+    plan = planner.build_plan(source)
+    assert plan.schedule[0].reason_code == planner.REASON_SKILL_UNAVAILABLE
+    assert plan.schedule[0].reason_details["skill_gaps"] == [
+        {"role": "Роль 1", "skills": ["Kafka"]}
+    ]
+
+
+def test_unreviewed_task_stack_is_explicit_in_run_quality() -> None:
+    plan = planner.build_plan(inputs([task("T-1")], [engineer("E-1")]))
+    assert plan.params["skill_validation"]["status"] == "unverified"
+    assert plan.params["skill_validation"]["unreviewed"] == [{"task_id": "T-1", "role_id": 1}]
 
 
 def test_hours_stretch_across_sprints() -> None:
