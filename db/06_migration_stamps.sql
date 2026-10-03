@@ -34,5 +34,6 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0063_provisional_remaining', 'baseline'),
   ('0064_schema_alignment', 'baseline'),
   ('0065_auth_audit', 'baseline'),
-  ('0066_team_velocity_observed', 'baseline')
+  ('0066_team_velocity_observed', 'baseline'),
+  ('0067_graph_horizon_reason', 'baseline')
 ON CONFLICT (version) DO NOTHING;

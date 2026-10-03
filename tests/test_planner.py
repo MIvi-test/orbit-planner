@@ -951,3 +951,82 @@ def test_sp_cap_limits_hours_per_sprint_so_a_big_task_stretches() -> None:
     for item in plan.assignments:
         by_sprint[item.sprint_no] = by_sprint.get(item.sprint_no, Decimal(0)) + item.work_hours
     assert all(hours <= Decimal("10.01") for hours in by_sprint.values())  # 40 ч × 2/8 SP
+
+
+# ---------------------------------------------------------------------------
+#  DA-16: причина отказа строится из той же проверки, по которой принято решение
+# ---------------------------------------------------------------------------
+def _row(plan: planner.Plan, task_id: str) -> planner.ScheduleRow:
+    return next(row for row in plan.schedule if row.task_id == task_id)
+
+
+def test_sp_refusal_is_explained_with_the_numbers_that_decided_it() -> None:
+    """Часов у людей много, ёмкость 2 SP/спринт: A (8 SP) берёт 8 из 12, B (8 SP) не помещается."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=8, roles={1: 40}, rung=9, topo=1), task("B", sp=8, roles={1: 40}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: 2}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_TEAM_SP
+    assert refusal.reason_details["free_sp"] == "4.00" and refusal.reason_details["need_sp"] == "8"
+    rival = refusal.reason_details["competitors"][0]
+    assert rival["task_id"] == "A" and rival["higher_priority"] is True and Decimal(rival["sp"]) == 8
+    assert "выше в очереди" in refusal.reason_text and "свободно 4" in refusal.reason_text
+
+
+def test_hours_refusal_names_unplaced_and_free_hours_and_the_rival() -> None:
+    """Один инженер (480 ч за квартал): A занимает 400, B просит 200 — не хватает 120, свободно 80."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=9, topo=1), task("B", sp=1, roles={1: 200}, rung=1, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    item = refusal.reason_details["shortages"][0]
+    assert Decimal(item["need_hh"]) == 200 and Decimal(item["unplaced_hh"]) == 120 and Decimal(item["free_hh"]) == 80
+    assert item["competitors"][0]["task_id"] == "A" and item["competitors"][0]["higher_priority"] is True
+    assert "не удалось разместить 120" in refusal.reason_text and "свободно у людей роли 80" in refusal.reason_text
+
+
+def test_lower_priority_rival_is_not_called_higher() -> None:
+    """Если место заняла задача ниже в очереди, текст не врёт про «более приоритетную»."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=1, topo=1), task("B", sp=1, roles={1: 200}, rung=9, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    # B стоит выше A и берёт 200; A (400 ч) не помещается: конкурент B — выше в очереди.
+    refusal = _row(plan, "A")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    assert all(c["higher_priority"] for c in refusal.reason_details["shortages"][0]["competitors"])
+
+
+def test_dependency_chain_beyond_the_horizon_has_its_own_reason() -> None:
+    """A занимает весь квартал, B зависит от неё: самый ранний старт B — спринт 7 при шести спринтах."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 480}, rung=9, topo=1), task("B", sp=1, roles={2: 10}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),), team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_GRAPH_HORIZON
+    assert refusal.reason_details["earliest_start_sprint"] == 7
+    assert refusal.reason_details["blocking"][0]["task_id"] == "A"
+    assert "спринт 7" in refusal.reason_text and "шесть" not in refusal.reason_text
+
+
+def test_atomic_reason_checks_hours_and_sp_together() -> None:
+    """Задача X сама помещается, но Y инициативы — нет: X уходит с инициативой, и текст говорит про часы И SP."""
+    plan = planner.build_plan(
+        inputs([task("X", sp=1, roles={1: 40}, rung=5, topo=1, prodf="P"),
+                task("Y", sp=50, roles={1: 40}, rung=5, topo=2, prodf="P")],
+               [engineer("ENG-1")], team_sp={T1: 2}),
+        initiative_mode=planner.INITIATIVE_MODE_ATOMIC, simulate_next_pi=False,
+    )
+    x = _row(plan, "X")
+    assert x.decision != "in_quarter" and x.reason_code == planner.REASON_ATOMIC
+    assert "по часам и ёмкости SP" in x.reason_text

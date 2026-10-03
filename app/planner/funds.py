@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 from decimal import Decimal, ROUND_DOWN
+from typing import Any
 
 from app.planner.constants import MIN_CHUNK_HH
 from app.planner.model import Assignment, EngineerInput, Inputs, TaskInput
@@ -143,8 +144,14 @@ def _allocate_task(
     sprint_count: int,
     coverage: dict[tuple[str, int], Decimal],
     sp_free: Callable[[int], Decimal] | None = None,
+    log: list[dict[str, Any]] | None = None,
 ) -> tuple[list[Assignment], int, int] | None:
     """Разложить остаток задачи по спринтам и людям, начиная со `start_sprint`.
+
+    `log` (диагностика, DA-16) получает по записи на спринт: свободные SP команды, бюджет
+    работы по SP, размещённую работу и признак «работу ограничила ёмкость SP»; в конце —
+    запись `summary` с недоразмещённым остатком по ролям. Числа в объяснении отказа берутся
+    отсюда, а не пересчитываются отдельно.
 
     `sp_free(sprint_no)` — свободная ёмкость команды в SP в этом спринте. Если она
     передана и у задачи есть SP, часы и SP идут ВМЕСТЕ (ADR-029): за спринт
@@ -188,6 +195,8 @@ def _allocate_task(
         if capped:
             free_sp = sp_free(sprint_no)  # type: ignore[misc]
             if free_sp <= 0:
+                if log is not None:
+                    log.append({"sprint": sprint_no, "free_sp": Decimal("0"), "no_free_sp": True})
                 continue  # команде нечем оплатить работу в этом спринте
             budget = total_work * free_sp / sp_total
         sprint_work = Decimal("0")
@@ -219,10 +228,23 @@ def _allocate_task(
                 remaining[role_id] = need
                 if need <= 0:
                     break
+        if log is not None:
+            log.append({
+                "sprint": sprint_no,
+                "free_sp": sp_free(sprint_no) if capped else None,  # type: ignore[misc]
+                "budget_work": budget,
+                "work": sprint_work,
+                "sp_limited": budget is not None and budget - sprint_work < MIN_CHUNK_HH
+                and any(hours > 0 for hours in remaining.values()),
+            })
         if all(hours <= 0 for hours in remaining.values()):
             used = [row.sprint_no for row in assignments]
             return assignments, min(used), max(used)
 
+    if log is not None:
+        log.append({"summary": True, "unplaced": {role: hours for role, hours in remaining.items() if hours > 0},
+                    "total_work": total_work, "placed_work": sum(
+                        (row.work_hours or row.hours for row in assignments), Decimal("0"))})
     funds.free(assignments)
     return None
 

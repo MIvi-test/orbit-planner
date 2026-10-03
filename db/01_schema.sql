@@ -539,4 +539,5 @@ INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VAL
   ('PI_CLOSED',            7, 'deferred_next_pi', 'Квартал завершён — остаток уходит в следующий PI',          'M2'),
   ('NOT_FEASIBLE_NEXT_PI', 8, 'cancelled',        'Не помещается и в следующий квартал — рекомендуем отменить или пересогласовать', 'M4');
 INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VALUES
-  ('ETC_REQUIRED', 9, 'deferred_next_pi', 'Нужно уточнить остаток работ или статус задачи', 'M2');
+  ('ETC_REQUIRED', 9, 'deferred_next_pi', 'Нужно уточнить остаток работ или статус задачи', 'M2'),
+  ('GRAPH_HORIZON', 11, 'deferred_next_pi', 'Цепочка зависимостей выводит старт за конец квартала', 'M3');

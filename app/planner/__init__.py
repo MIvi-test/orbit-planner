@@ -98,6 +98,7 @@ from app.planner.constants import (  # noqa: F401
     REASON_ATOMIC,
     REASON_BLOCKED,
     REASON_ETC_REQUIRED,
+    REASON_GRAPH_HORIZON,
     REASON_NOT_FEASIBLE,
     REASON_PI_CLOSED,
     REASON_PLANNED,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -26,6 +27,7 @@ from app.planner.constants import (
     REASON_ATOMIC,
     REASON_BLOCKED,
     REASON_ETC_REQUIRED,
+    REASON_GRAPH_HORIZON,
     REASON_PI_CLOSED,
     REASON_PLANNED,
     REASON_ROLE_HOURS,
@@ -186,6 +188,16 @@ def build_plan(
             and not qualified_by_task[task.task_id][role_id]
         ]
 
+    def sp_free_for(task: TaskInput) -> Callable[[int], Decimal]:
+        """Свободная ёмкость команды задачи в SP по спринтам (нижняя граница нуля)."""
+        capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
+
+        def sp_free(sprint_no: int) -> Decimal:
+            left = capacity * funds.sprint_factor(sprint_no) - funds.used_sp[(task.team_id, sprint_no)]
+            return left if left > 0 else Decimal("0")
+
+        return sp_free
+
     def place(task: TaskInput, lower: int) -> bool:
         """Поставить задачу в минимальный подходящий спринт. False — не влезла.
 
@@ -196,12 +208,7 @@ def build_plan(
         """
         if task.remaining_unknown or not task.needed:
             return False
-        capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
-
-        def sp_free(sprint_no: int) -> Decimal:
-            left = capacity * funds.sprint_factor(sprint_no) - funds.used_sp[(task.team_id, sprint_no)]
-            return left if left > 0 else Decimal("0")
-
+        sp_free = sp_free_for(task)
         for candidate in range(max(replan_floor, lower), inputs.sprint_count + 1):
             result = _allocate_task(
                 task, candidate, funds, qualified_by_task[task.task_id],
@@ -319,15 +326,46 @@ def build_plan(
     # ---- причины решений (ADR-022) ---------------------------------------
     rank = {task.task_id: index for index, task in enumerate(ordered, start=1)}
 
-    def taken_by(role_id: int, limit: int = 5) -> list[str]:
-        """Какие поставленные задачи больше всех заняли часы этой роли."""
+    def role_competitors(task: TaskInput, role_id: int, limit: int = 5) -> list[dict[str, Any]]:
+        """Кто реально занял часы этой роли: задача, часы, место в очереди (DA-16)."""
         hours: dict[str, Decimal] = defaultdict(Decimal)
-        for task_id, rows in placed.items():
+        for other_id, rows in placed.items():
             for row in rows:
                 if row.role_id == role_id:
-                    hours[task_id] += row.hours
-        ranked = sorted(hours.items(), key=lambda item: (-item[1], item[0]))
-        return [task_id for task_id, _hours in ranked[:limit]]
+                    hours[other_id] += row.hours
+        ranked = sorted(hours.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        return [
+            {"task_id": other, "hours": str(value), "queue_rank": rank[other],
+             "priority_rung": by_id[other].priority_rung, "higher_priority": rank[other] < rank[task.task_id]}
+            for other, value in ranked
+        ]
+
+    def sp_competitors(task: TaskInput, lower: int, limit: int = 5) -> list[dict[str, Any]]:
+        """Кто занял SP команды в спринтах от `lower`: задача, SP, место в очереди."""
+        taken: dict[str, Decimal] = defaultdict(Decimal)
+        for other_id, shares in sp_shares.items():
+            if by_id[other_id].team_id != task.team_id:
+                continue
+            for sprint_no, sp in shares.items():
+                if sprint_no >= lower:
+                    taken[other_id] += sp
+        ranked = sorted(taken.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        return [
+            {"task_id": other, "sp": str(value), "queue_rank": rank[other],
+             "priority_rung": by_id[other].priority_rung, "higher_priority": rank[other] < rank[task.task_id]}
+            for other, value in ranked
+        ]
+
+    def rivals_text(rivals: list[dict[str, Any]], unit: str) -> str:
+        """Фраза о конкурентах без неправды: «выше в очереди» говорим только о тех, кто выше."""
+        if not rivals:
+            return ""
+        parts = []
+        for item in rivals:
+            amount = item["sp"] if unit == "SP" else item["hours"]
+            where = "выше в очереди" if item["higher_priority"] else "ниже в очереди (занято из-за порядка размещения)"
+            parts.append(f"{item['task_id']} ({_q(Decimal(amount))} {unit}, {where})")
+        return " (занято: " + ", ".join(parts) + ")"
 
     def diagnose(task: TaskInput) -> tuple[str, str, dict[str, Any]]:
         """Почему задача не в квартале — по фактическому состоянию фонда."""
@@ -386,43 +424,95 @@ def build_plan(
                 },
             )
         lower = lower_bound(task)
-        trial = _allocate_task(
+        if lower > inputs.sprint_count:
+            pushing = sorted(
+                (blocking, ready_from(blocking, gap)) for blocking, gap in deps_by_blocked.get(task_id, ())
+                if blocking in starts
+            )
+            chain = "; ".join(f"{blocking} → не раньше спринта {sprint}" for blocking, sprint in pushing)
+            return (
+                REASON_GRAPH_HORIZON,
+                f"Перенесена: самый ранний допустимый старт — спринт {lower}, а в квартале спринтов "
+                f"{inputs.sprint_count}: цепочка зависимостей выводит работу за горизонт"
+                + (f" ({chain})" if chain else "")
+                + (f"; {'; '.join(dependency_fact_issues)}" if dependency_fact_issues else ""),
+                {"earliest_start_sprint": lower, "sprint_count": inputs.sprint_count,
+                 "blocking": [{"task_id": blocking, "ready_from": sprint} for blocking, sprint in pushing]},
+            )
+
+        # Одна и та же проверка совместной выполнимости (часы и SP, ADR-029), что и при размещении:
+        # причина и числа берутся из её журнала, а не пересчитываются упрощённо (DA-16).
+        sp_free = sp_free_for(task)
+        log: list[dict[str, Any]] = []
+        attempt = _allocate_task(
             task, lower, funds, qualified_by_task[task.task_id],
-            inputs.sprint_count, inputs.coverage,
+            inputs.sprint_count, inputs.coverage, sp_free=sp_free, log=log,
         )
-        if trial is not None:
-            funds.free(trial[0])  # пробное распределение не должно залипнуть в фонде
+        if attempt is not None:
+            rows_fit = attempt[0]
+            try:
+                shares_fit = _sp_shares(task, rows_fit, sp_free)
+            finally:
+                funds.free(rows_fit)  # пробное распределение не должно залипнуть в фонде
             if task_id in atomic_deferred:
                 return (
                     REASON_ATOMIC,
-                    f"Перенесена вместе с инициативой {task.prodf_id}: сама задача помещается, "
-                    f"но другая задача инициативы — нет, а режим atomic частичных инициатив "
-                    f"не допускает",
+                    f"Перенесена вместе с инициативой {task.prodf_id}: сама задача помещается по часам "
+                    f"и ёмкости SP, но другая задача инициативы — нет, а режим atomic частичных "
+                    f"инициатив не допускает",
                     {"prodf_id": task.prodf_id},
                 )
-            capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
-            free_sp = sum(
-                (
-                    max(capacity * funds.sprint_factor(n) - funds.used_sp[(task.team_id, n)], Decimal("0"))
-                    for n in range(lower, inputs.sprint_count + 1)
-                ),
-                Decimal("0"),
+            if shares_fit is None:
+                return (
+                    REASON_TEAM_SP,
+                    f"Перенесена: часов хватает, но доли SP не раздаются по спринтам без превышения "
+                    f"свободной ёмкости {task.team_id} (округление до сотых SP)",
+                    {"team_id": task.team_id, "need_sp": str(task.sp_to_plan), "from_sprint": lower},
+                )
+            return (
+                REASON_ROLE_HOURS,
+                f"Перенесена: при текущем остатке ресурсов задача помещается (со спринта {lower}), "
+                f"решение будет пересмотрено при следующем пересчёте",
+                {"fits_now": True, "from_sprint": lower},
             )
+
+        summary = log[-1]
+        total_work = summary["total_work"]
+        unplaced = summary["unplaced"]
+        sp_limited = [entry["sprint"] for entry in log if entry.get("sp_limited")]
+        sp_empty = [entry["sprint"] for entry in log if entry.get("no_free_sp")]
+        hours_only = _allocate_task(
+            task, lower, funds, qualified_by_task[task.task_id], inputs.sprint_count, inputs.coverage
+        )
+        if hours_only is not None:
+            funds.free(hours_only[0])
+            capacity = inputs.team_sp_per_sprint.get(task.team_id, Decimal("0"))
+            free_by_sprint = {
+                n: max(capacity * funds.sprint_factor(n) - funds.used_sp[(task.team_id, n)], Decimal("0"))
+                for n in range(lower, inputs.sprint_count + 1)
+            }
+            free_sp = sum(free_by_sprint.values(), Decimal("0"))
+            rivals = sp_competitors(task, lower)
             return (
                 REASON_TEAM_SP,
-                f"Перенесена: часов специалистов хватает, но у {task.team_id} не осталось "
-                f"ёмкости — нужно {_q(task.sp_to_plan)} SP, свободно {_q(free_sp)} SP со "
-                f"спринта {lower} до конца квартала; ёмкость заняли задачи с более высоким "
-                f"приоритетом",
+                f"Перенесена: часов специалистов хватает, но ёмкость {task.team_id} в SP ограничивает "
+                f"работу: нужно {_q(task.sp_to_plan)} SP, свободно {_q(free_sp)} SP со спринта {lower} до "
+                f"конца квартала (за спринт задача выполняет не больше доли свободных SP от своих); "
+                f"не удалось разместить {_q(sum(unplaced.values(), Decimal('0')))} из {_q(total_work)} ЧЧ работы"
+                + rivals_text(rivals, "SP"),
                 {
                     "team_id": task.team_id,
                     "need_sp": str(task.sp_to_plan),
                     "free_sp": str(free_sp.quantize(Decimal("0.01"))),
+                    "free_sp_by_sprint": {str(n): str(v.quantize(Decimal("0.01"))) for n, v in free_by_sprint.items()},
+                    "unplaced_hh": str(sum(unplaced.values(), Decimal("0"))),
                     "from_sprint": lower,
+                    "competitors": rivals,
                 },
             )
         shortages = []
-        for role_id, need in sorted(task.needed.items()):
+        for role_id, short in sorted(unplaced.items()):
+            need = task.needed[role_id]
             free = sum(
                 (
                     max(funds.total_left(engineer_id, n), Decimal("0"))
@@ -431,32 +521,45 @@ def build_plan(
                 ),
                 Decimal("0"),
             )
-            if free < need:
-                shortages.append(
-                    {
-                        "role": task.role_names.get(role_id, str(role_id)),
-                        "need_hh": str(need),
-                        "free_hh": str(free.quantize(Decimal("0.01"))),
-                        "taken_by": taken_by(role_id),
-                    }
-                )
-        if shortages:
-            listed = "; ".join(
-                f"«{item['role']}»: нужно {_q(Decimal(item['need_hh']))} ЧЧ, свободно "
-                f"{_q(Decimal(item['free_hh']))} ЧЧ"
-                + (f" (часы заняты {', '.join(item['taken_by'])})" if item["taken_by"] else "")
-                for item in shortages
+            rivals = role_competitors(task, role_id)
+            shortages.append(
+                {
+                    "role": task.role_names.get(role_id, str(role_id)),
+                    "need_hh": str(need),
+                    "unplaced_hh": str(short.quantize(Decimal("0.01"))),
+                    "free_hh": str(free.quantize(Decimal("0.01"))),
+                    "taken_by": [item["task_id"] for item in rivals],
+                    "competitors": rivals,
+                }
             )
-            text = (
-                f"Перенесена: не хватает часов специалистов со спринта {lower} до конца квартала — "
-                f"{listed}. Часы отданы задачам с более высоким приоритетом"
+        parts = []
+        for item in shortages:
+            free = Decimal(item["free_hh"])
+            unplaced_item = Decimal(item["unplaced_hh"])
+            line = (
+                f"«{item['role']}»: нужно {_q(Decimal(item['need_hh']))} ЧЧ, не удалось разместить "
+                f"{_q(unplaced_item)} ЧЧ, свободно у людей роли {_q(free)} ЧЧ"
             )
-        else:
-            text = (
-                "Перенесена: часов по ролям в сумме хватает, но их не собрать в нужные спринты — "
-                "свободные часы у людей разнесены по разным командам и спринтам"
+            if free >= unplaced_item:
+                line += " — часов в сумме хватает, но они не собираются в нужные спринты (разнесены по людям, орбитам и спринтам)"
+            line += rivals_text(item["competitors"], "ЧЧ")
+            parts.append(line)
+        text = (
+            f"Перенесена: не хватает часов специалистов со спринта {lower} до конца квартала — "
+            + "; ".join(parts)
+        )
+        if sp_limited or sp_empty:
+            text += (
+                ". Дополнительно ёмкость SP команды ограничивала работу"
+                + (f" в спринтах {', '.join(map(str, sp_limited))}" if sp_limited else "")
+                + (f", в спринтах {', '.join(map(str, sp_empty))} свободных SP нет" if sp_empty else "")
             )
-        return (REASON_ROLE_HOURS, text, {"shortages": shortages, "from_sprint": lower})
+        return (
+            REASON_ROLE_HOURS,
+            text,
+            {"shortages": shortages, "from_sprint": lower,
+             "sp_limited_sprints": sp_limited, "no_free_sp_sprints": sp_empty},
+        )
 
     reasons = {task.task_id: diagnose(task) for task in ordered if task.task_id in deferred}
 
