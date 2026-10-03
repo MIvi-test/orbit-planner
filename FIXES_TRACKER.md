@@ -18,7 +18,7 @@
 | B-2 | `web/dist` отстаёт от `web/src` на 14 коммитов | 1 | ⬜ | | — |
 | B-3 | 13 PostgreSQL-тестов не запускаются (нет CI) | 0 | 🟡 | `wave/0-ci`: джоба `pg` | — |
 | B-4 | Нумерация миграций по номеру DA | 1 | ⬜ (правило) | | — |
-| B-5 | Нет CI-гейта (unit, pg, цикл, схемы, dist) | 0 | 🟡 | `wave/0-ci` | `.gitlab-ci.yml` написан, не запускался на GitLab; `schema-equivalence`, `web`, `lint` пока `allow_failure` | — |
+| B-5 | Нет CI-гейта (unit, pg, цикл, схемы, dist) | 0 | 🟡 | `wave/0-ci` (не запускался на GitLab; `schema-equivalence`, `web`, `lint` пока `allow_failure`) | — |
 
 ## Безопасность (не было в аудите)
 
