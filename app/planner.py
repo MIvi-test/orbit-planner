@@ -257,10 +257,11 @@ TASK_PRODF_SQL = "SELECT task_id, prodf_id FROM tasks ORDER BY task_id"
 # Первоначальный план = канонический базовый прогон целиком: решение, старт и
 # конец каждой задачи Недели 0. Пересчёт базу сравнения не меняет (ТЗ).
 BASELINE_SCHEDULE_SQL = """
-SELECT b.task_id, s.decision, s.start_sprint, s.end_sprint
+SELECT b.run_id, b.task_id, b.planned_sp, s.decision, s.start_sprint, s.end_sprint
 FROM plan_baseline b
 JOIN plan_task_schedule s ON s.run_id = b.run_id AND s.task_id = b.task_id
-WHERE b.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
+WHERE b.run_id = (SELECT MIN(run_id) FROM plan_runs
+                  WHERE pi_id = %s AND as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
 ORDER BY b.task_id
 """
 
@@ -377,6 +378,8 @@ class Inputs:
     task_prodf: dict[str, str] = field(default_factory=dict)  # все задачи, и Done тоже
     # task_id -> (decision, start, end) канонического базового прогона
     baseline_schedule: dict[str, tuple[str, int | None, int | None]] = field(default_factory=dict)
+    baseline_sp: dict[str, Decimal] = field(default_factory=dict)
+    baseline_run_id: int | None = None
     # Bus Factor по компетенциям: (навык, носителей, in_demand, sole_in_role)
     skill_bus_factor: tuple[tuple[str, int, bool, bool], ...] = ()
 
@@ -469,6 +472,7 @@ def load_inputs() -> Inputs:
         )
 
     last_upload = db.query_one(LAST_UPLOAD_SQL, (pi["pi_id"],)) or {}
+    baseline_rows = db.query_dicts(BASELINE_SCHEDULE_SQL, (pi["pi_id"],))
     done_in_sprint: dict[int, set[str]] = defaultdict(set)
     for row in db.query_dicts(DONE_IN_SPRINT_SQL, (pi["pi_id"],)):
         done_in_sprint[int(row["sprint_no"])].add(row["task_id"])
@@ -528,8 +532,10 @@ def load_inputs() -> Inputs:
         task_prodf={row["task_id"]: row["prodf_id"] for row in db.query_dicts(TASK_PRODF_SQL)},
         baseline_schedule={
             row["task_id"]: (row["decision"], row["start_sprint"], row["end_sprint"])
-            for row in db.query_dicts(BASELINE_SCHEDULE_SQL)
+            for row in baseline_rows
         },
+        baseline_sp={row["task_id"]: Decimal(row["planned_sp"]) for row in baseline_rows},
+        baseline_run_id=int(baseline_rows[0]["run_id"]) if baseline_rows else None,
         skill_bus_factor=tuple(
             (row["skill_name"], int(row["bus_factor"]), bool(row["in_demand"]),
              bool(row["sole_in_role"]))
@@ -1502,6 +1508,7 @@ def _assemble(
             "short_sprints": short_sprints,
         },
         "estimate_validated": inputs.estimate_validated,
+        "baseline_run_id": inputs.baseline_run_id,
         "estimate_conflicts": inputs.estimate_conflicts,
         "estimate_conflicts_note": (
             "три источника часов расходятся; авторитетен столбец матрицы сметы "
@@ -1791,6 +1798,8 @@ def _build_kpis(
     current = {row.task_id: row for row in schedule}
     sp_of: dict[str, Decimal] = {task_id: sp for task_id, _st, sp, _rem in inputs.all_tasks}
     sp_of.update({task.task_id: task.estimation_sp for task in inputs.tasks})
+    promised_sp = dict(sp_of)
+    promised_sp.update(inputs.baseline_sp)
     status_of = {task_id: status for task_id, status, _sp, _rem in inputs.all_tasks}
     done_in_pi = set().union(*inputs.done_in_sprint.values()) if inputs.done_in_sprint else set()
     prodf_of = dict(inputs.task_prodf)
@@ -1878,7 +1887,7 @@ def _build_kpis(
     planned_ids: dict[int, list[str]] = defaultdict(list)
     for task_id, (decision, _start, end) in base.items():
         if decision == "in_quarter" and end is not None:
-            planned_sp[end] += sp_of.get(task_id, Decimal("0"))
+            planned_sp[end] += promised_sp.get(task_id, Decimal("0"))
             planned_ids[end].append(task_id)
     low, high = KPI_TARGETS["say_do_ratio"]
     for sprint_no in range(1, inputs.sprint_count + 1):
@@ -2010,6 +2019,10 @@ def write_plan(plan: Plan) -> int:
         if row is None:  # INSERT ... RETURNING без строки — такого быть не может
             raise RuntimeError("plan_runs не вернул run_id")
         run_id = int(row["run_id"])
+        if plan.as_of_sprint == 0:
+            plan.params["baseline_run_id"] = run_id
+            cur.execute("UPDATE plan_runs SET params = %s::jsonb WHERE run_id = %s",
+                        (json.dumps(plan.params, ensure_ascii=False), run_id))
 
         if plan.baseline:
             cur.executemany(
