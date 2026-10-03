@@ -158,6 +158,11 @@ start_start (по умолчанию):  start(blocked)  ≥  start(blocking) + m
 finish_start:                start(blocked)  ≥  end(blocking)   + min_gap_sprints
 ```
 
+Граница `end(blocking)` — последний спринт работы предшественника.
+При `min_gap_sprints = 1` следующий старт допустим со следующего спринта.
+Инвариант `DEPENDENCY_VIOLATED` читает режим из параметров именно проверяемого
+прогона; неизвестный режим отклоняется.
+
 `min_gap_sprints = 1` (⚠ ADR-003). По умолчанию — `start_start`: именно эту
 семантику реализует предпосчитанный `task_sequence.earliest_start_sprint`
 (у `MOB-7012` и `MP-103` он равен 2 при блокирующих с `earliest = 1`), и заново

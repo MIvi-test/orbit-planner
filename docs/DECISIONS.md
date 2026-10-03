@@ -404,7 +404,8 @@ ADR-005 требовал «инициатива целиком», а алгор�
 1. `dependency_mode` — явный параметр прогона:
    * `start_start` (**по умолчанию**): `start(blocked) ≥ start(blocking) + gap`;
    * `finish_start`: `start(blocked) ≥ end(blocking) + gap`.
-   Режим пишется в `plan_runs.params.dependency_mode`.
+   Режим пишется в `plan_runs.params.dependency_mode`; независимая SQL-приёмка
+   проверяет окно предшественника по этому же режиму.
 2. Перенесённая блокирующая тянет зависимую за собой (проход 2) — и это
    проверяет инвариант **P `DEPENDENCY_BLOCKER_DEFERRED`**, а не только код.
 3. `initiative_mode`:
