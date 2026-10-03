@@ -97,3 +97,18 @@ def fake_db(monkeypatch) -> FakeViewsDB:
     for name in ("query_dicts", "query_one", "scalar"):
         monkeypatch.setattr(views.db, name, getattr(fake, name))
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _auth_defaults(monkeypatch):
+    """Тесты сервера по умолчанию идут без авторизации; проверки доступа включают её сами.
+
+    Счётчик неудачных попыток сбрасывается: иначе 429 перетекает между тестами.
+    """
+    from app import auth
+
+    monkeypatch.setenv("PI_PLANNER_AUTH", "off")
+    monkeypatch.delenv("PI_PLANNER_ADMIN_TOKEN", raising=False)
+    auth.LIMITER.reset()
+    yield
+    auth.LIMITER.reset()

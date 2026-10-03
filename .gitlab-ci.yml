@@ -162,6 +162,36 @@ web:
     key: "npm-$CI_COMMIT_REF_SLUG"
     paths: [web/node_modules/.cache]
 
+# --- Браузерная проверка входа и ролей (tests/e2e) ---------------------------
+# Сначала НЕ блокирует: сценарий проверен локально (chromium 1243), но в этом образе
+# на GitLab ещё не запускался. Снять allow_failure после первого зелёного пайплайна.
+e2e-ui:
+  image: mcr.microsoft.com/playwright:v1.63.0-noble
+  stage: test
+  allow_failure: true
+  services:
+    - name: postgres:17-bookworm
+      alias: postgres
+  variables:
+    PI_PLANNER_DSN: "host=postgres port=5432 dbname=pi_planner user=postgres password=postgres"
+    POSTGRES_DB: pi_planner
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+    UV_LINK_MODE: copy
+  before_script:
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv sync --frozen --no-dev
+    - mkdir -p /tmp/e2e && cd /tmp/e2e && npm init -y >/dev/null && npm i playwright-core@1.63.0 --no-audit --no-fund && cd "$CI_PROJECT_DIR"
+  script:
+    - export PATH="$HOME/.local/bin:$PATH" NODE_PATH=/tmp/e2e/node_modules
+    - OUT="$CI_PROJECT_DIR/e2e-out" mkdir -p e2e-out && OUT="$CI_PROJECT_DIR/e2e-out" tests/e2e/run_auth_ui.sh
+  artifacts:
+    when: always
+    paths: [e2e-out]
+    expire_in: 1 week
+
 # --- Стиль: ruff (правила E, F — pyproject.toml) -----------------------------
 lint:
   image: python:3.14-slim

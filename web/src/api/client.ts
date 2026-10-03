@@ -2,6 +2,8 @@
  * Тонкий клиент над `/api/*`. Один маршрут читает все витрины
  * (GET /api/views/{view}), три маршрута пишут (docs/SCHEMA.md §4).
  */
+import { authHeaders, notifyUnauthorized } from './auth'
+
 const BASE = '/api'
 
 export class ApiError extends Error {
@@ -43,10 +45,20 @@ export function postJson<T>(path: string, payload: unknown): Promise<T> {
   })
 }
 
+/** 401 — токена нет или он неверен: приложение покажет экран входа. */
+function failOnUnauthorized(res: Response): void {
+  // `/me` сам является проверкой входа: его 401 обрабатывает AuthProvider, а событие
+  // перезапрашивало бы `me` по кругу и не давало запросу завершиться.
+  if (res.status === 401 && !res.url.endsWith('/api/me')) notifyUnauthorized()
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, init)
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
+    })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',
@@ -54,6 +66,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     })
   }
   if (!res.ok) {
+    failOnUnauthorized(res)
     const body = await parseErrorBody(res)
     const message = messageFrom(body, res.statusText)
     if (res.status === 503) throw new ServiceUnavailableError(res.status, message, body)
@@ -152,11 +165,46 @@ export function fetchCatalog(): Promise<ViewCatalog> {
 }
 
 export interface HealthResponse {
-  dsn: string
-  server_version: string
-  dbname: string
-  tables: number
-  views: number
+  status?: 'ok'
+  dsn?: string
+  server_version?: string
+  dbname?: string
+  tables?: number
+  views?: number
+}
+
+/** `GET /api/me` — кто вошёл и с какой ролью (ADR-027). */
+export interface MeResponse {
+  name: string
+  role: 'viewer' | 'planner' | 'admin'
+  source: 'env' | 'db' | 'anonymous'
+  auth: 'required' | 'off'
+}
+
+export function fetchMe(): Promise<MeResponse> {
+  return request<MeResponse>('/me')
+}
+
+/** Шаблон факта: ссылка `<a download>` не передаёт заголовок авторизации, поэтому — через fetch. */
+export async function downloadTemplate(sprintNo?: number): Promise<void> {
+  const query = sprintNo ? `?sprint=${sprintNo}` : ''
+  const res = await fetch(`${BASE}/actuals/template${query}`, { headers: authHeaders() })
+  if (!res.ok) {
+    failOnUnauthorized(res)
+    const body = await parseErrorBody(res)
+    throw new ApiError(res.status, messageFrom(body, res.statusText), body)
+  }
+  const blob = await res.blob()
+  const disposition = res.headers.get('Content-Disposition') ?? ''
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `actuals_sprint_${sprintNo ?? ''}.csv`
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
@@ -168,7 +216,7 @@ async function postFile<T>(path: string, file: File, extraQuery: Record<string, 
   const q = new URLSearchParams({ filename: file.name, ...extraQuery })
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file })
+    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file, headers: authHeaders() })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',
@@ -177,6 +225,7 @@ async function postFile<T>(path: string, file: File, extraQuery: Record<string, 
   }
   const body = (await res.text().then((t) => (t ? JSON.parse(t) : null))) as T
   if (!res.ok) {
+    failOnUnauthorized(res)
     const message = messageFrom(body, res.statusText)
     if (res.status === 503) throw new ServiceUnavailableError(res.status, message, body)
     throw new ApiError(res.status, message, body)

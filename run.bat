@@ -104,6 +104,15 @@ if not exist "app\server.py" (
   pause & exit /b 1
 )
 
+rem ---------- доступ (ADR-027): без токена API отвечает 401 ----------
+if /i not "%PI_PLANNER_AUTH%"=="off" if not defined PI_PLANNER_ADMIN_TOKEN (
+  if not exist ".run-admin-token" (
+    powershell -NoProfile -Command "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')" > ".run-admin-token"
+  )
+  set /p PI_PLANNER_ADMIN_TOKEN=<".run-admin-token"
+  echo [run] токен администратора ^(файл .run-admin-token^): %PI_PLANNER_ADMIN_TOKEN%
+)
+
 echo [run] стартую сервер на %APP_URL%
 rem Сервер поднимается в этом же окне и открыть вкладку сам не может: если
 rem открыть её сразу, браузер попадёт на ещё не слушающий порт. Поэтому

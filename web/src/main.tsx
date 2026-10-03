@@ -10,6 +10,7 @@ import './theme/tokens.css'
 import { theme } from './theme/mantineTheme'
 import { queryClient } from './api/queryClient'
 import { RunProvider } from './hooks/useRun'
+import { AuthProvider } from './hooks/useAuth'
 import App from './App'
 
 const container = document.getElementById('root')
@@ -20,9 +21,11 @@ createRoot(container).render(
     <MantineProvider theme={theme} defaultColorScheme="light">
       <Notifications position="top-right" />
       <QueryClientProvider client={queryClient}>
-        <RunProvider>
-          <App />
-        </RunProvider>
+        <AuthProvider>
+          <RunProvider>
+            <App />
+          </RunProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </MantineProvider>
   </StrictMode>,

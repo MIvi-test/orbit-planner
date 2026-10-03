@@ -45,11 +45,12 @@ Bus Factor.
 ### 1.1. Запуск через Docker
 
 ```bash
-cp .env.example .env              # задать POSTGRES_PASSWORD (например: openssl rand -hex 32)
+cp .env.example .env              # задать POSTGRES_PASSWORD и PI_PLANNER_ADMIN_TOKEN (openssl rand -hex 32)
 docker compose up -d --build
 ```
 
-Открыть <https://localhost>. Сертификат выпускает Caddy локально — браузер
+Открыть <https://localhost> и войти по токену `PI_PLANNER_ADMIN_TOKEN` из `.env`
+(см. [«Доступ и роли»](#доступ-и-роли)). Сертификат выпускает Caddy локально — браузер
 один раз попросит подтвердить исключение.
 
 Что происходит при первом запуске:
@@ -101,7 +102,10 @@ Prometheus и PostgreSQL наружу не публикуются.
 run.bat           # Windows
 ```
 
-Открыть <http://127.0.0.1:8000>. Скрипт ставит Python-зависимости (`uv` или
+Открыть <http://127.0.0.1:8000>. Токен администратора скрипт создаёт сам при первом
+запуске, печатает его и хранит в `.run-admin-token` (в git не попадает); для
+отладки на доверенной машине вход отключается `PI_PLANNER_AUTH=off ./run.sh`.
+Скрипт ставит Python-зависимости (`uv` или
 `.venv` + `pip`), при необходимости поднимает PostgreSQL в docker/podman
 (контейнер `pi-planner-pg`; своя база — через `PI_PLANNER_DSN`), заливает
 схему и данные, строит базовый план и стартует сервер. Флаги: `--reset` —
@@ -110,6 +114,38 @@ run.bat           # Windows
 
 В этом режиме полный цикл квартала (базовый план и факт спринтов 1–3)
 прогоняется одной командой: `./.venv/bin/python tools/demo_cycle.py`.
+
+### Доступ и роли
+
+Без токена API отвечает `401`: сервис пишет в базу, а загрузка датасета стирает
+весь цикл. Вход — по токену в заголовке `Authorization: Bearer <токен>`; на экране
+входа токен вводится один раз (по умолчанию живёт до закрытия вкладки,
+«запомнить» сохраняет его на устройстве).
+
+| Роль | Может |
+|---|---|
+| `viewer` | смотреть все экраны и скачивать шаблон факта |
+| `planner` | дополнительно загружать факт спринта, подтверждать остаток (ETC) и бизнес-результат |
+| `admin` | дополнительно загружать датасет (начинает новый цикл) |
+
+* **Аварийный администратор** — `PI_PLANNER_ADMIN_TOKEN` (не короче 16 символов);
+  работает и при недоступной базе.
+* **Остальные пользователи** создаёт администратор из командной строки; токен
+  показывается один раз, в базе хранится только его хеш:
+
+```bash
+docker compose exec app python tools/manage_users.py create ivan --role planner
+docker compose exec app python tools/manage_users.py list
+docker compose exec app python tools/manage_users.py rotate ivan    # новый токен
+docker compose exec app python tools/manage_users.py disable ivan   # отозвать доступ
+docker compose exec app python tools/manage_users.py audit --limit 50
+```
+
+* Каждое действие, меняющее данные, пишется в журнал (`audit_log`), загрузки хранят
+  автора (`uploaded_by`, `loaded_by`, `revised_by`); подтверждающим результат
+  становится вошедший пользователь.
+* Подбор токена ограничен: 10 неверных токенов за минуту с одного адреса — `429`.
+* Решение и границы — `docs/DECISIONS.md`, ADR-027.
 
 ### 1.3. Режим разработки фронта
 
@@ -422,15 +458,24 @@ Bus Factor считается **по компетенциям**: для кажд
 
 | Метод и путь | База | Назначение |
 |---|---|---|
-| `GET /api/livez` | не трогает | liveness: 200, пока процесс жив |
-| `GET /api/health` | читает | readiness: 503, если база недоступна |
-| `GET /api/version` | не трогает | версии приложения, ETL и PI |
-| `GET /api/views` | — | список витрин с описаниями |
-| `GET /api/views/{view}` | читает | строки витрины: `?run_id=&limit=&offset=&order=` |
-| `POST /api/dataset?filename=x.xlsx` | пишет | загрузить датасет, построить базовый план |
-| `GET /api/actuals/template?sprint=N` | читает | CSV-шаблон факта спринта |
-| `POST /api/actuals?sprint=N` | пишет | загрузить факт спринта, пересчитать план |
-| `GET /metrics` | читает, кэш 15 с | метрики Prometheus |
+| Метод и путь | Роль | База | Назначение |
+|---|---|---|---|
+| `GET /api/livez` | — | не трогает | liveness: 200, пока процесс жив |
+| `GET /api/health` | — | читает | readiness: 503, если база недоступна; без токена — только `{"status":"ok"}` |
+| `GET /api/version` | — | не трогает | версия приложения; с токеном — ещё версии ETL, PI, Python |
+| `GET /api/me` | любая | не трогает | кто вошёл и с какой ролью |
+| `GET /api/views` | viewer | — | список витрин с описаниями |
+| `GET /api/views/{view}` | viewer | читает | строки витрины: `?run_id=&limit=&offset=&order=` |
+| `GET /api/scenarios/absence?engineer_id=&run_id=` | viewer | читает | сценарий отсутствия инженера |
+| `GET /api/actuals/template?sprint=N` | viewer | читает | CSV-шаблон факта спринта |
+| `POST /api/actuals?sprint=N&confirm_complete=` | planner | пишет | загрузить факт спринта, пересчитать план |
+| `POST /api/actuals/role-review` | planner | пишет | подтвердить остаток (ETC) роли |
+| `POST /api/tasks/goal-confirmation` | planner | пишет | подтвердить бизнес-результат задачи |
+| `POST /api/dataset?filename=x.xlsx` | admin | пишет | загрузить датасет, построить базовый план |
+| `GET /metrics` | внутренний | читает, кэш 15 с | метрики Prometheus (наружу закрыт Caddy) |
+
+Коды доступа: `401` — нет или неверный токен (`WWW-Authenticate: Bearer`), `403` —
+роли не хватает (в теле `required_role`), `429` — слишком много неверных токенов.
 
 **Витрины.** Данные для фронта отдаются одним маршрутом поверх белого списка витрин (`app/views.py`, ADR-019): имя витрины — параметр пути, а не
 отдельный эндпоинт. Ответ — строки как есть плюс конверт:
@@ -611,7 +656,10 @@ default_task.md         исходное ТЗ
 
 | Симптом | Что делать |
 |---|---|
-| `docker compose up` падает: `set POSTGRES_PASSWORD in .env` | не создан `.env`: `cp .env.example .env` и задать пароль |
+| `docker compose up` падает: `set POSTGRES_PASSWORD in .env` или `set PI_PLANNER_ADMIN_TOKEN` | не создан `.env`: `cp .env.example .env` и задать пароль и токен |
+| В интерфейсе экран «Войти», токена нет | токен администратора — `PI_PLANNER_ADMIN_TOKEN` из `.env` (`run.sh` печатает его и хранит в `.run-admin-token`); другим людям — `tools/manage_users.py create` |
+| `app` пишет «PI_PLANNER_ADMIN_TOKEN короче 16 символов» | в `.env` осталась заглушка `CHANGE-ME`: `openssl rand -hex 32` |
+| `429` при входе | слишком много неверных токенов с этого адреса; подождать минуту |
 | порт 80/443 занят или «permission denied» на порту | задать в `.env` `HTTP_PORT=8080`, `HTTPS_PORT=8443` |
 | `app` не стартует | `docker compose ps` и `docker compose logs bootstrap-plan db app` — обычно база ещё не готова или упал базовый план |
 | браузер ругается на сертификат | локальный сертификат Caddy: подтвердить исключение один раз |

@@ -22,8 +22,3 @@ export function reviewActualRole(taskId: string, roleId: number, remainingHours:
     task_id: taskId, role_id: roleId, remaining_hours: remainingHours, reason,
   })
 }
-
-/** GET /api/actuals/template?sprint=N — CSV-шаблон для скачивания браузером. */
-export function templateUrl(sprintNo?: number): string {
-  return sprintNo ? `/api/actuals/template?sprint=${sprintNo}` : '/api/actuals/template'
-}

@@ -32,5 +32,6 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0061_plan_goal_outcomes', 'baseline'),
   ('0062_current_pi_calendar_default', 'baseline'),
   ('0063_provisional_remaining', 'baseline'),
-  ('0064_schema_alignment', 'baseline')
+  ('0064_schema_alignment', 'baseline'),
+  ('0065_auth_audit', 'baseline')
 ON CONFLICT (version) DO NOTHING;

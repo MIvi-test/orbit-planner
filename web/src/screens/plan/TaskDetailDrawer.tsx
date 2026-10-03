@@ -10,6 +10,7 @@ import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanGoalOutcomeRo
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
 import { confirmTaskGoal } from '../../api/goals'
 import { useRun } from '../../hooks/useRun'
+import { useAuth } from '../../hooks/useAuth'
 
 const DECISION_LABEL: Record<string, string> = {
   in_quarter: 'В квартале',
@@ -46,6 +47,7 @@ export function TaskDetailDrawer({
 }) {
   const queryClient = useQueryClient()
   const { isDefault, setRunId } = useRun()
+  const { me, can } = useAuth()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [closureCode, setClosureCode] = useState<string | null>('ACHIEVED')
   const [goalCode, setGoalCode] = useState<string | null>(null)
@@ -59,7 +61,8 @@ export function TaskDetailDrawer({
     try {
       const result = await confirmTaskGoal(task.task_id, closureCode,
         closureCode === 'ACHIEVED' ? goalCode : null,
-        confirmedBy, confirmationNote)
+        // При включённой авторизации сервер подставляет вошедшего пользователя сам.
+        me?.auth === 'required' ? me.name : confirmedBy, confirmationNote)
       await queryClient.invalidateQueries()
       setRunId(result.plan.run_id)
       setConfirmOpen(false)
@@ -132,7 +135,7 @@ export function TaskDetailDrawer({
                 : goalOutcome.proposed_goal_label ?? 'решение не требуется'}</Text>
               <Text size="sm">Подтверждённый результат: {goalOutcome.confirmed_closure_label ?? 'не подтверждён'}
                 {goalOutcome.confirmed_goal_label ? ` · ${goalOutcome.confirmed_goal_label}` : ''}</Text>
-              {isDefault && goalOutcome.status === 'Done' && (
+              {isDefault && can('planner') && goalOutcome.status === 'Done' && (
                 <>
                   <Button size="xs" variant="subtle" onClick={() => setConfirmOpen(!confirmOpen)}>
                     Подтвердить или исправить бизнес результат
@@ -145,8 +148,10 @@ export function TaskDetailDrawer({
                           { value: 'CANCELLED_BY_CUSTOMER', label: 'Отменено заказчиком' }]} />
                       {closureCode === 'ACHIEVED' && <Select label="Достигнутый этап" value={goalCode}
                         onChange={setGoalCode} data={[1, 2, 3, 4, 5, 6].map((n) => ({ value: `R${n}`, label: `R${n}` }))} />}
-                      <TextInput label="Кто подтвердил" value={confirmedBy}
-                        onChange={(event) => setConfirmedBy(event.currentTarget.value)} />
+                      {me?.auth === 'off'
+                        ? <TextInput label="Кто подтвердил" value={confirmedBy}
+                            onChange={(event) => setConfirmedBy(event.currentTarget.value)} />
+                        : <Text size="xs" c="dimmed">Подтверждает: {me?.name}</Text>}
                       <TextInput label="Основание" value={confirmationNote}
                         onChange={(event) => setConfirmationNote(event.currentTarget.value)} />
                       <Button size="xs" loading={confirmBusy} onClick={saveConfirmation}>Сохранить подтверждение</Button>
