@@ -16,22 +16,29 @@ export function isNegative(value: NumericString | null | undefined): boolean {
   return typeof value === 'string' && value.trim().startsWith('-')
 }
 
-/** Часы для показа: без хвостовых нулей после запятой, разделитель — пробел на тысячах. */
+/** Число ли это на самом деле: null, пусто и «не число» — отсутствие значения, а не ноль (DA-48). */
+export function isNumeric(value: NumericString | number | null | undefined): boolean {
+  if (value === null || value === undefined || value === '') return false
+  return Number.isFinite(typeof value === 'number' ? value : Number(value))
+}
+
+/** Часы для показа: без хвостовых нулей после запятой. Нет значения — «—», а не «0 ЧЧ». */
 export function fmtHours(value: NumericString | null | undefined): string {
-  const n = num(value)
-  const rounded = Math.round(n * 100) / 100
+  if (!isNumeric(value)) return '—'
+  const rounded = Math.round(num(value) * 100) / 100
   return `${trimZeros(rounded)} ЧЧ`
 }
 
-/** Story Points: то же форматирование, без единицы (SP пишут рядом с числом отдельно). */
+/** Story Points: то же форматирование, без единицы. Нет значения — «—»: неизвестная ёмкость не равна нулевой. */
 export function fmtSp(value: NumericString | number | null | undefined): string {
+  if (!isNumeric(value)) return '—'
   const n = typeof value === 'number' ? value : num(value)
   return trimZeros(Math.round(n * 100) / 100)
 }
 
-/** Проценты KPI: всегда два знака, это привычная форма показателя. */
+/** Проценты KPI: всегда два знака, это привычная форма показателя. Нет значения — «н/д». */
 export function fmtPercent(value: NumericString | null | undefined): string {
-  return `${num(value).toFixed(2)}%`
+  return isNumeric(value) ? `${num(value).toFixed(2)}%` : 'н/д'
 }
 
 function trimZeros(n: number): string {

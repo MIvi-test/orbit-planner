@@ -243,6 +243,15 @@ SOURCES: tuple[Source, ...] = (
         "`plan_team_capacity`. Для спринта иной длины умножать на `v_sprint_fund_factor` (ADR-017).",
     ),
     _source(
+        "v_sprint_forecast_accuracy",
+        screen="KPI",
+        order="sprint_no",
+        orderable=("sprint_no", "planned_sp", "forecast_done_sp", "actual_done_sp", "forecast_value", "actual_value"),
+        note="Прогноз выполнения плана спринта, сделанный ПЕРЕД спринтом, против факта (DA-32). "
+        "Пересчёт позже прошлое обещание не меняет.",
+        run_column="run_id",
+    ),
+    _source(
         "plan_team_capacity",
         screen="Профили",
         order="team_id",

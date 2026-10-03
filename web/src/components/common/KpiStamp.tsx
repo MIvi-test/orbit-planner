@@ -49,6 +49,8 @@ interface Props {
   /** Верхняя граница шкалы — 100 для процентов «до 100», больше для say_do (может расти за 100%). */
   domainMax?: number
   caption?: string
+  /** Промежуточный факт: рисуется нейтрально, итоговая норма к нему не применяется (DA-30). */
+  neutralActual?: boolean
 }
 
 export function KpiStamp({
@@ -60,6 +62,7 @@ export function KpiStamp({
   targetMax,
   domainMax = 100,
   caption,
+  neutralActual = false,
 }: Props) {
   const shown = actual ?? forecast
   const tone = shown !== null ? toneOf(shown, targetMin, targetMax) : 'ok'
@@ -112,7 +115,7 @@ export function KpiStamp({
             cy={CENTER}
             r={R_INNER}
             fill="none"
-            stroke={toneColor(tone)}
+            stroke={neutralActual ? 'var(--muted)' : toneColor(tone)}
             strokeWidth={9}
             strokeLinecap="round"
             strokeDasharray={actualRing.circumference}

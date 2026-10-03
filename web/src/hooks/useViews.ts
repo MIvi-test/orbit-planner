@@ -46,6 +46,7 @@ import type {
   TaskRow,
   TeamCapacitySpRow,
   PlanTeamCapacityRow,
+  SprintForecastAccuracyRow,
   TeamProfileRow,
   TeamRow,
 } from '../types/views'
@@ -100,6 +101,8 @@ export const useRoleDeficitEffective = () =>
 export const useRoleCoverageOrg = () => useView<RoleCoverageOrgRow>('v_role_coverage_org', { limit: 100 })
 export const useBusFactor = () => useView<BusFactorRow>('v_bus_factor', { limit: 100 })
 export const useTeamCapacitySp = () => useView<TeamCapacitySpRow>('v_team_capacity_sp', { limit: 20 })
+export const useSprintForecastAccuracy = (runId?: number | null) =>
+  useView<SprintForecastAccuracyRow>('v_sprint_forecast_accuracy', { runId: runId ?? undefined, limit: 20 })
 export const usePlanTeamCapacity = (runId?: number | null) =>
   useView<PlanTeamCapacityRow>('plan_team_capacity', { runId: runId ?? undefined, limit: 20 })
 export const useTeams = () => useView<TeamRow>('teams', { limit: 20 })

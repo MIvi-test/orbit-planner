@@ -280,6 +280,18 @@ export interface TeamCapacitySpRow {
 }
 
 /** Ёмкость команды, с которой построен прогон (ADR-030). */
+/** Прогноз перед спринтом против факта (DA-32). */
+export interface SprintForecastAccuracyRow {
+  run_id: number
+  sprint_no: number
+  planned_sp: NumericString | null
+  forecast_run_id: number | null
+  forecast_done_sp: NumericString | null
+  actual_done_sp: NumericString | null
+  forecast_value: NumericString | null
+  actual_value: NumericString | null
+}
+
 export interface PlanTeamCapacityRow {
   run_id: number
   team_id: string
@@ -501,8 +513,26 @@ export interface KpiSnapshotRow {
   kind: KpiKind
 }
 
+/** Охват обязательств: «обещано 2 из 15» (DA-29). */
+export interface PiCoverage {
+  initiatives_total: number
+  committed: number
+  partial: number
+  not_promised: number
+  not_promised_initiatives: string[]
+  beyond_promise_done: string[]
+  text: string
+}
+
 export interface PiPredictabilityDetails {
   formula: string
+  coverage?: PiCoverage
+  planned_completed_by_sprint?: Record<string, number>
+  /** Только у факта: срез за последний загруженный спринт — итоговая это норма или промежуточный ход (DA-30). */
+  final?: boolean
+  expected_completed_by_now?: number
+  completed_n?: number
+  progress_vs_plan?: 'ahead' | 'on_plan' | 'behind'
   committed_initiatives: string[]
   committed_n: number
   partial_initiatives: string[]
@@ -518,6 +548,8 @@ export interface SayDoDetails {
   planned_sp: NumericString
   done_sp: NumericString
   unplanned_sp: NumericString
+  /** Доли SP, которые текущий план тратит в спринте (бюджет работ); у закрытых спринтов — null (DA-32). */
+  work_budget_sp?: NumericString | null
   planned_tasks: string[]
   done_tasks: string[]
   note: string

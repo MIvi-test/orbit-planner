@@ -14,6 +14,7 @@ def _build_kpis(
     baseline_starts: dict[str, int],
     *,
     as_of_sprint: int = 0,
+    sp_budget: dict[int, Decimal] | None = None,
 ) -> list[KpiRow]:
     """KPI по формулам ТЗ (ADR-023). Прогноз и факт — разные строки (`kind`).
 
@@ -74,6 +75,24 @@ def _build_kpis(
     )
     completed = sorted(prodf_id for prodf_id in committed if all(done(t) for t in tasks_of[prodf_id]))
     low, high = KPI_TARGETS["pi_predictability"]
+
+    # Охват обязательств (DA-29): «2 из 2 обещанных» без знания, что всего инициатив 15 и что
+    # план обещал лишь малую часть, выглядит как успех. Рядом всегда показываем знаменатель мира.
+    initiatives_total = len(tasks_of)
+    not_promised = sorted(set(tasks_of) - set(committed) - set(partial))
+    beyond_promise = sorted(
+        prodf_id for prodf_id in tasks_of
+        if prodf_id not in committed and all(done(t) for t in tasks_of[prodf_id])
+    )
+    # Плановое накопление (DA-30): сколько обещанных инициатив база сравнения велит закрыть к
+    # концу каждого спринта (конец инициативы = конец её последней задачи).
+    initiative_end = {
+        prodf_id: max((base[t][2] or 0) for t in tasks_of[prodf_id]) for prodf_id in committed
+    }
+    planned_by_sprint = {
+        sprint_no: sum(1 for end in initiative_end.values() if end <= sprint_no)
+        for sprint_no in range(1, inputs.sprint_count + 1)
+    }
     common = {
         "formula": "инициативы, завершённые в течение 12 недель / инициативы, включённые в "
         "первоначальный план × 100%",
@@ -81,6 +100,17 @@ def _build_kpis(
         "committed_n": len(committed),
         "partial_initiatives": partial,
         "baseline_source": base_source,
+        "coverage": {
+            "initiatives_total": initiatives_total,
+            "committed": len(committed),
+            "partial": len(partial),
+            "not_promised": len(not_promised),
+            "not_promised_initiatives": not_promised,
+            "beyond_promise_done": beyond_promise,
+            "text": f"обещано {len(committed)} из {initiatives_total} инициатив; частично в плане "
+                    f"{len(partial)}; не обещано {len(not_promised)}",
+        },
+        "planned_completed_by_sprint": {str(no): count for no, count in planned_by_sprint.items()},
     }
     kpis: list[KpiRow] = [
         KpiRow(
@@ -112,6 +142,16 @@ def _build_kpis(
                     **common,
                     "completed_initiatives": completed,
                     "reported_through_sprint": inputs.last_reported_sprint,
+                    # Промежуточный срез сравнивается с плановым накоплением, а не с итоговой
+                    # нормой квартала: ход строго по плану в 1-м спринте не провал (DA-30).
+                    "final": inputs.last_reported_sprint >= inputs.sprint_count,
+                    "expected_completed_by_now": planned_by_sprint.get(inputs.last_reported_sprint, 0),
+                    "completed_n": len(completed),
+                    "progress_vs_plan": (
+                        "ahead" if len(completed) > planned_by_sprint.get(inputs.last_reported_sprint, 0)
+                        else "on_plan" if len(completed) == planned_by_sprint.get(inputs.last_reported_sprint, 0)
+                        else "behind"
+                    ),
                     "note": f"факт по загруженным спринтам 1–{inputs.last_reported_sprint}: "
                     f"выполнены все задачи инициативы. До конца квартала значение промежуточное",
                 },
@@ -156,6 +196,13 @@ def _build_kpis(
                     "unplanned_sp": str(got) if need <= 0 else "0",
                     "planned_tasks": sorted(planned_ids.get(sprint_no, [])),
                     "done_tasks": ids,
+                    # Две величины с разными именами (DA-32): «план завершений» — SP задач, которые
+                    # база сравнения закрывает в этом спринте (planned_sp); «бюджет работ» — доли SP,
+                    # которые текущий план тратит в этом спринте (длинная задача распределена по
+                    # спринтам). В закрытых спринтах бюджета текущего плана нет — смотри
+                    # v_sprint_forecast_accuracy: там прогноз, сделанный перед спринтом.
+                    "work_budget_sp": str((sp_budget or {}).get(sprint_no, Decimal("0")))
+                    if sprint_no > inputs.last_reported_sprint else None,
                     "note": note,
                 },
                 kind=kind,

@@ -824,7 +824,10 @@ def _assemble(
         assignments=assignments, lower_bounds=lower_bounds or {}, as_of_sprint=as_of_sprint,
         dependency_mode=(modes or {}).get("dependency_mode", DEPENDENCY_MODE_START_START),
     )
-    kpis = _build_kpis(inputs, schedule, baseline_starts, as_of_sprint=as_of_sprint)
+    sp_budget: dict[int, Decimal] = defaultdict(Decimal)
+    for _task_id, sprint_no, sp in sp_shares:
+        sp_budget[sprint_no] += sp
+    kpis = _build_kpis(inputs, schedule, baseline_starts, as_of_sprint=as_of_sprint, sp_budget=sp_budget)
     states = _build_states(inputs, schedule, as_of_sprint)
     baseline = (
         [
