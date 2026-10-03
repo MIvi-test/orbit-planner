@@ -11,7 +11,7 @@ BEGIN;
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
 DROP TABLE IF EXISTS plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
-    task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
+    actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
     dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
@@ -410,6 +410,18 @@ CREATE TABLE task_actual_spent (
     PRIMARY KEY (upload_id, task_id, role_id)
 );
 COMMENT ON TABLE task_actual_spent IS 'Часы, потраченные ЗА ЭТОТ спринт (не накопительно). Складываются по загрузкам.';
+
+CREATE TABLE actual_report_issues (
+    upload_id INT NOT NULL REFERENCES actual_uploads(upload_id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    role_id SMALLINT REFERENCES roles(role_id),
+    issue_code TEXT NOT NULL CHECK (issue_code IN
+        ('UNPLANNED_ROLE', 'ROLE_OVERRUN', 'TODO_WITH_HOURS', 'DONE_WITH_NEW_HOURS', 'STATUS_REGRESSION')),
+    detail TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK (btrim(reason) <> ''),
+    resolved_revision_id BIGINT REFERENCES task_role_etc(revision_id)
+);
+CREATE INDEX ix_actual_report_issues_upload ON actual_report_issues(upload_id);
 
 CREATE FUNCTION apply_actuals() RETURNS void LANGUAGE plpgsql AS $fn$
 BEGIN

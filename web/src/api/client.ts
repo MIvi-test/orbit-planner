@@ -37,6 +37,12 @@ function messageFrom(body: unknown, fallback: string): string {
   return fallback
 }
 
+export function postJson<T>(path: string, payload: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {

@@ -415,6 +415,13 @@ SOURCES: tuple[Source, ...] = (
         "шаблон — GET /api/actuals/template?sprint=N.",
     ),
     _source(
+        "actual_report_issues",
+        screen="Загрузка факта",
+        order="upload_id,task_id",
+        orderable=("upload_id", "task_id", "role_id", "issue_code", "detail", "reason", "resolved_revision_id"),
+        note="Подтверждённые исключения факта: незапланированная роль, перерасход, несогласованный статус.",
+    ),
+    _source(
         "v_plan_diff",
         screen="Алерты",
         order="task_id",

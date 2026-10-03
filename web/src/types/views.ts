@@ -499,6 +499,16 @@ export interface ActualUploadRow {
   coverage_status: 'draft' | 'incomplete' | 'complete'
 }
 
+export interface ActualReportIssueRow {
+  upload_id: number
+  task_id: string
+  role_id: number | null
+  issue_code: 'UNPLANNED_ROLE' | 'ROLE_OVERRUN' | 'TODO_WITH_HOURS' | 'DONE_WITH_NEW_HOURS' | 'STATUS_REGRESSION'
+  detail: string
+  reason: string
+  resolved_revision_id: number | null
+}
+
 export interface PlanDiffRow {
   run_id: number
   prev_run_id: number | null

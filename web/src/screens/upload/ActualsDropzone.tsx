@@ -6,10 +6,10 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Dropzone } from '@mantine/dropzone'
-import { Alert, Anchor, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { Alert, Anchor, Button, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useActualUploads, useSprints } from '../../hooks/useViews'
-import { templateUrl, uploadActuals } from '../../api/uploads'
+import { useActualReportIssues, useActualUploads, useSprints } from '../../hooks/useViews'
+import { reviewActualRole, templateUrl, uploadActuals } from '../../api/uploads'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
 
@@ -17,12 +17,16 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
   const [busy, setBusy] = useState(false)
   const [selectedSprint, setSelectedSprint] = useState<number | null>(null)
   const [confirmComplete, setConfirmComplete] = useState(false)
+  const [reviewTarget, setReviewTarget] = useState<string | null>(null)
+  const [reviewHours, setReviewHours] = useState('0')
+  const [reviewReason, setReviewReason] = useState('')
   const [problems, setProblems] = useState<string[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const sprints = useSprints()
   const uploads = useActualUploads()
+  const issues = useActualReportIssues()
   const sprintRows = sprints.data?.items ?? []
   const uploadRows = uploads.data?.items ?? []
 
@@ -53,6 +57,8 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
   const reportSprint = selectedSprint !== null && selectedSprint <= nextSprint
     ? selectedSprint : nextSprint
   const replacing = uploadRows.some((u) => u.sprint_no === reportSprint)
+  const currentUpload = uploadRows.find((u) => u.sprint_no === reportSprint)
+  const reportIssues = (issues.data?.items ?? []).filter((issue) => issue.upload_id === currentUpload?.upload_id)
 
   async function handleFile(file: File) {
     setBusy(true)
@@ -92,6 +98,24 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
       } else {
         setErrorMessage(err instanceof Error ? err.message : String(err))
       }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleReview(taskId: string, roleId: number) {
+    setBusy(true)
+    setErrorMessage(null)
+    try {
+      const result = await reviewActualRole(taskId, roleId, Number(reviewHours), reviewReason)
+      await queryClient.invalidateQueries()
+      notifications.show({ color: 'teal', title: `Остаток роли подтверждён · прогон ${result.plan.run_id}`,
+        message: 'План пересчитан с подтверждённым остатком часов.' })
+      setReviewTarget(null)
+      setReviewReason('')
+      onDone(result.plan.run_id)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -155,6 +179,37 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
               <Text size="xs" c="var(--wax-text)">
                 Загрузка заменит факт спринта {reportSprint} и удалит все более поздние отчёты и прогоны.
               </Text>
+            )}
+            {reportIssues.length > 0 && (
+              <Alert color="yellow" variant="light" title="Исключения в сохранённом отчёте">
+                <List size="sm">
+                  {reportIssues.map((issue, index) => (
+                    <List.Item key={index}>
+                      {issue.task_id}: {issue.detail}. Причина: {issue.reason}.
+                      {issue.resolved_revision_id !== null && ' Остаток роли подтверждён.'}
+                      {issue.role_id !== null && issue.resolved_revision_id === null
+                        && (issue.issue_code === 'UNPLANNED_ROLE' || issue.issue_code === 'ROLE_OVERRUN') && (
+                          <Button size="xs" variant="subtle" disabled={busy}
+                            onClick={() => { setReviewTarget(`${issue.task_id}:${issue.role_id}`); setReviewHours('0') }}>
+                            Уточнить остаток роли
+                          </Button>
+                        )}
+                      {reviewTarget === `${issue.task_id}:${issue.role_id}` && issue.role_id !== null && (
+                        <Stack gap="xs" mt={4}>
+                          <TextInput label="Остаток часов по роли" value={reviewHours}
+                            onChange={(event) => setReviewHours(event.currentTarget.value)} />
+                          <TextInput label="Причина пересмотра оценки" value={reviewReason}
+                            onChange={(event) => setReviewReason(event.currentTarget.value)} />
+                          <Button size="xs" loading={busy} onClick={() => handleReview(issue.task_id, issue.role_id!)}>
+                            Подтвердить и пересчитать план
+                          </Button>
+                        </Stack>
+                      )}
+                    </List.Item>
+                  ))}
+                </List>
+                <Text size="xs" mt={6}>Часы факта сообщены по роли; нагрузка конкретного инженера этим файлом не подтверждается.</Text>
+              </Alert>
             )}
           </>
         {errorMessage && (

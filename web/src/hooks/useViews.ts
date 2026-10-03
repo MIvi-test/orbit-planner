@@ -8,6 +8,7 @@ import { useView } from './useView'
 import type { ViewParams } from '../api/client'
 import type {
   ActualUploadRow,
+  ActualReportIssueRow,
   AlertRow,
   BusFactorRow,
   BusFactorSkillRow,
@@ -107,3 +108,4 @@ export const useTeamProfile = () => useView<TeamProfileRow>('v_team_profile', { 
 
 // -------------------------------------------------------------------- факт
 export const useActualUploads = () => useView<ActualUploadRow>('actual_uploads', { limit: 50 })
+export const useActualReportIssues = () => useView<ActualReportIssueRow>('actual_report_issues', { limit: 500 })

@@ -471,6 +471,37 @@ FROM tasks_seed_state s
 """
 
 
+def analyze_actual_rows(
+    rows: list[ParsedRow], previous: dict[str, str],
+    estimates: dict[tuple[str, int], Decimal], prior_spent: dict[tuple[str, int], Decimal],
+) -> tuple[list[tuple[str, int | None, str, str, str]], list[str]]:
+    """Keep exceptional real work, but require a stated reason and expose it."""
+    issues: list[tuple[str, int | None, str, str, str]] = []
+    errors: list[str] = []
+    for row in rows:
+        findings: list[tuple[int | None, str, str]] = []
+        positive = {role: hours for role, hours in row.hours.items() if hours > 0}
+        if row.status == "ToDo" and positive:
+            findings.append((None, "TODO_WITH_HOURS", "статус ToDo при новых затратах"))
+        if previous.get(row.task_id) == "Done" and positive:
+            findings.append((None, "DONE_WITH_NEW_HOURS", "новые часы после завершения"))
+        if previous.get(row.task_id) == "InProgress" and row.status == "ToDo":
+            findings.append((None, "STATUS_REGRESSION", "переход InProgress → ToDo"))
+        for role_id, hours in positive.items():
+            estimate = estimates.get((row.task_id, role_id))
+            if estimate is None:
+                findings.append((role_id, "UNPLANNED_ROLE", f"роль {role_id} не предусмотрена сметой"))
+            elif prior_spent.get((row.task_id, role_id), Decimal(0)) + hours > estimate:
+                findings.append((role_id, "ROLE_OVERRUN", f"роль {role_id}: часы превысили смету {estimate}"))
+        if findings and not row.comment:
+            errors.append(f"{row.task_id}: укажите причину исключения в comment: "
+                          + ", ".join(item[2] for item in findings))
+        else:
+            issues.extend((row.task_id, role, code, detail, row.comment or "")
+                          for role, code, detail in findings)
+    return issues, errors
+
+
 def load_actuals(data: bytes, filename: str | None, sprint_no: int,
                  *, confirm_complete: bool = False) -> dict[str, Any]:
     """Save a report; only confirmed, fully covered reports close the sprint."""
@@ -533,6 +564,28 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
         warnings.extend(date_warnings)
         if errors:
             raise UploadError(f"факт спринта {sprint_no} не принят: {len(errors)} ошибок", errors)
+
+        estimates = {
+            (item["task_id"], item["role_id"]): Decimal(item["hours"])
+            for item in db.query_dicts("SELECT task_id, role_id, hours FROM task_role_estimates")
+        }
+        prior_spent = {
+            (item["task_id"], item["role_id"]): Decimal(item["hours"])
+            for item in db.query_dicts(
+                """SELECT task_id, role_id, SUM(hours) AS hours FROM (
+                       SELECT task_id, role_id, hours FROM task_role_spent_seed
+                       UNION ALL
+                       SELECT a.task_id, a.role_id, a.hours FROM task_actual_spent a
+                       JOIN actual_uploads u ON u.upload_id = a.upload_id
+                       WHERE u.pi_id = %s AND u.sprint_no < %s AND u.coverage_status = 'complete'
+                   ) history GROUP BY task_id, role_id""", (pi_id, sprint_no)
+            )
+        }
+        report_issues, issue_errors = analyze_actual_rows(rows, previous, estimates, prior_spent)
+        if issue_errors:
+            raise UploadError(f"факт спринта {sprint_no} не принят: нужны причины исключений", issue_errors)
+        warnings.extend(f"{task_id}: {detail} (причина: {reason})"
+                        for task_id, _role, _code, detail, reason in report_issues)
 
         expected_tasks = {
             item["task_id"] for item in db.query_dicts(TEMPLATE_TASKS_SQL, (pi_id, sprint_no, pi_id, sprint_no))
@@ -625,6 +678,13 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
                     "INSERT INTO task_actual_spent (upload_id, task_id, role_id, hours) VALUES (%s, %s, %s, %s)",
                     spent,
                 )
+            if report_issues:
+                cur.executemany(
+                    """INSERT INTO actual_report_issues
+                       (upload_id, task_id, role_id, issue_code, detail, reason)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    [(upload_id, *issue) for issue in report_issues],
+                )
             cur.execute("SELECT apply_actuals()")
 
         plan = run_plan(sprint_no + 1) if coverage_status == "complete" else None
@@ -637,3 +697,52 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
         "summary": summary,
         "plan": plan,
     }
+
+
+def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,
+                     reason: str) -> dict[str, Any]:
+    """Confirm a new/overrun role's remaining work and republish the plan."""
+    if not task_id or role_id <= 0 or not remaining_hours.is_finite() or remaining_hours < 0:
+        raise UploadError("некорректная задача, роль или остаток часов")
+    if remaining_hours > Decimal("999999.99") or remaining_hours % Decimal("0.01") != 0:
+        raise UploadError("остаток часов должен иметь точность 0,01")
+    reason = reason.strip()
+    if not reason:
+        raise UploadError("укажите причину пересмотра оценки")
+    with WRITE_LOCK, db.atomic_transaction():
+        issue = db.query_one(
+            """SELECT i.upload_id FROM actual_report_issues i
+               JOIN actual_uploads u ON u.upload_id = i.upload_id
+               WHERE i.task_id = %s AND i.role_id = %s
+                 AND i.issue_code IN ('UNPLANNED_ROLE','ROLE_OVERRUN')
+                 AND i.resolved_revision_id IS NULL AND u.coverage_status = 'complete'
+               ORDER BY i.upload_id DESC LIMIT 1""", (task_id, role_id)
+        )
+        if not issue:
+            raise UploadError("нет подтверждённого отчёта с неразобранной ролью задачи")
+        spent = Decimal(db.scalar(
+            "SELECT COALESCE(hours, 0) FROM task_role_spent WHERE task_id = %s AND role_id = %s",
+            (task_id, role_id),
+        ) or 0)
+        with db.transaction() as cur:
+            cur.execute(
+                """INSERT INTO task_role_estimates (task_id, role_id, hours)
+                   VALUES (%s, %s, %s) ON CONFLICT (task_id, role_id) DO NOTHING""",
+                (task_id, role_id, max(spent + remaining_hours, Decimal("0.01"))),
+            )
+            cur.execute(
+                """INSERT INTO task_role_etc (task_id, role_id, remaining_hours, reason)
+                   VALUES (%s, %s, %s, %s) RETURNING revision_id""",
+                (task_id, role_id, remaining_hours, reason),
+            )
+            revision_id = cur.fetchone()["revision_id"]
+            cur.execute(
+                """UPDATE actual_report_issues SET resolved_revision_id = %s
+                   WHERE upload_id = %s AND task_id = %s AND role_id = %s
+                     AND issue_code IN ('UNPLANNED_ROLE','ROLE_OVERRUN')""",
+                (revision_id, issue["upload_id"], task_id, role_id),
+            )
+        pi = _pi()
+        plan = run_plan(min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]) + 1))
+    return {"task_id": task_id, "role_id": role_id,
+            "remaining_hours": str(remaining_hours), "revision_id": revision_id, "plan": plan}

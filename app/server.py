@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from decimal import Decimal, InvalidOperation
 import signal
 import sys
 import threading
@@ -98,7 +99,7 @@ MIME_OVERRIDES = {
 # `route` становится `/api/views/{view}` (см. app/metrics.py).
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
-    "/api/dataset", "/api/actuals", "/api/actuals/template",
+    "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
     "/api/scenarios/absence", "/metrics",
 )
 
@@ -310,6 +311,15 @@ class Handler(BaseHTTPRequestHandler):
                     body, self._query_param(query, "filename"), int(raw_sprint),
                     confirm_complete=self._query_param(query, "confirm_complete") == "true",
                 )
+            elif path == "/api/actuals/role-review":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = ingest.confirm_role_etc(
+                        str(payload["task_id"]), int(payload["role_id"]),
+                        Decimal(str(payload["remaining_hours"])), str(payload["reason"]),
+                    )
+                except (ValueError, TypeError, KeyError, InvalidOperation, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля пересмотра роли", [str(exc)]) from None
             else:
                 self._send_json(
                     HTTPStatus.NOT_FOUND,
