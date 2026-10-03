@@ -379,6 +379,8 @@ CREATE TABLE actual_uploads (
     source_sha256 TEXT        NOT NULL,
     uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     summary       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    coverage_status TEXT      NOT NULL DEFAULT 'complete'
+        CHECK (coverage_status IN ('draft', 'incomplete', 'complete')),
     UNIQUE (pi_id, sprint_no)
 );
 COMMENT ON TABLE actual_uploads IS
@@ -434,18 +436,18 @@ BEGIN
                                          ELSE end_event.actual_end END
                                ELSE t.actual_end END
       FROM (SELECT DISTINCT ON (ta.task_id) ta.task_id, ta.status
-              FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
+              FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id AND u.coverage_status = 'complete'
              ORDER BY ta.task_id, u.sprint_no DESC, u.upload_id DESC) a
       LEFT JOIN LATERAL (
           SELECT ta.task_id, ta.actual_start, ta.clear_actual_start
-          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
+          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id AND u.coverage_status = 'complete'
           WHERE ta.task_id = a.task_id
             AND (ta.actual_start IS NOT NULL OR ta.clear_actual_start)
           ORDER BY u.sprint_no DESC, u.upload_id DESC LIMIT 1
       ) start_event ON TRUE
       LEFT JOIN LATERAL (
           SELECT ta.task_id, ta.actual_end, ta.clear_actual_end
-          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id
+          FROM task_actuals ta JOIN actual_uploads u ON u.upload_id = ta.upload_id AND u.coverage_status = 'complete'
           WHERE ta.task_id = a.task_id
             AND (ta.actual_end IS NOT NULL OR ta.clear_actual_end)
           ORDER BY u.sprint_no DESC, u.upload_id DESC LIMIT 1
@@ -454,7 +456,8 @@ BEGIN
 
     -- 3. часы копятся по всем загрузкам
     INSERT INTO task_role_spent (task_id, role_id, hours)
-    SELECT task_id, role_id, SUM(hours) FROM task_actual_spent GROUP BY task_id, role_id
+    SELECT a.task_id, a.role_id, SUM(a.hours) FROM task_actual_spent a JOIN actual_uploads u ON u.upload_id = a.upload_id
+    WHERE u.coverage_status = 'complete' GROUP BY a.task_id, a.role_id
     ON CONFLICT (task_id, role_id) DO UPDATE SET hours = task_role_spent.hours + EXCLUDED.hours;
 END
 $fn$;

@@ -410,8 +410,8 @@ SOURCES: tuple[Source, ...] = (
         "actual_uploads",
         screen="Загрузка факта",
         order="-sprint_no",
-        orderable=("upload_id", "sprint_no", "source_file", "uploaded_at"),
-        note="Журнал загрузок факта спринтов. Загрузка делается через POST /api/actuals?sprint=N, "
+        orderable=("upload_id", "sprint_no", "source_file", "uploaded_at", "coverage_status"),
+        note="Журнал отчётов: только coverage_status=complete закрывает спринт. Загрузка делается через POST /api/actuals?sprint=N, "
         "шаблон — GET /api/actuals/template?sprint=N.",
     ),
     _source(

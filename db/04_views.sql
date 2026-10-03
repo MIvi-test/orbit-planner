@@ -46,7 +46,7 @@ SELECT p.pi_id, COALESCE(u.last_reported_sprint, 0) AS last_reported_sprint,
            WHERE f.sprint_no > COALESCE(u.last_reported_sprint, 0)), 0) AS factor
 FROM pi_periods p
 LEFT JOIN (SELECT pi_id, MAX(sprint_no) AS last_reported_sprint
-           FROM actual_uploads GROUP BY pi_id) u ON u.pi_id = p.pi_id
+           FROM actual_uploads WHERE coverage_status = 'complete' GROUP BY pi_id) u ON u.pi_id = p.pi_id
 JOIN v_sprint_fund_factor f ON f.pi_id = p.pi_id
 GROUP BY p.pi_id, u.last_reported_sprint;
 COMMENT ON VIEW v_remaining_pi_fund_factor IS
@@ -748,6 +748,7 @@ WITH report_items AS (
         UNION
         SELECT a.task_id FROM task_actuals a WHERE a.upload_id = u.upload_id
     ) ids
+    WHERE u.coverage_status = 'complete'
 )
 SELECT f.upload_id, f.sprint_no, f.plan_run_id, f.task_id, t.team_id, t.estimation_sp,
        s.start_sprint AS planned_start, s.end_sprint AS planned_end,

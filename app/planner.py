@@ -249,7 +249,7 @@ ORDER BY bus_factor, skill_name
 # ВПЕРВЫЕ отмечены выполненными. Спринт задаёт дата события, не дата загрузки.
 LAST_UPLOAD_SQL = """
 SELECT upload_id, sprint_no FROM actual_uploads
-WHERE pi_id = %s ORDER BY sprint_no DESC LIMIT 1
+WHERE pi_id = %s AND coverage_status = 'complete' ORDER BY sprint_no DESC LIMIT 1
 """
 DONE_IN_SPRINT_SQL = """
 SELECT completed_in.sprint_no, a.task_id
@@ -259,9 +259,11 @@ JOIN tasks_seed_state s ON s.task_id = a.task_id
 JOIN sprints completed_in ON completed_in.pi_id = u.pi_id
                          AND a.actual_end BETWEEN completed_in.start_date AND completed_in.end_date
 WHERE a.status = 'Done' AND s.status <> 'Done' AND u.pi_id = %s
+  AND u.coverage_status = 'complete'
   AND NOT EXISTS (SELECT 1 FROM task_actuals a2
                   JOIN actual_uploads u2 ON u2.upload_id = a2.upload_id
                   WHERE a2.task_id = a.task_id AND a2.status = 'Done'
+                    AND u2.coverage_status = 'complete'
                     AND u2.sprint_no < u.sprint_no)
 ORDER BY completed_in.sprint_no, a.task_id
 """

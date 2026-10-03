@@ -17,6 +17,7 @@ export interface actual_uploads {
   source_sha256: string;
   uploaded_at: string;
   summary: Json;
+  coverage_status: 'draft' | 'incomplete' | 'complete';
 }
 
 /** таблица public.alerts — 9 кол. · red/deadline_miss  — прогноз вылетает за 12-ю неделю, срыв инициативы PRODF; yellow/cascade_shift — сдвиг по цепочке зависимостей, дедлайн пока цел; orange/role_deficit  — потребность по роли на спринт > фонда доступных часов. */

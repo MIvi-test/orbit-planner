@@ -202,7 +202,7 @@ def _pi() -> dict[str, Any]:
 
 def _last_sprint(pi_id: str) -> int:
     return int(
-        db.scalar("SELECT COALESCE(MAX(sprint_no), 0) FROM actual_uploads WHERE pi_id = %s", (pi_id,))
+        db.scalar("SELECT COALESCE(MAX(sprint_no), 0) FROM actual_uploads WHERE pi_id = %s AND coverage_status = 'complete'", (pi_id,))
         or 0
     )
 
@@ -423,8 +423,7 @@ def parse_actuals(data: bytes, name: str) -> tuple[list[ParsedRow], list[str], l
                 errors.append(f"{where}: часы в колонке «{header[index]}» должны быть конечным числом от 0 до 999999,99 с точностью 0,01")
                 bad_hours = True
                 continue
-            if amount > 0:
-                hours[role_id] = amount
+            hours[role_id] = amount  # Explicit zero is different from a blank cell.
         if bad_hours:
             continue
         rows.append(ParsedRow(task_id, status, start, end, _norm(cells.get("comment")) or None,
@@ -472,8 +471,9 @@ FROM tasks_seed_state s
 """
 
 
-def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str, Any]:
-    """Факт спринта N → журнал → пересборка состояния → пересчёт на спринт N + 1."""
+def load_actuals(data: bytes, filename: str | None, sprint_no: int,
+                 *, confirm_complete: bool = False) -> dict[str, Any]:
+    """Save a report; only confirmed, fully covered reports close the sprint."""
     if not data:
         raise UploadError("пустой файл")
     if len(data) > MAX_UPLOAD_BYTES:
@@ -534,6 +534,31 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
         if errors:
             raise UploadError(f"факт спринта {sprint_no} не принят: {len(errors)} ошибок", errors)
 
+        expected_tasks = {
+            item["task_id"] for item in db.query_dicts(TEMPLATE_TASKS_SQL, (pi_id, sprint_no, pi_id, sprint_no))
+        }
+        reported = {row.task_id: row for row in rows}
+        missing_tasks = sorted(expected_tasks - reported.keys())
+        expected_roles = db.query_dicts(
+            "SELECT task_id, role_id FROM v_task_remaining_hh WHERE remaining_hours > 0"
+        )
+        missing_roles = sorted(
+            f"{item['task_id']}/роль {item['role_id']}"
+            for item in expected_roles
+            if item["task_id"] in expected_tasks
+            and item["task_id"] in reported
+            and item["role_id"] not in reported[item["task_id"]].hours
+        )
+        coverage_status = (
+            "incomplete" if missing_tasks or missing_roles else
+            "complete" if confirm_complete else "draft"
+        )
+        if coverage_status == "incomplete":
+            warnings.append(
+                f"отчёт не закрывает спринт: нет {len(missing_tasks)} задач и "
+                f"{len(missing_roles)} ячеек часов по ролям; пустая ячейка не равна 0"
+            )
+
         # Факт планом до загрузки нужен как база сравнения: если базового
         # прогона ещё нет (база залита из CLI), строим его ДО изменения состояния.
         baseline_created = None
@@ -556,6 +581,10 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             "in_progress": sum(1 for row in rows if row.status == "InProgress"),
             "hours": str(sum((sum(row.hours.values(), Decimal("0")) for row in rows), Decimal("0"))),
             "warnings": warnings,
+            "coverage_status": coverage_status,
+            "expected_tasks": len(expected_tasks),
+            "missing_tasks": missing_tasks,
+            "missing_role_cells": missing_roles,
         }
         replaced = db.query_dicts(
             "SELECT sprint_no FROM actual_uploads WHERE pi_id = %s AND sprint_no >= %s ORDER BY 1",
@@ -576,10 +605,10 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
             )
             cur.execute(
                 """INSERT INTO actual_uploads
-                       (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary)
-                   VALUES (%s, %s, %s, %s, %s, %s::jsonb) RETURNING upload_id""",
+                       (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary, coverage_status)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s) RETURNING upload_id""",
                 (pi_id, sprint_no, plan_run_id, name, hashlib.sha256(data).hexdigest(),
-                 json.dumps(summary, ensure_ascii=False)),
+                 json.dumps(summary, ensure_ascii=False), coverage_status),
             )
             upload_id = cur.fetchone()["upload_id"]
             cur.executemany(
@@ -598,7 +627,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int) -> dict[str,
                 )
             cur.execute("SELECT apply_actuals()")
 
-        plan = run_plan(sprint_no + 1)
+        plan = run_plan(sprint_no + 1) if coverage_status == "complete" else None
     return {
         "upload_id": upload_id,
         "sprint_no": sprint_no,

@@ -11,8 +11,10 @@ export function uploadDataset(file: File): Promise<DatasetUploadResult> {
 }
 
 /** POST /api/actuals?sprint=N — факт спринта N. Заменяет факт N и все более поздние. */
-export function uploadActuals(file: File, sprintNo: number): Promise<ActualsUploadResult> {
-  return postFile<ActualsUploadResult>('/actuals', file, { sprint: String(sprintNo) })
+export function uploadActuals(file: File, sprintNo: number, confirmComplete: boolean): Promise<ActualsUploadResult> {
+  return postFile<ActualsUploadResult>('/actuals', file, {
+    sprint: String(sprintNo), confirm_complete: String(confirmComplete),
+  })
 }
 
 /** GET /api/actuals/template?sprint=N — CSV-шаблон для скачивания браузером. */

@@ -496,6 +496,7 @@ export interface ActualUploadRow {
   source_sha256: string
   uploaded_at: string
   summary: ActualUploadSummary
+  coverage_status: 'draft' | 'incomplete' | 'complete'
 }
 
 export interface PlanDiffRow {
@@ -568,8 +569,12 @@ export interface ActualsUploadResult {
     in_progress: number
     hours: NumericString
     warnings: string[]
+    coverage_status: 'draft' | 'incomplete' | 'complete'
+    expected_tasks: number
+    missing_tasks: string[]
+    missing_role_cells: string[]
   }
-  plan: PlanRunSummary
+  plan: PlanRunSummary | null
 }
 
 export interface UploadErrorPayload {

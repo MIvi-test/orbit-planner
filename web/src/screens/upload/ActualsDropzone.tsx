@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Dropzone } from '@mantine/dropzone'
-import { Alert, Anchor, Group, List, Paper, Select, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { Alert, Anchor, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { useActualUploads, useSprints } from '../../hooks/useViews'
 import { templateUrl, uploadActuals } from '../../api/uploads'
@@ -16,6 +16,7 @@ import type { UploadErrorPayload } from '../../types/views'
 export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void }) {
   const [busy, setBusy] = useState(false)
   const [selectedSprint, setSelectedSprint] = useState<number | null>(null)
+  const [confirmComplete, setConfirmComplete] = useState(false)
   const [problems, setProblems] = useState<string[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const queryClient = useQueryClient()
@@ -47,26 +48,31 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
   }
 
   const sprintCount = sprintRows.length
-  const lastUploaded = Math.max(0, ...uploadRows.map((u) => u.sprint_no))
+  const lastUploaded = Math.max(0, ...uploadRows.filter((u) => u.coverage_status === 'complete').map((u) => u.sprint_no))
   const nextSprint = Math.min(lastUploaded + 1, sprintCount)
   const reportSprint = selectedSprint !== null && selectedSprint <= nextSprint
     ? selectedSprint : nextSprint
-  const replacing = reportSprint <= lastUploaded
+  const replacing = uploadRows.some((u) => u.sprint_no === reportSprint)
 
   async function handleFile(file: File) {
     setBusy(true)
     setProblems([])
     setErrorMessage(null)
     try {
-      const result = await uploadActuals(file, reportSprint)
+      const result = await uploadActuals(file, reportSprint, confirmComplete)
       await queryClient.invalidateQueries()
       notifications.show({
-        color: result.plan.status !== 'ok' || result.summary.warnings.length ? 'yellow' : 'teal',
-        title: `Факт спринта ${reportSprint} принят · прогон ${result.plan.run_id}`,
+        color: result.plan?.status !== 'ok' || result.summary.warnings.length ? 'yellow' : 'teal',
+        title: result.plan
+          ? `Факт спринта ${reportSprint} закрыт · прогон ${result.plan.run_id}`
+          : `Отчёт спринта ${reportSprint} сохранён · спринт не закрыт`,
         message: (
           <Stack gap={2}>
-            <Text size="sm">План: {result.plan.status}; {result.plan.in_quarter} задач в квартале,
-              {' '}{result.plan.alerts} алертов, ошибок приёмки {result.plan.violations_error}.</Text>
+            {result.plan && <Text size="sm">План: {result.plan.status}; {result.plan.in_quarter} задач в квартале,
+              {' '}{result.plan.alerts} алертов, ошибок приёмки {result.plan.violations_error}.</Text>}
+            {result.summary.coverage_status === 'incomplete' && <Text size="sm">
+              Нет {result.summary.missing_tasks.length} задач и {result.summary.missing_role_cells.length} ячеек часов по ролям.
+            </Text>}
             {result.replaced_sprints.length > 0 && (
               <Text size="sm">Заменён факт спринтов: {result.replaced_sprints.join(', ')}.</Text>
             )}
@@ -77,7 +83,7 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
         ),
         autoClose: 12000,
       })
-      onDone(result.plan.run_id)
+      if (result.plan) onDone(result.plan.run_id)
     } catch (err) {
       if (err instanceof ApiError && err.body) {
         const body = err.body as Partial<UploadErrorPayload>
@@ -125,6 +131,12 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
               Новая дата исправляет запись. Для повторного Done оставьте конец пустым,
               чтобы сохранить дату первого завершения.
             </Text>
+            <Checkbox
+              checked={confirmComplete}
+              onChange={(event) => setConfirmComplete(event.currentTarget.checked)}
+              label="Подтверждаю полноту отчёта и закрытие спринта"
+              description="Для каждой активной задачи укажите статус, а для каждой требуемой роли — часы или явный 0. Без подтверждения файл сохраняется как черновик."
+            />
             <Dropzone
               onDrop={(files) => files[0] && handleFile(files[0])}
               accept={['text/csv', '.csv', '.xlsx']}

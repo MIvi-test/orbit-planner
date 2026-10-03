@@ -307,7 +307,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ingest.UploadError("укажите номер спринта: POST /api/actuals?sprint=N")
                 body = self._read_body()
                 result = ingest.load_actuals(
-                    body, self._query_param(query, "filename"), int(raw_sprint)
+                    body, self._query_param(query, "filename"), int(raw_sprint),
+                    confirm_complete=self._query_param(query, "confirm_complete") == "true",
                 )
             else:
                 self._send_json(
