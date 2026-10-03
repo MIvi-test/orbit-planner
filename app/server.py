@@ -60,7 +60,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import db, ingest, views
+from app import absence, db, ingest, views
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -98,7 +98,8 @@ MIME_OVERRIDES = {
 # `route` становится `/api/views/{view}` (см. app/metrics.py).
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
-    "/api/dataset", "/api/actuals", "/api/actuals/template", "/metrics",
+    "/api/dataset", "/api/actuals", "/api/actuals/template",
+    "/api/scenarios/absence", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -396,6 +397,30 @@ class Handler(BaseHTTPRequestHandler):
             # Справочник витрин: фронт получает контракт (имена, колонки сортировки,
             # экран) не из переписки, а из живого сервера.
             self._send_json(HTTPStatus.OK, views.catalog())
+            return
+
+        if path == "/api/scenarios/absence":
+            query = parse_qs(urlparse(self.path).query)
+            engineer_id = self._query_param(query, "engineer_id")
+            raw_run_id = self._query_param(query, "run_id")
+            if not engineer_id or not raw_run_id or not raw_run_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request",
+                    "message": "укажите engineer_id и числовой run_id",
+                })
+                return
+            try:
+                result = absence.evaluate(engineer_id, int(raw_run_id))
+            except absence.ScenarioUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except ValueError as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001 — тот же контракт 503, что у витрин
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
             return
 
         if path.startswith("/api/views/"):

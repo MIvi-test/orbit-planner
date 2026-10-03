@@ -368,8 +368,8 @@ SOURCES: tuple[Source, ...] = (
         order="engineer_id",
         orderable=("engineer_id", "role_name", "grade", "role_bus_factor", "planned_hours",
                    "hours_without_backup", "risk"),
-        note="Профиль инженера и ответ на вопрос ТЗ «где отсутствие одного сотрудника создаёт "
-        "риск»: `tasks_without_backup` — задачи прогона, которые встанут, если он выпадет.",
+        note="Прямая замена проверяется по подтверждённому стеку и свободным часам спринта; "
+        "непроверенный стек показан отдельно. Пересчёт последствий — /api/scenarios/absence.",
         run_column="run_id",
     ),
     _source(

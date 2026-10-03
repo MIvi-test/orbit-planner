@@ -99,6 +99,30 @@ export function fetchView<T>(name: string, params: ViewParams = {}): Promise<Vie
   return request<ViewEnvelope<T>>(`/views/${name}${buildQuery(params)}`)
 }
 
+export interface AbsenceScenario {
+  run_id: number
+  engineer_id: string
+  assumptions: string
+  affected_tasks: Array<{
+    task_id: string
+    prodf_id: string
+    previous_end_sprint: number
+    scenario_end_sprint: number | null
+    delay_sprints: number | null
+    decision: string
+    reason: string | null
+  }>
+  affected_chain: Array<{ blocking: string; blocked: string }>
+  lost_initiatives: string[]
+  extra_deferred_hh: string
+  scenario_reasons: Record<string, number>
+}
+
+export function fetchAbsenceScenario(engineerId: string, runId: number): Promise<AbsenceScenario> {
+  const query = new URLSearchParams({ engineer_id: engineerId, run_id: String(runId) })
+  return request<AbsenceScenario>(`/scenarios/absence?${query}`)
+}
+
 export interface ViewSource {
   name: string
   kind: 'view' | 'table'

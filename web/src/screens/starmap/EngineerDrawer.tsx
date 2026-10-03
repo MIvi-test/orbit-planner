@@ -4,7 +4,10 @@
  * спринтам. `hours_own` уже умножен на множитель спринта — не пересчитываем.
  */
 import { Drawer, Stack, Text } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
 import type { EngineerAbsenceRiskRow, OrbitMapRow, SatelliteCapacityRow } from '../../types/views'
+import { fetchAbsenceScenario } from '../../api/client'
+import { useRun } from '../../hooks/useRun'
 import { fmtHours, num } from '../../api/wire'
 import { LEVEL_COLOR, LEVEL_WORD, shortTeam, starLevel } from './risk'
 import { muted } from './darkStyles'
@@ -21,6 +24,12 @@ export function EngineerDrawer({
   onClose: () => void
 }) {
   const level = orbit ? starLevel(orbit, absence) : 'ok'
+  const { runId } = useRun()
+  const scenarioQ = useQuery({
+    queryKey: ['absence-scenario', runId, orbit?.engineer_id ?? null],
+    queryFn: () => fetchAbsenceScenario(orbit!.engineer_id, runId!),
+    enabled: orbit !== null && runId !== null,
+  })
   const bySprint = new Map<number, SatelliteCapacityRow[]>()
   capacity.forEach((c) => bySprint.set(c.sprint_no, [...(bySprint.get(c.sprint_no) ?? []), c]))
   const sprints = [...bySprint.keys()].sort((a, b) => a - b)
@@ -58,22 +67,50 @@ export function EngineerDrawer({
             </Text>
           </div>
 
-          <Block title="Что встанет, если он выпадет">
-            {absence && absence.tasks_without_backup.length > 0 ? (
-              <Text size="sm">
-                <span className="mono">{absence.tasks_without_backup.join(', ')}</span> —{' '}
-                {num(absence.hours_without_backup) >= 1
-                  ? `${fmtHours(absence.hours_without_backup)} в текущем плане некому передать.`
-                  : 'работа почти закрыта, но довести её до конца, кроме него, некому.'}
-              </Text>
-            ) : (
+          <Block title="Сценарий отсутствия до конца PI">
+            {scenarioQ.isPending && <Text size="sm" style={muted}>Пересчитываем план без инженера…</Text>}
+            {scenarioQ.isError && (
               <Text size="sm" style={muted}>
-                {absence && absence.planned_tasks.length > 0
-                  ? `Задачи плана (${absence.planned_tasks.join(', ')}) есть кому подхватить.`
-                  : 'В текущем плане на нём задач нет.'}
+                Сценарий недоступен: {scenarioQ.error instanceof Error ? scenarioQ.error.message : 'ошибка расчёта'}.
               </Text>
             )}
+            {scenarioQ.data && (
+              <Stack gap={6}>
+                <Text size="sm" style={muted}>{scenarioQ.data.assumptions}</Text>
+                {scenarioQ.data.affected_tasks.length === 0 ? (
+                  <Text size="sm">В этом пересчёте сроки и решения задач не ухудшились.</Text>
+                ) : (
+                  <>
+                    <Text size="sm">
+                      Затронуто задач: <b>{scenarioQ.data.affected_tasks.length}</b>; дополнительно
+                      перенесено <b>{fmtHours(scenarioQ.data.extra_deferred_hh)}</b>.
+                    </Text>
+                    {scenarioQ.data.affected_tasks.map((task) => (
+                      <Text size="sm" key={task.task_id}>
+                        <span className="mono">{task.task_id}</span>: {task.scenario_end_sprint === null
+                          ? 'вне квартала'
+                          : `сдвиг окончания на ${task.delay_sprints} спринт(а)`}.
+                      </Text>
+                    ))}
+                    {scenarioQ.data.affected_chain.length > 0 && (
+                      <Text size="sm">Затронутая цепочка: {scenarioQ.data.affected_chain
+                        .map((edge) => `${edge.blocking} → ${edge.blocked}`).join(', ')}.</Text>
+                    )}
+                    {scenarioQ.data.lost_initiatives.length > 0 && (
+                      <Text size="sm">Теряют завершение в PI: {scenarioQ.data.lost_initiatives.join(', ')}.</Text>
+                    )}
+                  </>
+                )}
+              </Stack>
+            )}
           </Block>
+
+          {absence && absence.tasks_backup_unverified.length > 0 && (
+            <Text size="sm" style={muted}>
+              Стек ещё не подтверждён для задач: {absence.tasks_backup_unverified.join(', ')}.
+              Доступность замены по ним оценивает сценарий выше.
+            </Text>
+          )}
 
           {absence && absence.unique_critical_skills.length > 0 && (
             <Block title="Компетенции, которые не подхватит никто">

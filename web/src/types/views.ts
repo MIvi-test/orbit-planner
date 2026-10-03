@@ -156,6 +156,7 @@ export interface EngineerAbsenceRiskRow {
   planned_hours: NumericString
   planned_tasks: string[]
   tasks_without_backup: string[]
+  tasks_backup_unverified: string[]
   hours_without_backup: NumericString
   risk: string
 }
