@@ -208,6 +208,7 @@ def test_known_api_routes_are_frozen() -> None:
             "/api/dq-issues/review",
             "/api/plan-quality",
             "/api/tasks/trace",
+            "/api/pi-contexts",
             "/metrics",
     )
 

@@ -54,7 +54,7 @@ LAST_OK_RUN_SQL = "SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status IN (
 COLUMNS_SQL = """
 SELECT column_name
 FROM information_schema.columns
-WHERE table_schema = 'public' AND table_name = %s
+WHERE table_schema = current_schema() AND table_name = %s
 ORDER BY ordinal_position
 """
 

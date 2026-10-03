@@ -7,6 +7,15 @@
 -- =====================================================================
 BEGIN;
 
+CREATE TABLE IF NOT EXISTS public.pi_contexts (
+    pi_id TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    schema_name TEXT NOT NULL UNIQUE,
+    dataset_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (pi_id, scenario_id)
+);
+
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
 DROP TABLE IF EXISTS plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,

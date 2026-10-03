@@ -3,6 +3,50 @@
  * (GET /api/views/{view}), три маршрута пишут (docs/SCHEMA.md §4).
  */
 const BASE = '/api'
+const CONTEXT_KEY = 'pi-planner-context'
+
+export interface PiContext {
+  pi_id: string
+  scenario_id: string
+  schema_name: string
+  dataset_version: string
+  created_at: string | null
+}
+
+export function selectedPiContext(): Pick<PiContext, 'pi_id' | 'scenario_id'> | null {
+  try {
+    const raw = localStorage.getItem(CONTEXT_KEY)
+    if (!raw) return null
+    const value = JSON.parse(raw)
+    return typeof value.pi_id === 'string' && typeof value.scenario_id === 'string' ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function selectPiContext(context: Pick<PiContext, 'pi_id' | 'scenario_id'> | null): void {
+  if (context) localStorage.setItem(CONTEXT_KEY, JSON.stringify(context))
+  else localStorage.removeItem(CONTEXT_KEY)
+  window.location.reload()
+}
+
+export function contextHeaders(): Headers {
+  const headers = new Headers()
+  const selected = selectedPiContext()
+  if (selected) {
+    headers.set('X-PI-ID', selected.pi_id)
+    headers.set('X-Scenario-ID', selected.scenario_id)
+  }
+  return headers
+}
+
+export function fetchPiContexts(): Promise<{ contexts: PiContext[] }> {
+  return request('/pi-contexts')
+}
+
+export function createPiContext(file: File, piId: string, scenarioId: string, startDate: string): Promise<PiContext & { plan: { run_id: number } }> {
+  return postFile('/pi-contexts', file, { pi_id: piId, scenario_id: scenarioId, start_date: startDate })
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -46,7 +90,9 @@ export function postJson<T>(path: string, payload: unknown): Promise<T> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, init)
+    const headers = contextHeaders()
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value))
+    res = await fetch(`${BASE}${path}`, { ...init, headers })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',
@@ -254,7 +300,7 @@ async function postFile<T>(path: string, file: File, extraQuery: Record<string, 
   const q = new URLSearchParams({ filename: file.name, ...extraQuery })
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file })
+    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file, headers: contextHeaders() })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',

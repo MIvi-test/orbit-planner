@@ -48,39 +48,61 @@ def main() -> int:
         with conn.cursor() as cur:
             cur.execute("SELECT pg_advisory_lock(%s)", (LOCK_KEY,))
             try:
-                # Bootstrap permits adoption of the current Docker-init database.
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS schema_migrations (
-                        version TEXT PRIMARY KEY,
-                        checksum TEXT NOT NULL,
-                        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-                for version, path in discover():
-                    digest = checksum(path)
-                    cur.execute(
-                        "SELECT checksum FROM schema_migrations WHERE version = %s", (version,)
-                    )
-                    applied = cur.fetchone()
-                    if applied:
-                        if applied[0] != digest:
-                            raise RuntimeError(
-                                f"migration {version} was changed after application; "
-                                "create a new migration instead"
-                            )
-                        print(f"[migrate] already applied: {version}")
-                        continue
+                migrations = discover()
+                cur.execute("SELECT to_regclass('public.schema_migrations') IS NOT NULL")
+                has_history = cur.fetchone()[0]
+                cur.execute("SELECT to_regclass('public.pi_contexts') IS NOT NULL")
+                fresh_snapshot = not has_history and cur.fetchone()[0]
 
-                    sql = path.read_text(encoding="utf-8")
-                    with conn.transaction():
-                        cur.execute(sql)
+                def apply_schema(schema: str) -> None:
+                    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
+                        raise RuntimeError(f"invalid PI schema: {schema}")
+                    cur.execute(f"SET search_path TO {schema}")
+                    cur.execute(
+                        """CREATE TABLE IF NOT EXISTS schema_migrations (
+                            version TEXT PRIMARY KEY,
+                            checksum TEXT NOT NULL,
+                            applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                        )"""
+                    )
+                    if schema == "public" and fresh_snapshot:
+                        # Docker init uses the current schema snapshot. Historical
+                        # deltas belong to older databases and may no longer match it.
+                        for version, path in migrations:
+                            if version >= "0065_pi_contexts":
+                                break
+                            cur.execute(
+                                "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
+                                (version, checksum(path)),
+                            )
+                    for version, path in migrations:
+                        digest = checksum(path)
                         cur.execute(
-                            "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
-                            (version, digest),
+                            "SELECT checksum FROM schema_migrations WHERE version = %s", (version,)
                         )
-                    print(f"[migrate] applied: {version}")
+                        applied = cur.fetchone()
+                        if applied:
+                            if applied[0] != digest:
+                                raise RuntimeError(
+                                    f"migration {version} in {schema} changed after application; "
+                                    "create a new migration instead"
+                                )
+                            continue
+                        with conn.transaction():
+                            cur.execute(path.read_text(encoding="utf-8"))
+                            cur.execute(
+                                "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
+                                (version, digest),
+                            )
+                        print(f"[migrate] {schema}: applied {version}")
+
+                apply_schema("public")
+                cur.execute(
+                    "SELECT schema_name FROM public.pi_contexts "
+                    "WHERE schema_name <> 'public' ORDER BY schema_name"
+                )
+                for (schema,) in cur.fetchall():
+                    apply_schema(schema)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
     return 0

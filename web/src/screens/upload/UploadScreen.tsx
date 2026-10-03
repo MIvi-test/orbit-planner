@@ -3,6 +3,7 @@ import { DatasetDropzone } from './DatasetDropzone'
 import { ActualsDropzone } from './ActualsDropzone'
 import { UploadHistory } from './UploadHistory'
 import { useRun } from '../../hooks/useRun'
+import { CreatePiContext } from './CreatePiContext'
 
 export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
   const { setRunId } = useRun()
@@ -20,6 +21,8 @@ export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
           остаток плана.
         </Text>
       </div>
+
+      <CreatePiContext />
 
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
         <DatasetDropzone onDone={openResult} />

@@ -2,6 +2,7 @@ import { AppShell, Group, ScrollArea, Tabs, Text } from '@mantine/core'
 import type { ReactNode } from 'react'
 import { HealthBadge } from './HealthBadge'
 import { PiBadge } from './PiBadge'
+import { PiContextSelect } from './PiContextSelect'
 import { RunSelect } from './RunSelect'
 import type { ScreenId } from '../../hooks/useHashRoute'
 
@@ -37,6 +38,7 @@ export function Shell({
             </Text>
           </Group>
           <Group gap="md" wrap="nowrap">
+            <PiContextSelect />
             <PiBadge />
             <RunSelect />
             <HealthBadge />

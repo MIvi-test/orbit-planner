@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, data_quality, db, ingest, plan_quality, sensitivity, trace, views, workforce
+from app import absence, contexts, data_quality, db, ingest, plan_quality, sensitivity, trace, views, workforce
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -102,7 +102,8 @@ KNOWN_API = (
     "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
     "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/scenarios/workforce",
     "/api/tasks/goal-confirmation",
-    "/api/dq-issues/review", "/api/plan-quality", "/api/tasks/trace", "/metrics",
+    "/api/dq-issues/review", "/api/plan-quality", "/api/tasks/trace",
+    "/api/pi-contexts", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -215,7 +216,11 @@ class Handler(BaseHTTPRequestHandler):
         METRICS.enter()
         try:
             if path.startswith("/api/") or path == "/metrics":
-                self._api(path)
+                try:
+                    with db.use_pi_context(self.headers.get("X-PI-ID"), self.headers.get("X-Scenario-ID")):
+                        self._api(path)
+                except db.UnknownPIContext as exc:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "pi_not_found", "message": str(exc)})
             else:
                 self._static(path)
         except Exception as exc:
@@ -261,7 +266,11 @@ class Handler(BaseHTTPRequestHandler):
         error_class: str | None = None
         METRICS.enter()
         try:
-            self._upload(path)
+            try:
+                with db.use_pi_context(self.headers.get("X-PI-ID"), self.headers.get("X-Scenario-ID")):
+                    self._upload(path)
+            except db.UnknownPIContext as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "pi_not_found", "message": str(exc)})
         except Exception as exc:
             error_class = type(exc).__name__
             raise
@@ -341,6 +350,14 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля решения по находке", [str(exc)]) from None
+            elif path == "/api/pi-contexts":
+                result = contexts.create(
+                    self._read_body(),
+                    self._query_param(query, "filename") or "dataset.xlsx",
+                    self._query_param(query, "pi_id") or "",
+                    self._query_param(query, "scenario_id") or "main",
+                    self._query_param(query, "start_date") or "",
+                )
             else:
                 self._send_json(
                     HTTPStatus.NOT_FOUND,
@@ -429,6 +446,13 @@ class Handler(BaseHTTPRequestHandler):
             # Справочник витрин: фронт получает контракт (имена, колонки сортировки,
             # экран) не из переписки, а из живого сервера.
             self._send_json(HTTPStatus.OK, views.catalog())
+            return
+
+        if path == "/api/pi-contexts":
+            try:
+                self._send_json(HTTPStatus.OK, contexts.list_contexts())
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
             return
 
         if path == "/api/scenarios/absence":

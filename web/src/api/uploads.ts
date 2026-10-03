@@ -2,7 +2,7 @@
  * Три маршрута записи (docs/SCHEMA.md §4). Тело запроса — сам файл,
  * без multipart: `fetch(url, {method:'POST', body: file})`.
  */
-import { postFile, postJson } from './client'
+import { contextHeaders, postFile, postJson } from './client'
 import type { ActualsUploadResult, DatasetUploadResult, PlanRunSummary } from '../types/views'
 
 /** POST /api/dataset — xlsx датасета. Стирает прежние прогоны и факт. */
@@ -26,4 +26,17 @@ export function reviewActualRole(taskId: string, roleId: number, remainingHours:
 /** GET /api/actuals/template?sprint=N — CSV-шаблон для скачивания браузером. */
 export function templateUrl(sprintNo?: number): string {
   return sprintNo ? `/api/actuals/template?sprint=${sprintNo}` : '/api/actuals/template'
+}
+
+export async function downloadActualsTemplate(sprintNo: number): Promise<void> {
+  const response = await fetch(templateUrl(sprintNo), { headers: contextHeaders() })
+  if (!response.ok) throw new Error(`Шаблон недоступен: ${response.status}`)
+  const url = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `actuals_sprint_${sprintNo}.csv`
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }

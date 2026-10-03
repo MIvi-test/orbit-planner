@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import __version__ as APP_VERSION
-from app.db import connection
+from app.db import connection, use_pi_context
 from app.planner import FORMULA_VERSION
 from etl.config import ETL_VERSION, SOURCE_XLSX
 
@@ -43,10 +43,11 @@ def _json_default(value: object) -> str:
     raise TypeError(f"cannot encode {type(value).__name__}")
 
 
-def build_report(source: Path) -> dict[str, object]:
+def build_report(source: Path, pi_id: str | None = None,
+                 scenario_id: str = "main") -> dict[str, object]:
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     revision, dirty = _revision()
-    with connection(read_only=True) as conn, conn.cursor() as cur:
+    with use_pi_context(pi_id, scenario_id), connection(read_only=True) as conn, conn.cursor() as cur:
         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
 
         def one(sql: str) -> dict:
@@ -92,6 +93,7 @@ def build_report(source: Path) -> dict[str, object]:
             "etl_version": ETL_VERSION,
             "formula_version": FORMULA_VERSION,
             "source": {"file": source.name, "sha256": digest},
+            "scenario_id": scenario_id,
             "config_sha256": config_digest,
             "loaded_batch": batch,
             "pi": pi,
@@ -104,8 +106,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=ROOT / SOURCE_XLSX)
     parser.add_argument("--output", type=Path, help="write JSON to this file")
+    parser.add_argument("--pi-id", help="PI from the context registry (default: initial PI)")
+    parser.add_argument("--scenario-id", default="main", help="scenario within --pi-id")
     args = parser.parse_args()
-    report = build_report(args.dataset.resolve())
+    report = build_report(args.dataset.resolve(), args.pi_id, args.scenario_id)
     encoded = json.dumps(report, ensure_ascii=False, indent=2, default=_json_default) + "\n"
     if args.output:
         args.output.write_text(encoded, encoding="utf-8")

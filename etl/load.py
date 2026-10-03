@@ -661,7 +661,7 @@ def parse(path: Path):
 # ===================================================================== #
 #  календарь и граф                                                     #
 # ===================================================================== #
-def build_sprints():
+def build_sprints(pi_id: str = C.PI_ID, pi_start: date = C.PI_START):
     """Сетка спринтов внутри точных границ PI (ADR-025).
 
     Спринты идут по 14 дней от `PI_START`; длина определяет фонд часов.
@@ -671,25 +671,27 @@ def build_sprints():
     Ошибка в `PI_START`/`PI_END`/`SPRINT_COUNT` не должна доехать до
     витрин, иначе фонд и календарь разъедутся молча.
     """
+    pi_end = (C.PI_END if pi_id == C.PI_ID and pi_start == C.PI_START
+              else pi_start + timedelta(days=C.SPRINT_COUNT * C.SPRINT_LENGTH_DAYS - 1))
     rows = []
     for n in range(1, C.SPRINT_COUNT + 1):
-        s = C.PI_START + timedelta(days=(n - 1) * C.SPRINT_LENGTH_DAYS)
-        if s > C.PI_END:
+        s = pi_start + timedelta(days=(n - 1) * C.SPRINT_LENGTH_DAYS)
+        if s > pi_end:
             raise ValueError(
-                f"календарь PI: спринт {n} начинается {s}, а квартал кончается "
-                f"{C.PI_END} — SPRINT_COUNT={C.SPRINT_COUNT} не влезает в границы"
+                f"календарь PI: спринт {n} начинается {s}, а PI кончается "
+                f"{pi_end} — SPRINT_COUNT={C.SPRINT_COUNT} не влезает в границы"
             )
-        e = min(s + timedelta(days=C.SPRINT_LENGTH_DAYS - 1), C.PI_END)
-        rows.append((C.PI_ID, n, s, e))
+        e = min(s + timedelta(days=C.SPRINT_LENGTH_DAYS - 1), pi_end)
+        rows.append((pi_id, n, s, e))
 
     covered = sum((e - s).days + 1 for _pi, _n, s, e in rows)
-    expected = (C.PI_END - C.PI_START).days + 1
+    expected = (pi_end - pi_start).days + 1
     if covered != expected:
         raise ValueError(
             f"календарь PI: спринты покрывают {covered} дней из {expected} "
-            f"({C.PI_START}..{C.PI_END}) — есть дыра или нахлёст"
+            f"({pi_start}..{pi_end}) — есть дыра или нахлёст"
         )
-    return (C.PI_ID, C.PI_START, C.PI_END, C.SPRINT_COUNT, C.SPRINT_LENGTH_DAYS,
+    return (pi_id, pi_start, pi_end, C.SPRINT_COUNT, C.SPRINT_LENGTH_DAYS,
             C.HOURS_PER_SPRINT_FTE), rows
 
 
@@ -782,8 +784,9 @@ def build_sequence(tasks, deps, dep_source_rows=None):
 # ===================================================================== #
 #  генерация seed.sql                                                   #
 # ===================================================================== #
-def emit(D, src_path: Path) -> str:
-    pi, sprints = build_sprints()
+def emit(D, src_path: Path, *, pi_id: str = C.PI_ID,
+         pi_start: date = C.PI_START) -> str:
+    pi, sprints = build_sprints(pi_id, pi_start)
     seq = build_sequence(D["tasks"], D["deps"], D.get("dep_source_rows"))
     sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
 
@@ -802,7 +805,7 @@ def emit(D, src_path: Path) -> str:
     w("-- СГЕНЕРИРОВАНО etl/load.py — РУКАМИ НЕ ПРАВИТЬ.")
     w(f"-- Источник: {src_path.name}")
     w(f"-- sha256:   {sha}")
-    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={C.PI_START}   оценка=matrix_column_sum")
+    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={pi_start}   оценка=matrix_column_sum")
     w("BEGIN;")
     w("TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,")
     w("         task_role_spent_seed, tasks_seed_state,")
@@ -826,7 +829,7 @@ def emit(D, src_path: Path) -> str:
           ["batch_id", "source_file", "source_sha256", "config_sha256", "etl_version", "pi_start", "row_counts"],
           [(1, src_path.name, sha,
             hashlib.sha256((Path(__file__).parent / "config.py").read_bytes()).hexdigest(),
-            C.ETL_VERSION, C.PI_START, json.dumps(counts, ensure_ascii=False))])
+            C.ETL_VERSION, pi_start, json.dumps(counts, ensure_ascii=False))])
     block("происхождение значений", "source_provenance",
           ["batch_id", "entity", "entity_id", "field_name", "source_sheet", "source_cell",
            "raw_value", "normalized_value", "rule_version"], D["provenance"])
@@ -905,7 +908,8 @@ def emit(D, src_path: Path) -> str:
     return "\n".join(o) + "\n", counts
 
 
-def build_seed_sql(src_path: Path) -> tuple[str, dict, dict]:
+def build_seed_sql(src_path: Path, *, pi_id: str = C.PI_ID,
+                   pi_start: date = C.PI_START) -> tuple[str, dict, dict]:
     """ETL целиком в памяти: xlsx -> текст seed.sql. Для сервера (загрузка датасета).
 
     Журнал качества — глобальный объект модуля; в долгоживущем процессе его
@@ -916,7 +920,10 @@ def build_seed_sql(src_path: Path) -> tuple[str, dict, dict]:
     dq.rows = []
     D = parse(src_path)
     require_valid_quality()
-    text, counts = emit(D, src_path)
+    if pi_id == C.PI_ID and pi_start == C.PI_START:
+        text, counts = emit(D, src_path)
+    else:
+        text, counts = emit(D, src_path, pi_id=pi_id, pi_start=pi_start)
     return text, counts, {
         "error": dq.count("error"), "warning": dq.count("warning"), "info": dq.count("info"),
     }
