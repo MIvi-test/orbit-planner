@@ -94,9 +94,20 @@ SELECT engineer_id, skill_id FROM engineer_skills ORDER BY engineer_id, skill_id
 
 
 TEAM_CAPACITY_SQL = """
-SELECT team_id, available_sp_per_sprint
+SELECT team_id, available_sp_per_sprint, history_points, avg_velocity, focus_factor
 FROM v_team_capacity_sp
 ORDER BY team_id
+"""
+
+# Скорость по истории — суммой и числом точек, чтобы добавлять наблюдения текущего PI (DA-27).
+TEAM_VELOCITY_HISTORY_SQL = """
+SELECT t.team_id, t.focus_factor, COALESCE(SUM(h.velocity_achieved), 0) AS velocity_sum, COUNT(h.*) AS points
+FROM teams t LEFT JOIN team_history h ON h.team_id = t.team_id
+GROUP BY t.team_id, t.focus_factor ORDER BY t.team_id
+"""
+
+TEAM_VELOCITY_OBSERVED_SQL = """
+SELECT team_id, sprint_no, delivered_sp FROM v_team_velocity_observed WHERE pi_id = %s ORDER BY sprint_no, team_id
 """
 
 
@@ -161,20 +172,7 @@ WHERE pi_id = %s AND coverage_status = 'complete' ORDER BY sprint_no DESC LIMIT 
 
 
 DONE_IN_SPRINT_SQL = """
-SELECT completed_in.sprint_no, a.task_id
-FROM task_actuals a
-JOIN actual_uploads u   ON u.upload_id = a.upload_id
-JOIN tasks_seed_state s ON s.task_id = a.task_id
-JOIN sprints completed_in ON completed_in.pi_id = u.pi_id
-                         AND a.actual_end BETWEEN completed_in.start_date AND completed_in.end_date
-WHERE a.status = 'Done' AND s.status <> 'Done' AND u.pi_id = %s
-  AND u.coverage_status = 'complete'
-  AND NOT EXISTS (SELECT 1 FROM task_actuals a2
-                  JOIN actual_uploads u2 ON u2.upload_id = a2.upload_id
-                  WHERE a2.task_id = a.task_id AND a2.status = 'Done'
-                    AND u2.coverage_status = 'complete'
-                    AND u2.sprint_no < u.sprint_no)
-ORDER BY completed_in.sprint_no, a.task_id
+SELECT sprint_no, task_id FROM v_task_done_sprint WHERE pi_id = %s ORDER BY sprint_no, task_id
 """
 
 

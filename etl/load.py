@@ -599,6 +599,17 @@ def parse(path: Path):
         if not any(h[0] == tm for h in history):
             dq.add("teams", tm, "TEAM_WITHOUT_HISTORY", "error",
                    f"У команды {tm} нет истории velocity — ёмкость в SP посчитать нельзя.")
+            continue
+        own = [h for h in history if h[0] == tm]
+        newest = max((h[1] for h in own if h[1]), default=None)
+        if newest is not None and (C.PI_START - newest).days > C.HISTORY_STALE_DAYS:
+            dq.add("teams", tm, "TEAM_HISTORY_STALE", "warning",
+                   f"Последнее наблюдение скорости команды {tm} — {newest}, за {(C.PI_START - newest).days} дн. "
+                   f"до начала PI: ёмкость в SP может не отражать нынешний состав и темп.")
+        if len(own) < C.HISTORY_MIN_POINTS:
+            dq.add("teams", tm, "TEAM_HISTORY_THIN", "info",
+                   f"Наблюдений скорости команды {tm}: {len(own)} (для устойчивого среднего нужно не меньше "
+                   f"{C.HISTORY_MIN_POINTS}); пересчёты добавляют закрытые спринты текущего PI.")
 
     # ---------- инициативы ----------
     agg = C.RUNG_AGGREGATION

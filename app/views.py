@@ -235,10 +235,30 @@ SOURCES: tuple[Source, ...] = (
         order="team_id",
         orderable=(
             "team_id", "history_points", "avg_velocity", "focus_factor",
-            "available_sp_per_sprint", "available_sp_per_pi",
+            "available_sp_per_sprint", "available_sp_per_pi", "velocity_min", "velocity_max",
+            "velocity_stddev", "history_from", "history_to", "history_age_days",
         ),
-        note="Ёмкость команды в SP. Для спринта иной длины умножать на `v_sprint_fund_factor`, "
-        "а не на число спринтов (ADR-017).",
+        note="НОРМАТИВНАЯ ёмкость команды в SP по истории × 0.8 (с неё строится базовый план); "
+        "метаданные выборки: число точек, разброс, давность. Ёмкость конкретного прогона — "
+        "`plan_team_capacity`. Для спринта иной длины умножать на `v_sprint_fund_factor` (ADR-017).",
+    ),
+    _source(
+        "plan_team_capacity",
+        screen="Профили",
+        order="team_id",
+        orderable=("team_id", "history_points", "observed_points", "avg_velocity", "focus_factor",
+                   "available_sp_per_sprint", "observed_through_sprint"),
+        note="Ёмкость команды в SP, с которой построен прогон (ADR-030): история плюс закрытые спринты "
+        "текущего PI. Показывать вместе с `observed_points`: основание ёмкости видно в самом числе.",
+        run_column="run_id",
+    ),
+    _source(
+        "v_team_velocity_observed",
+        screen="Профили",
+        order="sprint_no,team_id",
+        orderable=("pi_id", "sprint_no", "team_id", "delivered_sp"),
+        note="Скорость команды по закрытым спринтам текущего PI: подтверждённый прогресс SP плюс остаток "
+        "SP завершённых задач. Спринт без поставки — наблюдение 0 (только у команд с невыполненным бэклогом).",
     ),
     _source(
         "teams",

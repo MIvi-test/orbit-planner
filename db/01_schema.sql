@@ -9,7 +9,7 @@ BEGIN;
 
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
-DROP TABLE IF EXISTS audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
+DROP TABLE IF EXISTS plan_team_capacity, audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,

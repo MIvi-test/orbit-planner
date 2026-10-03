@@ -15,7 +15,7 @@ TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,
 
 -- прогон ETL: 1
 INSERT INTO load_batches (batch_id, source_file, source_sha256, etl_version, pi_start, row_counts) VALUES
-  (1, 'Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx', 'a618cb80279e9931e7706166082d8322fafd41aefefea722e44d9116a1f2f22e', '1.2.0', '2026-07-01', '{"roles": 21, "skills": 113, "teams": 6, "engineers": 30, "engineer_orbits": 34, "engineer_skills": 186, "initiatives": 15, "tasks": 45, "task_role_estimates": 258, "task_role_spent": 24, "task_dependencies": 19, "team_history": 12, "sprints": 6, "dq_issues": 39}');
+  (1, 'Хакатон_датасетс_правками_по_списку_вопросов_1.xlsx', 'a618cb80279e9931e7706166082d8322fafd41aefefea722e44d9116a1f2f22e', '1.2.0', '2026-07-01', '{"roles": 21, "skills": 113, "teams": 6, "engineers": 30, "engineer_orbits": 34, "engineer_skills": 186, "initiatives": 15, "tasks": 45, "task_role_estimates": 258, "task_role_spent": 24, "task_dependencies": 19, "team_history": 12, "sprints": 6, "dq_issues": 47}');
 
 -- роли: 21
 INSERT INTO roles (role_id, canonical_name, role_group) VALUES
@@ -1136,7 +1136,7 @@ INSERT INTO task_sequence (task_id, topo_order, depth, earliest_start_sprint, on
   ('SRV-4092', 44, 0, 2, TRUE),
   ('SRV-4093', 45, 0, 1, FALSE);
 
--- качество данных: 39
+-- качество данных: 47
 INSERT INTO dq_issues (batch_id, entity, entity_id, rule_code, severity, detail) VALUES
   (1, 'ref_result_options', 'CANCELLED', 'TRUNCATED_REF_VALUE', 'warning', 'Значение справочника обрезано в исходнике: ''Отменено зака'' (вероятно «Отменено заказчиком»).'),
   (1, 'roles', 'Разработчик BigData', 'ROLE_ALIAS_MERGED', 'warning', 'Строка матрицы ''Разработчик BigData'' слита с канонической ролью ''Разработчик Big Data''.'),
@@ -1170,6 +1170,14 @@ INSERT INTO dq_issues (batch_id, entity, entity_id, rule_code, severity, detail)
   (1, 'engineers', 'ENG-419', 'ROLE_ALIAS_APPLIED', 'info', 'Роль ''Девопс'' -> ''ДевОпс''.'),
   (1, 'engineers', 'ENG-419', 'ROLE_ALIAS_APPLIED', 'info', 'Роль ''Девопс'' -> ''ДевОпс''.'),
   (1, 'engineer_skills', 'ENG-427', 'AMBIGUOUS_SKILL', 'warning', 'Строка Excel 144: «Core» требует ручной классификации.'),
+  (1, 'teams', 'Team-Alpha', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-Alpha: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
+  (1, 'teams', 'Team-Beta', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-Beta: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
+  (1, 'teams', 'Team-Delta', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-Delta: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
+  (1, 'teams', 'Team-K', 'TEAM_HISTORY_STALE', 'warning', 'Последнее наблюдение скорости команды Team-K — 2025-12-30, за 183 дн. до начала PI: ёмкость в SP может не отражать нынешний состав и темп.'),
+  (1, 'teams', 'Team-K', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-K: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
+  (1, 'teams', 'Team-L', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-L: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
+  (1, 'teams', 'Team-Platform', 'TEAM_HISTORY_STALE', 'warning', 'Последнее наблюдение скорости команды Team-Platform — 2025-12-16, за 197 дн. до начала PI: ёмкость в SP может не отражать нынешний состав и темп.'),
+  (1, 'teams', 'Team-Platform', 'TEAM_HISTORY_THIN', 'info', 'Наблюдений скорости команды Team-Platform: 2 (для устойчивого среднего нужно не меньше 3); пересчёты добавляют закрытые спринты текущего PI.'),
   (1, 'initiatives', 'PRODF-7122', 'RUNG_NOT_UNIFORM', 'warning', 'rung внутри инициативы неоднороден: [65, 70]. Свёрнут через ''max'' -> 70.'),
   (1, 'initiatives', 'PRODF-7126', 'RUNG_NOT_UNIFORM', 'warning', 'rung внутри инициативы неоднороден: [88, 92]. Свёрнут через ''max'' -> 92.'),
   (1, 'initiatives', 'PRODF-7127', 'RUNG_NOT_UNIFORM', 'warning', 'rung внутри инициативы неоднороден: [65, 71]. Свёрнут через ''max'' -> 71.'),

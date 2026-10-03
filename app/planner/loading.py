@@ -7,6 +7,8 @@ from typing import Any
 
 from app import db
 from app.planner.queries import (
+    TEAM_VELOCITY_HISTORY_SQL,
+    TEAM_VELOCITY_OBSERVED_SQL,
     ALL_DEPS_SQL,
     ALL_TASKS_SQL,
     BASELINE_SCHEDULE_SQL,
@@ -136,6 +138,19 @@ def load_inputs() -> Inputs:
         done_in_sprint[int(row["sprint_no"])].add(row["task_id"])
     task_dates = db.query_dicts(TASK_DATES_SQL)
 
+    history_rows = db.query_dicts(TEAM_VELOCITY_HISTORY_SQL)
+    velocity_history = {
+        row["team_id"]: (Decimal(row["velocity_sum"]), int(row["points"])) for row in history_rows
+    }
+    team_capacity: dict[str, Decimal] = {}
+    for row in db.query_dicts(TEAM_CAPACITY_SQL):
+        if row["available_sp_per_sprint"] is None:
+            raise RuntimeError(
+                f"у команды {row['team_id']} нет истории производительности: ёмкость в SP "
+                f"не вычислить (ETL блокирует такой датасет, TEAM_WITHOUT_HISTORY)"
+            )
+        team_capacity[row["team_id"]] = Decimal(row["available_sp_per_sprint"])
+
     return Inputs(
         pi_id=pi["pi_id"],
         sprint_count=int(pi["sprint_count"]),
@@ -145,10 +160,13 @@ def load_inputs() -> Inputs:
         sprint_factors={
             int(row["sprint_no"]): Decimal(row["factor"]) for row in sprint_rows
         },
-        team_sp_per_sprint={
-            row["team_id"]: Decimal(row["available_sp_per_sprint"])
-            for row in db.query_dicts(TEAM_CAPACITY_SQL)
-        },
+        team_sp_per_sprint=team_capacity,
+        velocity_history=velocity_history,
+        velocity_observed=tuple(
+            (row["team_id"], int(row["sprint_no"]), Decimal(row["delivered_sp"]))
+            for row in db.query_dicts(TEAM_VELOCITY_OBSERVED_SQL, (pi["pi_id"],))
+        ),
+        focus_factors={row["team_id"]: Decimal(row["focus_factor"]) for row in history_rows},
         tasks=tasks,
         engineers=tuple(
             EngineerInput(

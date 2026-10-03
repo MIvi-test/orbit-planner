@@ -104,6 +104,17 @@ def write_plan(plan: Plan) -> int:
                  for task_id, role_id, hours in plan.role_demands],
             )
 
+        if plan.team_capacity:
+            cur.executemany(
+                """INSERT INTO plan_team_capacity
+                   (run_id, team_id, history_points, observed_points, avg_velocity, focus_factor,
+                    available_sp_per_sprint, observed_through_sprint)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                [(run_id, row.team_id, row.history_points, row.observed_points, row.avg_velocity,
+                  row.focus_factor, row.available_sp_per_sprint, row.observed_through_sprint)
+                 for row in plan.team_capacity],
+            )
+
         if plan.graph_bounds:
             cur.executemany(
                 """INSERT INTO plan_dependency_bounds

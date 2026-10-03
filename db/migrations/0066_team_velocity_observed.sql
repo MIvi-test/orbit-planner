@@ -1,19 +1,111 @@
--- =====================================================================
---  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
---
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id;
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
---
---  КРИТЕРИЙ ПРИЁМКИ: нет строк с severity = 'error'.
---  severity = 'warning' план не отменяет, но обязан быть показан в UI
---  (замещение роли, выход за даты исходного плана, разрыв в окне задачи).
---  Каждая строка — нарушение правила из docs/PLANNER_SPEC.md, раздел 7.
---  Проверки только читают, ничего не меняют: гонять можно сколько угодно.
---
---  Проверок 29 (A..AC). Разбор ревью M2 и что из него закрыто —
---  docs/REVIEW_RESPONSE.md.
--- =====================================================================
-BEGIN;
+-- DA-27: наблюдаемая скорость команд и снимок ёмкости прогона.
+-- Нормативная ёмкость (история × 0.8) остаётся в v_team_capacity_sp; пересчёты после факта
+-- добавляют закрытые спринты текущего PI (ADR-030), а ёмкость каждого прогона хранится в
+-- plan_team_capacity, чтобы независимая приёмка сверяла план с той ёмкостью, по которой он строился.
+DROP VIEW IF EXISTS v_team_velocity_observed, v_task_done_sprint CASCADE;
+CREATE OR REPLACE VIEW v_team_capacity_sp AS
+SELECT t.team_id,
+       COUNT(h.*)                                            AS history_points,
+       ROUND(AVG(h.velocity_achieved), 2)                    AS avg_velocity,
+       t.focus_factor,
+       ROUND(AVG(h.velocity_achieved) * t.focus_factor, 2)   AS available_sp_per_sprint,
+       ROUND(AVG(h.velocity_achieved) * t.focus_factor
+             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2) AS available_sp_per_pi,
+       MIN(h.velocity_achieved)                              AS velocity_min,
+       MAX(h.velocity_achieved)                              AS velocity_max,
+       ROUND(STDDEV_SAMP(h.velocity_achieved), 2)            AS velocity_stddev,
+       MIN(h.snapshot_date)                                  AS history_from,
+       MAX(h.snapshot_date)                                  AS history_to,
+       (SELECT p.start_date FROM pi_periods p ORDER BY p.pi_id LIMIT 1) - MAX(h.snapshot_date)
+                                                             AS history_age_days
+FROM teams t
+LEFT JOIN team_history h ON h.team_id = t.team_id
+GROUP BY t.team_id, t.focus_factor;
+COMMENT ON VIEW v_team_capacity_sp IS
+ 'НОРМАТИВНАЯ ёмкость по истории (ТЗ: средняя фактическая производительность × 0.8): ровно та, с которой '
+ 'строится базовый план. history_points — число наблюдений (по 2 на команду в выданных данных: выборка '
+ 'малая, смотреть velocity_stddev и history_age_days). available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта. '
+ 'Пересчёты после факта добавляют наблюдения текущего PI (v_team_velocity_observed); ёмкость конкретного '
+ 'прогона — plan_team_capacity.';
+
+-- --------------------------------------------------------------------
+--  Спринт, в котором задача впервые выполнена (по ДАТЕ события, а не номеру загрузки).
+-- --------------------------------------------------------------------
+CREATE VIEW v_task_done_sprint AS
+SELECT completed_in.pi_id, completed_in.sprint_no, a.task_id
+FROM task_actuals a
+JOIN actual_uploads u   ON u.upload_id = a.upload_id
+JOIN tasks_seed_state s ON s.task_id = a.task_id
+JOIN sprints completed_in ON completed_in.pi_id = u.pi_id
+                         AND a.actual_end BETWEEN completed_in.start_date AND completed_in.end_date
+WHERE a.status = 'Done' AND s.status <> 'Done'
+  AND u.coverage_status = 'complete'
+  AND NOT EXISTS (SELECT 1 FROM task_actuals a2
+                  JOIN actual_uploads u2 ON u2.upload_id = a2.upload_id
+                  WHERE a2.task_id = a.task_id AND a2.status = 'Done'
+                    AND u2.coverage_status = 'complete'
+                    AND u2.sprint_no < u.sprint_no);
+COMMENT ON VIEW v_task_done_sprint IS
+ 'Спринт первого подтверждённого завершения задачи по actual_end (DA-17). Основа числителя Say/Do и '
+ 'наблюдаемой скорости команд.';
+
+-- --------------------------------------------------------------------
+--  Наблюдаемая скорость: SP, поставленные командой в закрытом спринте (DA-27).
+--  Поставлено = подтверждённый completed_sp спринта + остаток SP завершённых в нём задач.
+--  Спринт полного отчёта без поставки — наблюдение 0, но только для команд, у которых был
+--  невыполненный бэклог: пустой бэклог ёмкость не опровергает.
+-- --------------------------------------------------------------------
+CREATE VIEW v_team_velocity_observed AS
+WITH progress AS (
+    SELECT u.pi_id, u.sprint_no, t.team_id, SUM(a.completed_sp) AS sp
+    FROM task_actuals a
+    JOIN actual_uploads u ON u.upload_id = a.upload_id
+    JOIN tasks t          ON t.task_id = a.task_id
+    WHERE u.coverage_status = 'complete' AND a.completed_sp IS NOT NULL
+    GROUP BY u.pi_id, u.sprint_no, t.team_id
+), reported_total AS (
+    SELECT a.task_id, SUM(COALESCE(a.completed_sp, 0)) AS sp
+    FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
+    WHERE u.coverage_status = 'complete'
+    GROUP BY a.task_id
+), completion AS (
+    SELECT d.pi_id, d.sprint_no, t.team_id,
+           SUM(GREATEST(COALESCE(t.estimation_sp, 0) - COALESCE(rt.sp, 0), 0)) AS sp
+    FROM v_task_done_sprint d
+    JOIN tasks t ON t.task_id = d.task_id
+    LEFT JOIN reported_total rt ON rt.task_id = d.task_id
+    GROUP BY d.pi_id, d.sprint_no, t.team_id
+), delivered AS (
+    SELECT pi_id, sprint_no, team_id, SUM(sp) AS delivered_sp
+    FROM (SELECT * FROM progress UNION ALL SELECT * FROM completion) x
+    GROUP BY pi_id, sprint_no, team_id
+)
+SELECT u.pi_id, u.sprint_no, tm.team_id, COALESCE(d.delivered_sp, 0)::numeric(8,2) AS delivered_sp
+FROM actual_uploads u
+CROSS JOIN teams tm
+LEFT JOIN delivered d ON d.pi_id = u.pi_id AND d.sprint_no = u.sprint_no AND d.team_id = tm.team_id
+WHERE u.coverage_status = 'complete'
+  AND EXISTS (SELECT 1 FROM tasks_seed_state s JOIN tasks t ON t.task_id = s.task_id
+              WHERE t.team_id = tm.team_id AND s.status <> 'Done');
+COMMENT ON VIEW v_team_velocity_observed IS
+ 'Скорость команды по закрытым спринтам текущего PI (наблюдение для пересчёта, ADR-030). Остаток SP '
+ 'завершённой задачи приписывается спринту завершения, в том числе доля, сделанная до квартала.';
+
+CREATE TABLE IF NOT EXISTS plan_team_capacity (
+    run_id                  INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    team_id                 TEXT NOT NULL REFERENCES teams(team_id),
+    history_points          INT NOT NULL CHECK (history_points >= 0),
+    observed_points         INT NOT NULL CHECK (observed_points >= 0),
+    avg_velocity            NUMERIC(8,2) NOT NULL CHECK (avg_velocity >= 0),
+    focus_factor            NUMERIC(3,2) NOT NULL,
+    available_sp_per_sprint NUMERIC(8,2) NOT NULL CHECK (available_sp_per_sprint >= 0),
+    observed_through_sprint SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, team_id),
+    CHECK (history_points + observed_points > 0)
+);
+COMMENT ON TABLE plan_team_capacity IS
+ 'Ёмкость команд, с которой построен прогон (DA-27): среднее по истории и закрытым спринтам '
+ 'до as_of_sprint × focus_factor. SP_OVERFLOW сверяет план с ней, а не с сегодняшней витриной.';
 
 DROP VIEW IF EXISTS v_plan_violations CASCADE;
 
@@ -483,4 +575,3 @@ COMMENT ON VIEW v_plan_violations IS
  'отменяют, но требуют отображения в UI. Правила — docs/PLANNER_SPEC.md, раздел 7; '
  'разбор ревью M2 — docs/REVIEW_RESPONSE.md.';
 
-COMMIT;

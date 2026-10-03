@@ -271,6 +271,24 @@ export interface TeamCapacitySpRow {
   focus_factor: NumericString
   available_sp_per_sprint: NumericString
   available_sp_per_pi: NumericString
+  velocity_min: NumericString | null
+  velocity_max: NumericString | null
+  velocity_stddev: NumericString | null
+  history_from: string | null
+  history_to: string | null
+  history_age_days: number | null
+}
+
+/** Ёмкость команды, с которой построен прогон (ADR-030). */
+export interface PlanTeamCapacityRow {
+  run_id: number
+  team_id: string
+  history_points: number
+  observed_points: number
+  avg_velocity: NumericString
+  focus_factor: NumericString
+  available_sp_per_sprint: NumericString
+  observed_through_sprint: number
 }
 
 export interface TeamRow {

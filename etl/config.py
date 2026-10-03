@@ -18,6 +18,12 @@ SPRINT_COUNT = 6
 SPRINT_LENGTH_DAYS = 14
 PI_END = date.fromordinal(PI_START.toordinal() + SPRINT_COUNT * SPRINT_LENGTH_DAYS - 1)
 
+# --- DA-27. Качество истории производительности команд.
+# Наблюдение старше этого числа дней до начала PI считается устаревшим (предупреждение DQ),
+# меньше HISTORY_MIN_POINTS наблюдений — тонкая выборка (информация DQ).
+HISTORY_STALE_DAYS = 90
+HISTORY_MIN_POINTS = 3
+
 # --- Из онбординга. Менять только если организаторы поправят правила. ---
 FOCUS_FACTOR = 0.80
 HOURS_PER_SPRINT_FTE = 80      # 1.0 ставки = 80 ЧЧ за 2-недельный спринт

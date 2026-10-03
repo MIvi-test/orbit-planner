@@ -19,7 +19,7 @@ export interface actual_report_issues {
   resolved_revision_id: number | null;
 }
 
-/** таблица public.actual_uploads — 9 кол. · Одна загрузка = факт одного спринта. Повторная загрузка за тот же спринт заменяет прежнюю и все более поздние (иначе факт спринта 3 висел бы на старом факте спринта 2). */
+/** таблица public.actual_uploads — 10 кол. · Одна загрузка = факт одного спринта. Повторная загрузка за тот же спринт заменяет прежнюю и все более поздние (иначе факт спринта 3 висел бы на старом факте спринта 2). */
 export interface actual_uploads {
   upload_id: number;
   pi_id: string;
@@ -30,6 +30,7 @@ export interface actual_uploads {
   uploaded_at: string;
   summary: Json;
   coverage_status: 'draft' | 'incomplete' | 'complete';
+  uploaded_by: string | null;
 }
 
 /** таблица public.alerts — 9 кол. · red/deadline_miss  — прогноз вылетает за 12-ю неделю, срыв инициативы PRODF; yellow/cascade_shift — сдвиг по цепочке зависимостей, дедлайн пока цел; orange/role_deficit  — потребность по роли на спринт > фонда доступных часов. */
@@ -43,6 +44,30 @@ export interface alerts {
   entity_id: string;
   message: string;
   payload: Json;
+}
+
+/** таблица public.app_users — 7 кол. · Пользователи сервиса. token_sha256 — SHA-256 токена; сам токен показывается один раз при создании (tools/manage_users.py). Не входит в TRUNCATE загрузки датасета. */
+export interface app_users {
+  user_id: number;
+  name: string;
+  role: 'viewer' | 'planner' | 'admin';
+  token_sha256: string;
+  active: boolean;
+  created_at: string;
+  last_seen_at: string | null;
+}
+
+/** таблица public.audit_log — 9 кол. · Журнал действий, меняющих данные: кто, что, с каким итогом. Только дописывается. */
+export interface audit_log {
+  event_id: number;
+  at: string;
+  actor: string;
+  role: string;
+  action: string;
+  target: string | null;
+  outcome: 'ok' | 'rejected' | 'failed';
+  client: string | null;
+  detail: Json;
 }
 
 /** таблица public.dq_issues — 7 кол. · Журнал находок ETL. Не блокирует загрузку — материал для слайда «что не так с исходными данными». */
@@ -107,7 +132,7 @@ export interface kpi_snapshots {
   calculation_status: 'calculated' | 'no_commitment' | 'no_plan' | 'no_relevant_skills';
 }
 
-/** таблица public.load_batches — 7 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
+/** таблица public.load_batches — 8 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
 export interface load_batches {
   batch_id: number;
   source_file: string;
@@ -116,6 +141,7 @@ export interface load_batches {
   pi_start: string;
   loaded_at: string;
   row_counts: Json;
+  loaded_by: string | null;
 }
 
 /** таблица public.pi_periods — 6 кол. · PI начинается 01.07.2026 и длится шесть двухнедельных спринтов до 22.09.2026 (ADR-025). Фонд ставки = 6 × 80 = 480 ЧЧ; остаток календарного квартала не входит в PI. */
@@ -205,6 +231,18 @@ export interface plan_task_sp {
   task_id: string;
   sprint_no: number;
   sp: number;
+}
+
+/** таблица public.plan_team_capacity — 8 кол. · Ёмкость команд, с которой построен прогон (DA-27): среднее по истории и закрытым спринтам до as_of_sprint × focus_factor. SP_OVERFLOW сверяет план с ней, а не с сегодняшней витриной. */
+export interface plan_team_capacity {
+  run_id: number;
+  team_id: string;
+  history_points: number;
+  observed_points: number;
+  avg_velocity: number;
+  focus_factor: number;
+  available_sp_per_sprint: number;
+  observed_through_sprint: number;
 }
 
 /** таблица public.ref_closure_results — 3 кол. */
@@ -338,7 +376,7 @@ export interface task_role_estimates {
   hours: number;
 }
 
-/** таблица public.task_role_etc — 6 кол. */
+/** таблица public.task_role_etc — 7 кол. */
 export interface task_role_etc {
   revision_id: number;
   task_id: string;
@@ -346,6 +384,7 @@ export interface task_role_etc {
   remaining_hours: number;
   reason: string;
   recorded_at: string;
+  revised_by: string | null;
 }
 
 /** таблица public.task_role_skill_requirements — 4 кол. */
@@ -767,6 +806,13 @@ export interface v_task_board {
   blocks: number | null;
 }
 
+/** вьюха public.v_task_done_sprint — 3 кол. · Спринт первого подтверждённого завершения задачи по actual_end (DA-17). Основа числителя Say/Do и наблюдаемой скорости команд. */
+export interface v_task_done_sprint {
+  pi_id: string | null;
+  sprint_no: number | null;
+  task_id: string | null;
+}
+
 /** вьюха public.v_task_remaining_hh — 8 кол. · Остаток часов по задаче и роли. ETC (task_role_etc) главнее; без ETC остаток = смета − факт (remaining_provisional = факт есть, но прогресс не подтверждён). remaining_unknown — смета роли исчерпана у незакрытой задачи: нужен ETC, сам по себе остаток 0 не означает готовность. */
 export interface v_task_remaining_hh {
   task_id: string | null;
@@ -779,7 +825,7 @@ export interface v_task_remaining_hh {
   remaining_provisional: boolean | null;
 }
 
-/** вьюха public.v_team_capacity_sp — 6 кол. · history_points = 2 на команду: среднее шаткое, на защите оговорить. available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта; для иной длины умножать на v_sprint_fund_factor.factor (так делает проверка SP_OVERFLOW). */
+/** вьюха public.v_team_capacity_sp — 12 кол. · НОРМАТИВНАЯ ёмкость по истории (ТЗ: средняя фактическая производительность × 0.8): ровно та, с которой строится базовый план. history_points — число наблюдений (по 2 на команду в выданных данных: выборка малая, смотреть velocity_stddev и history_age_days). available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта. Пересчёты после факта добавляют наблюдения текущего PI (v_team_velocity_observed); ёмкость конкретного прогона — plan_team_capacity. */
 export interface v_team_capacity_sp {
   team_id: string | null;
   history_points: number | null;
@@ -787,6 +833,12 @@ export interface v_team_capacity_sp {
   focus_factor: number | null;
   available_sp_per_sprint: number | null;
   available_sp_per_pi: number | null;
+  velocity_min: number | null;
+  velocity_max: number | null;
+  velocity_stddev: number | null;
+  history_from: string | null;
+  history_to: string | null;
+  history_age_days: number | null;
 }
 
 /** вьюха public.v_team_profile — 15 кол. · Профиль команды для звёздной карты. roles_missing — роли, которые нужны бэклогу команды, но в ней нет ни одного инженера (закрываются займом или наймом). */
@@ -808,11 +860,21 @@ export interface v_team_profile {
   live_hh: number | null;
 }
 
+/** вьюха public.v_team_velocity_observed — 4 кол. · Скорость команды по закрытым спринтам текущего PI (наблюдение для пересчёта, ADR-030). Остаток SP завершённой задачи приписывается спринту завершения, в том числе доля, сделанная до квартала. */
+export interface v_team_velocity_observed {
+  pi_id: string | null;
+  sprint_no: number | null;
+  team_id: string | null;
+  delivered_sp: number | null;
+}
+
 /** Все отношения схемы public — таблицы и вьюхи. */
 export type RelationName =
   | 'actual_report_issues'
   | 'actual_uploads'
   | 'alerts'
+  | 'app_users'
+  | 'audit_log'
   | 'dq_issues'
   | 'engineer_orbits'
   | 'engineer_skill_declarations'
@@ -830,6 +892,7 @@ export type RelationName =
   | 'plan_runs'
   | 'plan_task_schedule'
   | 'plan_task_sp'
+  | 'plan_team_capacity'
   | 'ref_closure_results'
   | 'ref_decision_reasons'
   | 'ref_mismatch_reasons'
@@ -881,6 +944,8 @@ export type RelationName =
   | 'v_sprint_deviation'
   | 'v_sprint_fund_factor'
   | 'v_task_board'
+  | 'v_task_done_sprint'
   | 'v_task_remaining_hh'
   | 'v_team_capacity_sp'
   | 'v_team_profile'
+  | 'v_team_velocity_observed'

@@ -97,6 +97,11 @@ class Inputs:
     all_deps: tuple[tuple[str, str, int], ...] = ()
     done_task_dates: dict[str, tuple[date | None, date | None]] = field(default_factory=dict)
     task_actual_starts: dict[str, date] = field(default_factory=dict)
+    # Ёмкость по истории и закрытым спринтам (DA-27, ADR-030): team -> (сумма скоростей, число точек).
+    velocity_history: dict[str, tuple[Decimal, int]] = field(default_factory=dict)
+    # Наблюдения текущего PI: (команда, спринт, поставленные SP).
+    velocity_observed: tuple[tuple[str, int, Decimal], ...] = ()
+    focus_factors: dict[str, Decimal] = field(default_factory=dict)
 
     @property
     def fund_hours_per_fte(self) -> Decimal:
@@ -182,6 +187,19 @@ class StateRow:
 
 
 @dataclass(frozen=True)
+class CapacityRow:
+    """Ёмкость команды, с которой построен прогон (таблица `plan_team_capacity`)."""
+
+    team_id: str
+    history_points: int
+    observed_points: int
+    avg_velocity: Decimal
+    focus_factor: Decimal
+    available_sp_per_sprint: Decimal
+    observed_through_sprint: int
+
+
+@dataclass(frozen=True)
 class Plan:
     pi_id: str
     as_of_sprint: int
@@ -198,6 +216,7 @@ class Plan:
     actuals_upload_id: int | None = None
     role_demands: tuple[tuple[str, int, Decimal], ...] = ()
     graph_bounds: tuple[tuple[str, int], ...] = ()
+    team_capacity: tuple[CapacityRow, ...] = ()
 
     @property
     def in_quarter(self) -> tuple[ScheduleRow, ...]:

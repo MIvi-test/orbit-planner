@@ -34,11 +34,12 @@ from app.planner.constants import (
     REASON_TEAM_SP,
     SUBSTITUTION_MODE,
 )
-from app.planner.model import Assignment, BaselineRow, Inputs, Plan, ScheduleRow, TaskInput
+from app.planner.model import Assignment, BaselineRow, CapacityRow, Inputs, Plan, ScheduleRow, TaskInput
 from app.planner.fmt import _q, _sprints_word
 from app.planner.funds import _Funds, _allocate_task, _sp_shares
 from app.planner.graph import _refresh_live_graph
 from app.planner.alerts import _build_alerts
+from app.planner.capacity import effective_capacity
 from app.planner.kpi import _build_kpis, _build_states
 
 
@@ -75,6 +76,9 @@ def build_plan(
     replan_floor = max(1, as_of_sprint)
 
     inputs, dependency_fact_issues = _refresh_live_graph(inputs, as_of_sprint, dependency_mode)
+    # Ёмкость команд на момент прогона: история плюс закрытые спринты текущего PI (ADR-030).
+    capacity_by_team, capacity_rows = effective_capacity(inputs, as_of_sprint)
+    inputs = replace(inputs, team_sp_per_sprint=capacity_by_team)
 
     by_id = {task.task_id: task for task in inputs.tasks}
     # Кандидаты на роль — из покрытия (ADR-012), а не из `engineers.role_id`:
@@ -635,7 +639,7 @@ def build_plan(
             "dependency_mode": dependency_mode,
             "initiative_mode": initiative_mode,
             "replan_floor": replan_floor,
-            "sp_model": "flow",
+            "sp_model": "joint",
             "repack": initiative_mode == INITIATIVE_MODE_GREEDY,
             "next_pi_check": next_pi_check,
             "pi_closed": pi_closed,
@@ -649,6 +653,7 @@ def build_plan(
         lower_bounds={
             task.task_id: lower_bound(task) for task in ordered if task.task_id not in starts
         },
+        capacity_rows=capacity_rows,
     )
 
 
@@ -677,6 +682,7 @@ def _assemble(
     *,
     sp_shares: tuple[tuple[str, int, Decimal], ...] = (),
     lower_bounds: dict[str, int] | None = None,
+    capacity_rows: tuple[CapacityRow, ...] = (),
 ) -> Plan:
     """Собирает `Plan`: алерты, KPI, базовая линия, слепок состояния, params.
 
@@ -794,6 +800,21 @@ def _assemble(
         "last_reported_sprint": inputs.last_reported_sprint,
     }
     params.update(modes or {})
+    if capacity_rows:
+        params["capacity_model"] = {
+            "version": 1,
+            "basis": "среднее по team_history и закрытым спринтам текущего PI × focus_factor",
+            "observed_through_sprint": max((row.observed_through_sprint for row in capacity_rows), default=0),
+            "teams": {
+                row.team_id: {
+                    "history_points": row.history_points,
+                    "observed_points": row.observed_points,
+                    "avg_velocity": str(row.avg_velocity),
+                    "available_sp_per_sprint": str(row.available_sp_per_sprint),
+                }
+                for row in capacity_rows
+            },
+        }
     # Статус прогона описывает успешность расчёта. Результат для бизнеса живёт
     # отдельно: пустой план может означать и завершённый PI, и полный перенос.
     if not inputs.tasks:
@@ -834,4 +855,5 @@ def _assemble(
             for role_id, hours in sorted(task.needed.items())
         ),
         graph_bounds=tuple((task.task_id, task.earliest_start_sprint) for task in inputs.tasks),
+        team_capacity=capacity_rows,
     )

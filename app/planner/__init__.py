@@ -134,6 +134,7 @@ from app.planner.queries import (  # noqa: F401
 )
 from app.planner.model import (  # noqa: F401
     AlertRow,
+    CapacityRow,
     Assignment,
     BaselineRow,
     EngineerInput,
@@ -168,6 +169,11 @@ from app.planner.alerts import (  # noqa: F401
 from app.planner.kpi import (  # noqa: F401
     _build_kpis,
     _build_states,
+)
+from app.planner.capacity import (  # noqa: F401
+    CENT,
+    DEFAULT_FOCUS_FACTOR,
+    effective_capacity,
 )
 from app.planner.core import (  # noqa: F401
     _assemble,
