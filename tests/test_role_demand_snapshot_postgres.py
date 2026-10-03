@@ -6,6 +6,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from pg_support import load_base_file
+
 
 @pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="нужен PostgreSQL")
 def test_role_demand_validation_is_stable_and_uses_equivalent_work():
@@ -17,7 +19,7 @@ def test_role_demand_validation_is_stable_and_uses_equivalent_work():
             cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
             for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql",
                          "04_views.sql", "05_invariants.sql"):
-                cursor.execute((root / "db" / name).read_text())
+                load_base_file(cursor, root / "db" / name)
             for name in ("0045_plan_role_demand_snapshot.sql", "0046_refresh_plan_invariants.sql"):
                 cursor.execute((root / "db/migrations" / name).read_text())
             cursor.execute("""

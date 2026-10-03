@@ -6,6 +6,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from pg_support import load_base_file
+
 
 @pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="нужен PostgreSQL")
 def test_two_orbits_share_one_engineer_and_keep_both_limits():
@@ -17,7 +19,7 @@ def test_two_orbits_share_one_engineer_and_keep_both_limits():
             cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
             for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql",
                          "04_views.sql", "05_invariants.sql"):
-                cursor.execute((root / "db" / name).read_text())
+                load_base_file(cursor, root / "db" / name)
             # Recreate the former key to exercise the upgrade path.
             cursor.execute("""ALTER TABLE plan_assignments DROP CONSTRAINT plan_assignments_pkey;
                 ALTER TABLE plan_assignments ADD CONSTRAINT plan_assignments_pkey

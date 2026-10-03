@@ -9,6 +9,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from pg_support import load_base_file
+
 from app import db, ingest
 
 
@@ -51,8 +53,8 @@ def test_failed_replan_restores_previous_upload_and_plan(monkeypatch) -> None:
         with conn.cursor() as cursor:
             cursor.execute(f"CREATE SCHEMA {schema}")
             cursor.execute(f"SET search_path TO {schema}")
-            for name in ("01_schema.sql", "02_contract.sql"):
-                cursor.execute((root / "db" / name).read_text())
+            for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql", "04_views.sql"):
+                load_base_file(cursor, root / "db" / name)
             cursor.execute("""
                 INSERT INTO pi_periods (pi_id, start_date, end_date, sprint_count)
                 VALUES ('PI', '2026-07-01', '2026-07-28', 2);
@@ -95,7 +97,7 @@ def test_failed_replan_restores_previous_upload_and_plan(monkeypatch) -> None:
     ))
 
     with pytest.raises(RuntimeError, match="планирование упало"):
-        ingest.load_actuals(b"task_id,status\nA,Done\n", "new.csv", 1)
+        ingest.load_actuals(b"task_id,status\nA,Done\n", "new.csv", 1, confirm_complete=True)
 
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cursor:

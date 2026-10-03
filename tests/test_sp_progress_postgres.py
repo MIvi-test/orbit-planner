@@ -9,6 +9,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from pg_support import load_base_file
+
 from app import planner
 
 
@@ -23,7 +25,7 @@ def test_remaining_sp_and_share_invariant_use_confirmed_progress() -> None:
             cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
             for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql",
                          "04_views.sql", "05_invariants.sql"):
-                cursor.execute((root / "db" / name).read_text())
+                load_base_file(cursor, root / "db" / name)
             cursor.execute((root / "db/migrations/0006_completed_sp.sql").read_text())
             cursor.execute("""
                 INSERT INTO pi_periods (pi_id, start_date, end_date, sprint_count)

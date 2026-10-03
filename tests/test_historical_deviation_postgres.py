@@ -8,6 +8,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from pg_support import load_base_file
+
 
 @pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="нужен PostgreSQL")
 def test_historical_deviation_is_pinned_to_report_and_plan() -> None:
@@ -19,7 +21,7 @@ def test_historical_deviation_is_pinned_to_report_and_plan() -> None:
             cursor.execute(psycopg.sql.SQL("CREATE SCHEMA {}").format(schema))
             cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
             for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql", "04_views.sql"):
-                cursor.execute((root / "db" / name).read_text())
+                load_base_file(cursor, root / "db" / name)
             cursor.execute((root / "db/migrations/0037_historical_deviations.sql").read_text())
             cursor.execute("""
                 INSERT INTO pi_periods (pi_id, start_date, end_date, sprint_count)
