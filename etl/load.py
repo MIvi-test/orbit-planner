@@ -118,6 +118,23 @@ class DependencyGraphError(ValueError):
     """Исходные зависимости нельзя безопасно превратить в порядок задач."""
 
 
+class DataQualityError(ValueError):
+    """Во входном Excel есть ошибки, при которых план теряет данные."""
+
+    def __init__(self, problems):
+        self.problems = problems
+        super().__init__(f"блокирующие ошибки Excel: {len(problems)}")
+
+
+def require_valid_quality():
+    problems = [
+        f"{entity} [{entity_id or 'без ID'}], {code}: {detail}"
+        for entity, entity_id, code, severity, detail in dq.rows if severity == "error"
+    ]
+    if problems:
+        raise DataQualityError(problems)
+
+
 def validate_dependency_edge(a, b, typ, source_row, task_ids, previous_rows):
     """Структурные ошибки рёбер не должны терять ограничения при загрузке."""
     if a not in task_ids or b not in task_ids:
@@ -318,10 +335,10 @@ def parse(path: Path):
         summary = norm_text(col(r, "summary"))
         rung = int(num(col(r, "rung"))) or None
 
-        ini = initiatives.setdefault(prodf, {"br": br, "titles": [], "rungs": [], "sps": []})
+        ini = initiatives.setdefault(prodf, {"br": br, "first_row": r, "titles": [], "rungs": [], "sps": []})
         if ini["br"] != br:
             dq.add("initiatives", prodf, "PRODF_BR_NOT_1TO1", "error",
-                   f"У инициативы {prodf} два разных parent_id: {ini['br']} и {br}.")
+                   f"Строки Excel {ini['first_row']} и {r}: у инициативы {prodf} два разных parent_id: {ini['br']} и {br}.")
         ini["titles"].append(summary)
         ini["rungs"].append(rung or 0)
         ini["sps"].append(num(col(r, "estimation_sp")))
@@ -356,7 +373,7 @@ def parse(path: Path):
     for tid, c in est_cols.items():
         if tid not in task_ids:
             dq.add("task_role_estimates", tid, "ESTIMATE_COLUMN_ORPHAN", "error",
-                   f"В матрице сметы есть столбец '{tid}', которого нет в таблице Tasks.")
+                   f"Колонка Excel {c}, строка заголовка {est_hdr}: задача '{tid}' отсутствует в Tasks.")
             continue
         total = 0.0
         for canon, rows in role_rows.items():
@@ -377,7 +394,7 @@ def parse(path: Path):
     for r in sh.data_rows(sp_hdr):
         tid = norm_text(sh.cell(r, sp_cols["task_id"]))
         if tid not in task_ids:
-            dq.add("task_role_spent", tid, "SPENT_ORPHAN", "error", f"Факт по ролям для неизвестной задачи {tid}.")
+            dq.add("task_role_spent", tid, "SPENT_ORPHAN", "error", f"Строка Excel {r}: факт по ролям для неизвестной задачи {tid}.")
             continue
         for h, c in sp_cols.items():
             if h in ("task_id", "Исходное время"):
@@ -433,6 +450,7 @@ def parse(path: Path):
     e_hdr = sh.header_row(e_title)
     ec = sh.columns(e_hdr)
     engineers, orbits, skills_seen, eng_skills = {}, [], {}, set()
+    engineer_rows = {}
     for r in sh.data_rows(e_hdr):
         eid = norm_text(sh.cell(r, ec["engineer_id"]))
         team = norm_text(sh.cell(r, ec["team_id"]))
@@ -440,7 +458,7 @@ def parse(path: Path):
         canon = C.ROLE_ALIASES.get(raw_role, raw_role)
         if canon not in role_id:
             dq.add("engineers", eid, "ENGINEER_ROLE_UNKNOWN", "error",
-                   f"Роль '{raw_role}' отсутствует в матрице сметы — добавь алиас в config.ROLE_ALIASES.")
+                   f"Строка Excel {r}: роль '{raw_role}' отсутствует в матрице сметы — добавь алиас в config.ROLE_ALIASES.")
             continue
         if canon != raw_role:
             dq.add("engineers", eid, "ROLE_ALIAS_APPLIED", "info", f"Роль '{raw_role}' -> '{canon}'.")
@@ -451,10 +469,11 @@ def parse(path: Path):
             prev = engineers[eid]
             if (prev["role"], prev["grade"]) != (canon, grade):
                 dq.add("engineers", eid, "PARTTIME_ATTRS_DIFFER", "error",
-                       f"У парттаймера {eid} атрибуты различаются между орбитами — беру первую строку.")
+                       f"Строки Excel {engineer_rows[eid]} и {r}: у парттаймера {eid} различаются роль или грейд.")
             prev["total"] += rate
         else:
             engineers[eid] = {"role": canon, "grade": grade, "total": rate}
+            engineer_rows[eid] = r
         orbits.append((eid, team, rate))
 
         for raw_skill in split_skills(sh.cell(r, ec["skills_declared"])):
@@ -469,7 +488,7 @@ def parse(path: Path):
     for eid, e in engineers.items():
         if round(e["total"], 2) > 1.0:
             dq.add("engineers", eid, "CAPACITY_OVER_100", "error",
-                   f"Сумма ставок по орбитам = {e['total']} > 1.0.")
+                   f"Начиная со строки Excel {engineer_rows[eid]} сумма ставок по орбитам = {e['total']} > 1.0.")
 
     # ---------- история команд ----------
     h_title = sh.find_block(C.BLOCK_MARKERS["team_history"])
@@ -755,6 +774,7 @@ def build_seed_sql(src_path: Path) -> tuple[str, dict, dict]:
     """
     dq.rows = []
     D = parse(src_path)
+    require_valid_quality()
     text, counts = emit(D, src_path)
     return text, counts, {
         "error": dq.count("error"), "warning": dq.count("warning"), "info": dq.count("info"),
@@ -774,6 +794,10 @@ def main():
         raise SystemExit(f"[ОШИБКА] Не найден исходник: {src}")
 
     D = parse(src)
+    try:
+        require_valid_quality()
+    except DataQualityError as exc:
+        raise SystemExit("[ОШИБКА] " + str(exc) + "\n" + "\n".join(exc.problems)) from None
     text, counts = emit(D, src)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -136,6 +136,8 @@ def load_dataset(data: bytes, filename: str | None) -> dict[str, Any]:
         path.write_bytes(data)
         try:
             seed_sql, counts, dq = etl_load.build_seed_sql(path)
+        except etl_load.DataQualityError as exc:
+            raise UploadError(str(exc), exc.problems) from None
         except etl_load.DependencyGraphError as exc:
             raise UploadError("ошибка графа зависимостей", [str(exc)]) from None
         except SystemExit as exc:  # ETL сообщает о битой структуре листа так
