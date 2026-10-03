@@ -45,6 +45,7 @@ import type {
   TaskStateRow,
   TaskRow,
   TeamCapacitySpRow,
+  PlanTeamCapacityRow,
   TeamProfileRow,
   TeamRow,
 } from '../types/views'
@@ -99,6 +100,8 @@ export const useRoleDeficitEffective = () =>
 export const useRoleCoverageOrg = () => useView<RoleCoverageOrgRow>('v_role_coverage_org', { limit: 100 })
 export const useBusFactor = () => useView<BusFactorRow>('v_bus_factor', { limit: 100 })
 export const useTeamCapacitySp = () => useView<TeamCapacitySpRow>('v_team_capacity_sp', { limit: 20 })
+export const usePlanTeamCapacity = (runId?: number | null) =>
+  useView<PlanTeamCapacityRow>('plan_team_capacity', { runId: runId ?? undefined, limit: 20 })
 export const useTeams = () => useView<TeamRow>('teams', { limit: 20 })
 export const useEngineerRoleCoverage = () =>
   useView<EngineerRoleCoverageRow>('v_engineer_role_coverage', { limit: 500 })

@@ -96,6 +96,21 @@ CREATE TABLE plan_role_demand_snapshot (
     needed_hours NUMERIC(12,4) NOT NULL CHECK (needed_hours > 0),
     PRIMARY KEY (run_id, task_id, role_id)
 );
+CREATE TABLE plan_team_capacity (
+    run_id                  INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    team_id                 TEXT NOT NULL REFERENCES teams(team_id),
+    history_points          INT NOT NULL CHECK (history_points >= 0),
+    observed_points         INT NOT NULL CHECK (observed_points >= 0),
+    avg_velocity            NUMERIC(8,2) NOT NULL CHECK (avg_velocity >= 0),
+    focus_factor            NUMERIC(3,2) NOT NULL,
+    available_sp_per_sprint NUMERIC(8,2) NOT NULL CHECK (available_sp_per_sprint >= 0),
+    observed_through_sprint SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, team_id),
+    CHECK (history_points + observed_points > 0)
+);
+COMMENT ON TABLE plan_team_capacity IS
+ 'Ёмкость команд, с которой построен прогон (DA-27): среднее по истории и закрытым спринтам '
+ 'до as_of_sprint × focus_factor. SP_OVERFLOW сверяет план с ней, а не с сегодняшней витриной.';
 CREATE TABLE plan_dependency_bounds (
     run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
     task_id TEXT NOT NULL REFERENCES tasks(task_id),

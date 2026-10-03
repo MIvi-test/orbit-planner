@@ -24,16 +24,28 @@ CREATE VIEW v_plan_violations AS
 SELECT x.run_id, 'SP_OVERFLOW'::text AS check_code, 'error'::text AS severity,
        (t.team_id || ' / спринт ' || x.sprint_no)::text AS entity,
        ('запланировано ' || SUM(x.sp) || ' SP при ёмкости '
-        || MAX(ROUND(c.available_sp_per_sprint * f.factor, 2))
-        || ' SP (полный спринт ' || MAX(c.available_sp_per_sprint)
+        || MAX(ROUND(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint) * f.factor, 2))
+        || ' SP (полный спринт ' || MAX(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint))
         || ' × ' || MAX(f.factor) || ')')::text AS detail
 FROM plan_task_sp x
 JOIN tasks t               ON t.task_id = x.task_id
 JOIN plan_runs r           ON r.run_id = x.run_id
 JOIN v_team_capacity_sp c  ON c.team_id = t.team_id
+LEFT JOIN plan_team_capacity pc ON pc.run_id = x.run_id AND pc.team_id = t.team_id
 JOIN v_sprint_fund_factor f ON f.pi_id = r.pi_id AND f.sprint_no = x.sprint_no
 GROUP BY x.run_id, t.team_id, x.sprint_no
-HAVING SUM(x.sp) > MAX(c.available_sp_per_sprint * f.factor)
+HAVING SUM(x.sp) > MAX(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint) * f.factor)
+
+-- A3. У прогона с моделью ёмкости нет снимка ёмкости команды (DA-27) -------
+UNION ALL
+SELECT r.run_id, 'CAPACITY_SNAPSHOT_MISSING', 'error', t.team_id::text,
+       'прогон считался по модели ёмкости, но снимка ёмкости этой команды нет'::text
+FROM plan_runs r
+JOIN plan_task_schedule s ON s.run_id = r.run_id AND s.decision = 'in_quarter'
+JOIN tasks t ON t.task_id = s.task_id
+WHERE r.params ? 'capacity_model'
+  AND NOT EXISTS (SELECT 1 FROM plan_team_capacity pc WHERE pc.run_id = r.run_id AND pc.team_id = t.team_id)
+GROUP BY r.run_id, t.team_id
 
 -- A2. Доли SP задачи не сходятся с её SP (ADR-020) ------------------------
 UNION ALL

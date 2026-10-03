@@ -639,22 +639,33 @@ def test_plan_is_deterministic() -> None:
 #  пересчёт, одна орбита на назначение, efficiency, кандидаты из вьюхи.
 # ---------------------------------------------------------------------------
 def test_dependency_finish_start_waits_for_the_end_of_the_blocker() -> None:
-    """ADR-013: `finish_start` — старт блокируемой после КОНЦА блокирующей.
+    """ADR-028: по умолчанию блокируемая стартует после КОНЦА блокирующей.
 
     A растянута на спринты 1..2 (120 ЧЧ при фонде 80), B зависит от A.
-    При `start_start` B влезает в спринт 2, при `finish_start` — только в 3-й.
+    При `finish_start` (умолчание) B встаёт только в 3-й, при явном `start_start` — во 2-й.
     """
     tasks = [task("A", roles={1: 120}, topo=1), task("B", roles={1: 40}, topo=2)]
     source = inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),))
 
-    start_start = planner.build_plan(source)
-    assert (start_start.schedule[0].start_sprint, start_start.schedule[0].end_sprint) == (1, 2)
+    default = planner.build_plan(source)
+    assert (default.schedule[0].start_sprint, default.schedule[0].end_sprint) == (1, 2)
+    assert starts_of(default) == {"A": 1, "B": 3}
+    assert default.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
+    assert planner.DEFAULT_DEPENDENCY_MODE == planner.DEPENDENCY_MODE_FINISH_START
+
+    start_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_START_START)
     assert starts_of(start_start) == {"A": 1, "B": 2}
     assert start_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
 
-    finish_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_FINISH_START)
-    assert starts_of(finish_start) == {"A": 1, "B": 3}
-    assert finish_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_FINISH_START
+
+def test_default_mode_never_starts_a_dependent_before_its_blocker_ends() -> None:
+    """Зависимая не завершается раньше предшественника при любых окнах (DA-09)."""
+    tasks = [task("A", roles={1: 240}, topo=1), task("B", roles={2: 40}, topo=2)]
+    source = inputs(tasks, [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),))
+
+    plan = planner.build_plan(source)
+    rows = {row.task_id: row for row in plan.schedule}
+    assert rows["B"].start_sprint > rows["A"].end_sprint
 
 
 def test_unknown_modes_are_rejected() -> None:
@@ -771,7 +782,7 @@ def test_objective_and_modes_are_recorded_in_params() -> None:
 
     assert plan.params["objective"] == planner.OBJECTIVE
     assert plan.params["initiative_mode"] == planner.INITIATIVE_MODE_GREEDY
-    assert plan.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
+    assert plan.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
     assert plan.params["replan_floor"] == 1
     assert plan.params["initiatives_planned"] == 1
     assert plan.params["initiatives_complete"] == 1
@@ -795,7 +806,7 @@ def test_big_task_spreads_its_sp_over_several_sprints() -> None:
         1: Decimal("7"),
         2: Decimal("1"),
     }
-    assert "растянуты" in row.reason_text
+    assert "выполняются вместе" in row.reason_text
 
 
 def test_completed_blocker_recalculates_live_start_from_fact_date() -> None:
@@ -896,3 +907,126 @@ def test_all_deferred_is_published_as_the_current_result() -> None:
     assert plan.status == "ok"
     assert plan.params["business_outcome"] == "nothing_scheduled"
     assert plan.schedule[0].decision == "deferred_next_pi"
+
+
+def test_sp_and_hours_move_together_in_every_sprint() -> None:
+    """ADR-029 (DA-07): спринт с долей SP содержит часы, спринт с часами — долю SP,
+    доли пропорциональны выполненной работе, сумма равна SP задачи, ёмкость цела."""
+    capacity = Decimal("3")
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 120}), task("U", sp=2, roles={1: 20}, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: capacity})
+    )
+    shares: dict[str, dict[int, Decimal]] = {}
+    for task_id, sprint, sp in plan.sp_shares:
+        shares.setdefault(task_id, {})[sprint] = sp
+    for row in plan.in_quarter:
+        hours: dict[int, Decimal] = {}
+        for item in plan.assignments:
+            if item.task_id == row.task_id:
+                hours[item.sprint_no] = hours.get(item.sprint_no, Decimal(0)) + item.work_hours
+        task_shares = shares.get(row.task_id, {})
+        assert set(task_shares) <= set(hours), "SP без часов"
+        assert set(hours) <= set(task_shares) or all(
+            hours[n] * Decimal(8) / sum(hours.values()) < Decimal("0.01") for n in set(hours) - set(task_shares)
+        ), "часы без SP"
+        total_sp = Decimal(8) if row.task_id == "T" else Decimal(2)
+        assert sum(task_shares.values()) == total_sp
+        total_hours = sum(hours.values())
+        for sprint, value in task_shares.items():
+            assert abs(value - total_sp * hours[sprint] / total_hours) <= Decimal("0.02")
+    for sprint in range(1, 7):
+        used = sum((sp for _t, n, sp in plan.sp_shares if n == sprint), Decimal(0))
+        assert used <= capacity
+
+
+def test_sp_cap_limits_hours_per_sprint_so_a_big_task_stretches() -> None:
+    """Часов у людей много, но ёмкость команды 2 SP за спринт: 8 SP — минимум 4 спринта."""
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 40})], [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: Decimal("2")})
+    )
+    row = plan.schedule[0]
+    assert row.decision == "in_quarter" and row.end_sprint - row.start_sprint + 1 >= 4
+    by_sprint: dict[int, Decimal] = {}
+    for item in plan.assignments:
+        by_sprint[item.sprint_no] = by_sprint.get(item.sprint_no, Decimal(0)) + item.work_hours
+    assert all(hours <= Decimal("10.01") for hours in by_sprint.values())  # 40 ч × 2/8 SP
+
+
+# ---------------------------------------------------------------------------
+#  DA-16: причина отказа строится из той же проверки, по которой принято решение
+# ---------------------------------------------------------------------------
+def _row(plan: planner.Plan, task_id: str) -> planner.ScheduleRow:
+    return next(row for row in plan.schedule if row.task_id == task_id)
+
+
+def test_sp_refusal_is_explained_with_the_numbers_that_decided_it() -> None:
+    """Часов у людей много, ёмкость 2 SP/спринт: A (8 SP) берёт 8 из 12, B (8 SP) не помещается."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=8, roles={1: 40}, rung=9, topo=1), task("B", sp=8, roles={1: 40}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: 2}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_TEAM_SP
+    assert refusal.reason_details["free_sp"] == "4.00" and refusal.reason_details["need_sp"] == "8"
+    rival = refusal.reason_details["competitors"][0]
+    assert rival["task_id"] == "A" and rival["higher_priority"] is True and Decimal(rival["sp"]) == 8
+    assert "выше в очереди" in refusal.reason_text and "свободно 4" in refusal.reason_text
+
+
+def test_hours_refusal_names_unplaced_and_free_hours_and_the_rival() -> None:
+    """Один инженер (480 ч за квартал): A занимает 400, B просит 200 — не хватает 120, свободно 80."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=9, topo=1), task("B", sp=1, roles={1: 200}, rung=1, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    item = refusal.reason_details["shortages"][0]
+    assert Decimal(item["need_hh"]) == 200 and Decimal(item["unplaced_hh"]) == 120 and Decimal(item["free_hh"]) == 80
+    assert item["competitors"][0]["task_id"] == "A" and item["competitors"][0]["higher_priority"] is True
+    assert "не удалось разместить 120" in refusal.reason_text and "свободно у людей роли 80" in refusal.reason_text
+
+
+def test_lower_priority_rival_is_not_called_higher() -> None:
+    """Если место заняла задача ниже в очереди, текст не врёт про «более приоритетную»."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=1, topo=1), task("B", sp=1, roles={1: 200}, rung=9, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    # B стоит выше A и берёт 200; A (400 ч) не помещается: конкурент B — выше в очереди.
+    refusal = _row(plan, "A")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    assert all(c["higher_priority"] for c in refusal.reason_details["shortages"][0]["competitors"])
+
+
+def test_dependency_chain_beyond_the_horizon_has_its_own_reason() -> None:
+    """A занимает весь квартал, B зависит от неё: самый ранний старт B — спринт 7 при шести спринтах."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 480}, rung=9, topo=1), task("B", sp=1, roles={2: 10}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),), team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_GRAPH_HORIZON
+    assert refusal.reason_details["earliest_start_sprint"] == 7
+    assert refusal.reason_details["blocking"][0]["task_id"] == "A"
+    assert "спринт 7" in refusal.reason_text and "шесть" not in refusal.reason_text
+
+
+def test_atomic_reason_checks_hours_and_sp_together() -> None:
+    """Задача X сама помещается, но Y инициативы — нет: X уходит с инициативой, и текст говорит про часы И SP."""
+    plan = planner.build_plan(
+        inputs([task("X", sp=1, roles={1: 40}, rung=5, topo=1, prodf="P"),
+                task("Y", sp=50, roles={1: 40}, rung=5, topo=2, prodf="P")],
+               [engineer("ENG-1")], team_sp={T1: 2}),
+        initiative_mode=planner.INITIATIVE_MODE_ATOMIC, simulate_next_pi=False,
+    )
+    x = _row(plan, "X")
+    assert x.decision != "in_quarter" and x.reason_code == planner.REASON_ATOMIC
+    assert "по часам и ёмкости SP" in x.reason_text

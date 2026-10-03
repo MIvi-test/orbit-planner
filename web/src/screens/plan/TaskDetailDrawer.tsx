@@ -192,7 +192,7 @@ export function TaskDetailDrawer({
           {progress.length > 0 && (
             <Stack gap={4}>
               <Text size="sm" fw={500}>Работа по спринтам</Text>
-              <Text size="xs" c="dimmed">SP — отдельный бюджет команды; перевод SP в часы не применяется. Результат достигается после последнего спринта с часами или SP.</Text>
+              <Text size="xs" c="dimmed">Часы и SP идут вместе: за спринт задача выполняет не больше доли работы, на которую хватает свободной ёмкости команды, а доля SP пропорциональна выполненным часам. Перевода SP в часы нет.</Text>
               {progress.map((row) => (
                 <Text key={row.sprint_no} size="sm">
                   Спринт {row.sprint_no}: {fmtHours(row.assigned_hours)}, {fmtSp(row.sp)} SP
@@ -255,10 +255,29 @@ export function TaskDetailDrawer({
   )
 }
 
+interface Competitor {
+  task_id: string
+  hours?: string
+  sp?: string
+  queue_rank: number
+  higher_priority: boolean
+}
+
+/** «T-1 (12 SP, выше в очереди)» — приоритет называем честно: ниже в очереди значит ниже. */
+function competitorsLabel(items: Competitor[], unit: string): string {
+  return items
+    .map((c) => `${c.task_id} (${c.sp ?? c.hours} ${unit}, ${c.higher_priority ? 'выше в очереди' : 'ниже в очереди'})`)
+    .join(', ')
+}
+
 function ReasonDetails({ details }: { details: Record<string, unknown> }) {
   const shortages = details.shortages
   const missingRoles = details.missing_roles
   const spBySprint = details.sp_by_sprint as Record<string, string> | undefined
+  const freeSpBySprint = details.free_sp_by_sprint as Record<string, string> | undefined
+  const spCompetitors = Array.isArray(details.competitors) ? (details.competitors as Competitor[]) : []
+  const horizonStart = typeof details.earliest_start_sprint === 'number' ? details.earliest_start_sprint : null
+  const blocking = Array.isArray(details.blocking) ? (details.blocking as Array<{ task_id: string; ready_from: number }>) : []
 
   return (
     <Stack gap={8}>
@@ -282,12 +301,36 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
             Не хватило часов
           </Text>
           <List size="sm">
-            {shortages.map((s: { role: string; need_hh: string; free_hh: string }, i: number) => (
+            {shortages.map((s: { role: string; need_hh: string; free_hh: string; unplaced_hh?: string; competitors?: Competitor[] }, i: number) => (
               <List.Item key={i}>
-                {s.role}: нужно {fmtHours(s.need_hh)}, свободно {fmtHours(s.free_hh)}
+                {s.role}: нужно {fmtHours(s.need_hh)}
+                {s.unplaced_hh ? `, не удалось разместить ${fmtHours(s.unplaced_hh)}` : ''}, свободно {fmtHours(s.free_hh)}
+                {s.competitors && s.competitors.length > 0 && (
+                  <Text size="xs" c="dimmed">часы заняты: {competitorsLabel(s.competitors, 'ЧЧ')}</Text>
+                )}
               </List.Item>
             ))}
           </List>
+        </Stack>
+      )}
+      {freeSpBySprint && (
+        <Stack gap={2}>
+          <Text size="sm" fw={500}>Свободная ёмкость команды в SP</Text>
+          <Text size="sm" className="tabular">
+            {Object.entries(freeSpBySprint).map(([sprint, sp]) => `спринт ${sprint}: ${sp}`).join(' · ')}
+          </Text>
+          {spCompetitors.length > 0 && (
+            <Text size="xs" c="dimmed">ёмкость заняли: {competitorsLabel(spCompetitors, 'SP')}</Text>
+          )}
+        </Stack>
+      )}
+      {horizonStart !== null && (
+        <Stack gap={2}>
+          <Text size="sm" fw={500}>Старт за горизонтом квартала</Text>
+          <Text size="sm">
+            Самый ранний допустимый старт — спринт {horizonStart}
+            {blocking.length > 0 ? `; задерживают: ${blocking.map((b) => `${b.task_id} (не раньше ${b.ready_from})`).join(', ')}` : ''}
+          </Text>
         </Stack>
       )}
       {spBySprint && Object.keys(spBySprint).length > 1 && (

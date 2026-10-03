@@ -122,7 +122,16 @@ def skills_block() -> str:
     )
 
 
-BLOCKS = {"plan": plan_block, "skills": skills_block}
+def dq_block() -> str:
+    counts = {row["severity"]: int(row["n"]) for row in db.query_dicts(
+        "SELECT severity, COUNT(*) AS n FROM dq_issues GROUP BY severity")}
+    return (
+        f"Итог загрузки: **{counts.get('error', 0)} блокирующих находок**, "
+        f"{counts.get('warning', 0)} предупреждений, {counts.get('info', 0)} информационных."
+    )
+
+
+BLOCKS = {"plan": plan_block, "skills": skills_block, "dq": dq_block}
 
 
 def apply(text: str) -> str:

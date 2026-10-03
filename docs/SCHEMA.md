@@ -284,8 +284,11 @@ ORDER BY sprint_no,
 | `tasks_seed_state`, `task_role_spent_seed` | снимок датасета: точка отсчёта воспроизведения |
 | `plan_task_sp` | доли Story Points задачи по спринтам (ADR-020) |
 | `ref_decision_reasons` | справочник причин решений планировщика |
+| `plan_team_capacity` | ёмкость команд (SP/спринт), с которой построен прогон: история + закрытые спринты (ADR-030) |
 | `app_users` | пользователи сервиса: имя, роль, SHA-256 токена (ADR-027); загрузка датасета их не стирает |
 | `audit_log` | журнал действий, меняющих данные: кто, что, итог (`ok` / `rejected` / `failed`) |
+
+Явный бизнес-приоритет инициативы — `initiatives.business_priority` (+ `_by`, `_at`, `_note`, ADR-032).
 
 Автор загрузки хранится в `load_batches.loaded_by`, `actual_uploads.uploaded_by`,
 `task_role_etc.revised_by`.

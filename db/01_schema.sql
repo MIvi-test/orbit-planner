@@ -9,7 +9,7 @@ BEGIN;
 
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
-DROP TABLE IF EXISTS audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
+DROP TABLE IF EXISTS plan_team_capacity, audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
@@ -186,9 +186,15 @@ CREATE TABLE initiatives (
     prodf_id      TEXT PRIMARY KEY,
     br_id         TEXT NOT NULL UNIQUE,
     title         TEXT,
-    priority_rung SMALLINT
+    priority_rung SMALLINT,
+    business_priority SMALLINT CHECK (business_priority BETWEEN 0 AND 1000),
+    business_priority_by TEXT,
+    business_priority_at TIMESTAMPTZ,
+    business_priority_note TEXT
 );
 COMMENT ON TABLE  initiatives IS 'Бизнес-инициатива заказчика. PRODF ↔ BR строго 1:1 (проверено на 15 инициативах).';
+COMMENT ON COLUMN initiatives.business_priority IS
+ 'Явный приоритет инициативы, заданный человеком (в шкале rung); NULL — берётся priority_rung из датасета.';
 COMMENT ON COLUMN initiatives.priority_rung IS 'Скоринг инициативы = MAX(rung) её задач (ADR-005). У 7 из 15 rung внутри инициативы неоднороден.';
 
 CREATE TABLE tasks (
@@ -539,4 +545,5 @@ INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VAL
   ('PI_CLOSED',            7, 'deferred_next_pi', 'Квартал завершён — остаток уходит в следующий PI',          'M2'),
   ('NOT_FEASIBLE_NEXT_PI', 8, 'cancelled',        'Не помещается и в следующий квартал — рекомендуем отменить или пересогласовать', 'M4');
 INSERT INTO ref_decision_reasons (code, ord, decision, label, legacy_reason) VALUES
-  ('ETC_REQUIRED', 9, 'deferred_next_pi', 'Нужно уточнить остаток работ или статус задачи', 'M2');
+  ('ETC_REQUIRED', 9, 'deferred_next_pi', 'Нужно уточнить остаток работ или статус задачи', 'M2'),
+  ('GRAPH_HORIZON', 11, 'deferred_next_pi', 'Цепочка зависимостей выводит старт за конец квартала', 'M3');

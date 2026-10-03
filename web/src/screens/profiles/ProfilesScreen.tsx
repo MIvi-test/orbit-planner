@@ -2,11 +2,18 @@ import { Accordion, Badge, Group, Paper, SimpleGrid, Skeleton, Stack, Text, Titl
 import { fmtHours, fmtSp } from '../../api/wire'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { QueryError } from '../../components/common/QueryError'
-import { useTeamProfile } from '../../hooks/useViews'
-import type { TeamProfileRow } from '../../types/views'
+import { usePlanTeamCapacity, useTeamCapacitySp, useTeamProfile } from '../../hooks/useViews'
+import { useRun } from '../../hooks/useRun'
+import { num } from '../../api/wire'
+import type { PlanTeamCapacityRow, TeamCapacitySpRow, TeamProfileRow } from '../../types/views'
 
 export function ProfilesScreen() {
   const query = useTeamProfile()
+  const { runId } = useRun()
+  const capacity = usePlanTeamCapacity(runId)
+  const basis = useTeamCapacitySp()
+  const capacityByTeam = new Map((capacity.data?.items ?? []).map((item) => [item.team_id, item]))
+  const basisByTeam = new Map((basis.data?.items ?? []).map((item) => [item.team_id, item]))
 
   if (query.isPending) {
     return (
@@ -48,14 +55,16 @@ export function ProfilesScreen() {
         </Paper>
       ) : (
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
-          {rows.map((row) => <TeamProfile key={row.team_id} row={row} />)}
+          {rows.map((row) => (
+            <TeamProfile key={row.team_id} row={row} capacity={capacityByTeam.get(row.team_id)} basis={basisByTeam.get(row.team_id)} />
+          ))}
         </SimpleGrid>
       )}
     </Stack>
   )
 }
 
-function TeamProfile({ row }: { row: TeamProfileRow }) {
+function TeamProfile({ row, capacity, basis }: { row: TeamProfileRow; capacity?: PlanTeamCapacityRow; basis?: TeamCapacitySpRow }) {
   return (
     <Paper withBorder p="lg">
       <Stack gap="lg">
@@ -73,10 +82,11 @@ function TeamProfile({ row }: { row: TeamProfileRow }) {
 
         <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
           <Stat label="ЧЧ / спринт" value={fmtHours(row.hours_per_sprint)} />
-          <Stat label="Velocity" value={nullableSp(row.avg_velocity)} />
-          <Stat label="SP / спринт" value={nullableSp(row.available_sp_per_sprint)} />
-          <Stat label="SP / PI" value={nullableSp(row.available_sp_per_pi)} />
+          <Stat label="Velocity (история)" value={nullableSp(row.avg_velocity)} />
+          <Stat label={capacity ? 'SP / спринт (прогон)' : 'SP / спринт'} value={nullableSp(capacity?.available_sp_per_sprint ?? row.available_sp_per_sprint)} />
+          <Stat label="SP / PI (история)" value={nullableSp(row.available_sp_per_pi)} />
         </SimpleGrid>
+        <CapacityBasis capacity={capacity} basis={basis} />
 
         <div>
           <Text size="xs" c="dimmed">Живой бэклог</Text>
@@ -156,4 +166,29 @@ function RoleBlock({
 
 function nullableSp(value: string | null): string {
   return value === null ? '—' : fmtSp(value)
+}
+
+/** Откуда взялась ёмкость: сколько наблюдений, сколько из них факт этого квартала, насколько выборка шатка. */
+function CapacityBasis({ capacity, basis }: { capacity?: PlanTeamCapacityRow; basis?: TeamCapacitySpRow }) {
+  if (!capacity && !basis) return null
+  const points = capacity ? capacity.history_points + capacity.observed_points : basis?.history_points ?? 0
+  const observed = capacity?.observed_points ?? 0
+  const stale = (basis?.history_age_days ?? 0) > 90
+  const thin = points < 3
+  const spread = basis?.velocity_stddev ? num(basis.velocity_stddev) : null
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed">
+        Ёмкость по {points} наблюдениям
+        {observed > 0 ? ` (история ${capacity?.history_points}, факт текущего квартала ${observed})` : ' (история; пересчёты добавят закрытые спринты)'}
+        {spread !== null ? ` · разброс истории ±${spread.toFixed(1)} SP` : ''}.
+      </Text>
+      {(stale || thin) && (
+        <Text size="xs" c="orange.8">
+          {stale ? `Последнее наблюдение истории — ${basis?.history_to}, ${basis?.history_age_days} дн. до начала квартала. ` : ''}
+          {thin ? 'Выборка малая: оценка скорости шаткая.' : ''}
+        </Text>
+      )}
+    </Stack>
+  )
 }

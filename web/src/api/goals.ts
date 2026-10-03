@@ -9,3 +9,11 @@ export function confirmTaskGoal(
     confirmed_by: confirmedBy, note,
   })
 }
+
+/** Задать (value) или снять (null) явный бизнес-приоритет инициативы; план пересчитывается. */
+export function setInitiativePriority(
+  prodfId: string, value: number | null, note: string,
+): Promise<{ prodf_id: string; business_priority: number | null; plan: PlanRunSummary }> {
+  return postJson('/initiatives/priority', { prodf_id: prodfId, business_priority: value, note })
+}
+

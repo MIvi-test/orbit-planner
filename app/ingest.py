@@ -92,11 +92,30 @@ def _strip_transaction(sql: str) -> str:
 # ---------------------------------------------------------------------------
 #  прогон планировщика
 # ---------------------------------------------------------------------------
+def baseline_modes() -> dict[str, str]:
+    """Режимы базового прогона: пересчёты наследуют их, а не сбрасываются к умолчанию."""
+    row = db.query_one(
+        "SELECT params FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible') "
+        "ORDER BY run_id LIMIT 1"
+    )
+    params = (row or {}).get("params") or {}
+    return {
+        "dependency_mode": params.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE),
+        "initiative_mode": params.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
+        "priority_strategy": params.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY),
+    }
+
+
 def run_plan(as_of_sprint: int) -> dict[str, Any]:
-    """Один прогон: чтение → чистая функция → запись. Возвращает краткую сводку."""
+    """Один прогон: чтение → чистая функция → запись. Возвращает краткую сводку.
+
+    Базовый прогон (`as_of_sprint = 0`) идёт с режимами по умолчанию; пересчёты — с теми же
+    режимами, с которыми построена база сравнения (зависимости, инициативы, стратегия приоритета).
+    """
     inputs = planner.load_inputs()
     baseline_starts = planner.load_baseline_starts() if as_of_sprint > 0 else {}
-    plan = planner.build_plan(inputs, as_of_sprint=as_of_sprint, baseline_starts=baseline_starts)
+    modes = baseline_modes() if as_of_sprint > 0 else {}
+    plan = planner.build_plan(inputs, as_of_sprint=as_of_sprint, baseline_starts=baseline_starts, **modes)
     run_id = planner.write_plan(plan)
     return {
         "run_id": run_id,
@@ -751,6 +770,30 @@ def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,
         plan = run_plan(min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]) + 1))
     return {"task_id": task_id, "role_id": role_id,
             "remaining_hours": str(remaining_hours), "revision_id": revision_id, "plan": plan}
+
+
+def set_initiative_priority(prodf_id: str, business_priority: int | None, note: str,
+                            *, actor: str | None = None) -> dict[str, Any]:
+    """Задать (или снять) явный бизнес-приоритет инициативы и пересчитать план (DA-11, ADR-032)."""
+    if business_priority is not None and not 0 <= business_priority <= 1000:
+        raise UploadError("приоритет должен быть целым числом от 0 до 1000 в шкале rung")
+    if business_priority is not None and not note.strip():
+        raise UploadError("укажите основание приоритета: его потом спросят")
+    with WRITE_LOCK, db.atomic_transaction():
+        if db.query_one("SELECT 1 AS ok FROM initiatives WHERE prodf_id = %s", (prodf_id,)) is None:
+            raise UploadError(f"нет инициативы {prodf_id}")
+        with db.transaction() as cur:
+            cur.execute(
+                """UPDATE initiatives SET business_priority = %s, business_priority_by = %s,
+                          business_priority_at = CASE WHEN %s IS NULL THEN NULL ELSE now() END,
+                          business_priority_note = %s
+                   WHERE prodf_id = %s""",
+                (business_priority, actor if business_priority is not None else None, business_priority,
+                 note.strip() or None, prodf_id),
+            )
+        pi = _pi()
+        plan = run_plan(min(_last_sprint(pi["pi_id"]) + 1, int(pi["sprint_count"]) + 1))
+    return {"prodf_id": prodf_id, "business_priority": business_priority, "plan": plan}
 
 
 def confirm_task_goal(task_id: str, closure_code: str, goal_code: str | None,

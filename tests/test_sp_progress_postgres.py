@@ -55,7 +55,8 @@ def test_remaining_sp_and_share_invariant_use_confirmed_progress() -> None:
                 SELECT 1, 'A', n, 2 FROM generate_series(2, 6) n;
             """)
             cursor.execute(planner.LIVE_TASKS_SQL)
-            assert cursor.fetchone()[6] == Decimal(10)  # remaining_sp
+            columns = [column.name for column in cursor.description]
+            assert cursor.fetchone()[columns.index("remaining_sp")] == Decimal(10)
             cursor.execute("""
                 SELECT check_code FROM v_plan_violations
                 WHERE run_id = 1 AND check_code = 'SP_SHARES_MISMATCH'

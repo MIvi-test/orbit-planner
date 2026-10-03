@@ -51,6 +51,9 @@ SELECT rm.task_id, r.canonical_name AS role_name
 FROM v_task_remaining_hh rm JOIN roles r ON r.role_id = rm.role_id
 WHERE rm.remaining_hours > 0
 """
+SP_SQL = """
+SELECT task_id, sp FROM plan_task_sp WHERE run_id = %s AND sprint_no = %s
+"""
 HOURS_SQL = """
 SELECT a.task_id, r.canonical_name AS role_name, SUM(a.hours) AS hours
 FROM plan_assignments a JOIN roles r ON r.role_id = a.role_id
@@ -85,6 +88,9 @@ def build_csv(sprint_no: int, run_id: int) -> tuple[str, bytes]:
         needed.setdefault(row["task_id"], set()).add(row["role_name"])
 
     plan = {row["task_id"]: row for row in db.query_dicts(PLAN_SQL, (run_id,))}
+    # Подтверждённый прогресс по SP за спринт: доля SP плана (DA-06/DA-27). Без него факт
+    # знал бы только о завершённых задачах, и наблюдаемая скорость была бы искусственно нулевой.
+    sp_plan = {row["task_id"]: Decimal(row["sp"]) for row in db.query_dicts(SP_SQL, (run_id, sprint_no))}
     hours: dict[tuple[str, str], Decimal] = {
         (row["task_id"], row["role_name"]): Decimal(row["hours"])
         for row in db.query_dicts(HOURS_SQL, (run_id, sprint_no))
@@ -124,6 +130,8 @@ def build_csv(sprint_no: int, run_id: int) -> tuple[str, bytes]:
             "actual_start": dates["start_date"] if row["start_sprint"] == sprint_no else "",
             "actual_end": dates["end_date"] if status == "Done" else "",
             "comment": comment,
+            "completed_sp": str((sp_plan.get(task_id, Decimal("0")) * share).quantize(Decimal("0.01")))
+            if sp_plan.get(task_id) else "",
         }
         writer.writerow(
             [fixed.get(column, "") if column in FIXED_COLUMNS else spent.get(column, "")
