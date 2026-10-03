@@ -227,7 +227,9 @@ def test_required_role_policy() -> None:
     assert auth.required_role("GET", "/assets/x.js") is None
     assert auth.required_role("GET", "/api/views/plan_runs") == "viewer"
     assert auth.required_role("POST", "/api/actuals") == "planner"
+    assert auth.required_role("POST", "/api/dq-issues/review") == "planner"
     assert auth.required_role("POST", "/api/dataset") == "admin"
+    assert auth.required_role("POST", "/api/pi-contexts") == "admin"
     assert auth.required_role("POST", "/api/anything-new") == "admin"  # неизвестная запись — строго
 
 

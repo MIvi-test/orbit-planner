@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import defaultdict
@@ -116,6 +117,50 @@ _TELEMETRY = _DbTelemetry()
 _ATOMIC_CONNECTION: ContextVar[psycopg.Connection | None] = ContextVar(
     "pi_planner_atomic_connection", default=None
 )
+_SCHEMA: ContextVar[str] = ContextVar("pi_planner_schema", default="public")
+SCHEMA_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+class UnknownPIContext(ValueError):
+    pass
+
+
+def current_schema() -> str:
+    return _SCHEMA.get()
+
+
+@contextmanager
+def use_schema(schema: str) -> Iterator[None]:
+    """Select an isolated PI schema for every connection in this request."""
+    if not SCHEMA_NAME.fullmatch(schema):
+        raise ValueError("invalid PI schema")
+    previous = _SCHEMA.get()
+    token = _SCHEMA.set(schema)
+    active = _ATOMIC_CONNECTION.get()
+    if active is not None:
+        active.execute(f"SET LOCAL search_path TO {schema}")
+    try:
+        yield
+    finally:
+        if active is not None:
+            active.execute(f"SET LOCAL search_path TO {previous}")
+        _SCHEMA.reset(token)
+
+
+@contextmanager
+def use_pi_context(pi_id: str | None, scenario_id: str | None = None) -> Iterator[None]:
+    if not pi_id:
+        with use_schema("public"):
+            yield
+        return
+    row = query_one(
+        "SELECT schema_name FROM public.pi_contexts WHERE pi_id = %s AND scenario_id = %s",
+        (pi_id, scenario_id or "main"),
+    )
+    if row is None:
+        raise UnknownPIContext(f"PI {pi_id} / {scenario_id or 'main'} не найден")
+    with use_schema(row["schema_name"]):
+        yield
 
 
 def metrics_snapshot() -> dict[str, Any]:
@@ -181,7 +226,8 @@ def connection(read_only: bool | None = None) -> Iterator[psycopg.Connection]:
     cfg = load_config()
     effective_read_only = cfg["read_only"] if read_only is None else read_only
 
-    opts = [f"statement_timeout={int(cfg['statement_timeout_ms'])}"]
+    opts = [f"statement_timeout={int(cfg['statement_timeout_ms'])}",
+            f"search_path={_SCHEMA.get()}"]
     if effective_read_only:
         opts.append("default_transaction_read_only=on")
 
@@ -386,7 +432,7 @@ def health() -> dict[str, Any]:
                 """
                 SELECT COUNT(*) AS tables
                 FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
                 """
             )
             tables = cur.fetchone() or {}
@@ -394,7 +440,7 @@ def health() -> dict[str, Any]:
                 """
                 SELECT COUNT(*) AS views
                 FROM information_schema.views
-                WHERE table_schema = 'public'
+                WHERE table_schema = current_schema()
                 """
             )
             views = cur.fetchone() or {}

@@ -4,11 +4,13 @@
  */
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { notifications } from '@mantine/notifications'
 import { Badge, Button, Drawer, Group, List, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanGoalOutcomeRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
 import { confirmTaskGoal } from '../../api/goals'
+import { fetchTaskTrace } from '../../api/client'
 import { useRun } from '../../hooks/useRun'
 import { useAuth } from '../../hooks/useAuth'
 
@@ -46,8 +48,15 @@ export function TaskDetailDrawer({
   onClose: () => void
 }) {
   const queryClient = useQueryClient()
-  const { isDefault, setRunId } = useRun()
+  const { isDefault, setRunId, runId } = useRun()
   const { me, can } = useAuth()
+  const [traceOpen, setTraceOpen] = useState(false)
+  const traceQ = useQuery({
+    queryKey: ['task-trace', runId, task?.task_id],
+    queryFn: () => fetchTaskTrace(runId!, task!.task_id),
+    enabled: traceOpen && runId !== null && task !== null,
+    retry: false,
+  })
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [closureCode, setClosureCode] = useState<string | null>('ACHIEVED')
   const [goalCode, setGoalCode] = useState<string | null>(null)
@@ -117,6 +126,21 @@ export function TaskDetailDrawer({
               <Text size="sm">{schedule.reason_text}</Text>
             </Stack>
           )}
+
+          <Button size="xs" variant="subtle" onClick={() => setTraceOpen(!traceOpen)}>
+            {traceOpen ? 'Скрыть источники решения' : 'Показать источники решения'}
+          </Button>
+          {traceOpen && (traceQ.isPending ? <Text size="xs" c="dimmed">Загружаем снимок решения…</Text>
+            : traceQ.error ? <Text size="xs" c="red">{traceQ.error.message}</Text>
+            : <Stack gap={4}>
+                <Text size="xs" c="dimmed">Алгоритм: {traceQ.data.run.algorithm}; формулы: {String(traceQ.data.run.params.formula_version ?? 'не указаны')}; факт: {traceQ.data.run.actuals_upload_id ?? 'исходный датасет'}.</Text>
+                <Text size="xs" c="dimmed">Excel SHA-256: {traceQ.data.source_batch?.source_sha256 ?? String(traceQ.data.run.params.source_sha256 ?? 'источник недоступен')}; конфигурация: {traceQ.data.source_batch?.config_sha256 ?? 'не записана'}.</Text>
+                {traceQ.data.role_demands.map((row) => <Text size="xs" key={row.role_id}>{row.role_name}: требовалось {row.needed_hours} ЧЧ.</Text>)}
+                {traceQ.data.assignments.map((row, index) => <Text size="xs" key={index}>Спринт {row.sprint_no}: {row.engineer_id}, роль {row.role_id}, назначено {row.hours} ЧЧ; фонд орбиты на момент прогона {row.available_hours ?? 'не сохранён'} ЧЧ.</Text>)}
+                {traceQ.data.dependency_bound && <Text size="xs">Граница зависимости: спринт {traceQ.data.dependency_bound.earliest_start_sprint}.</Text>}
+                {!traceQ.data.source_available && <Text size="xs" c="dimmed">Исходная загрузка больше не доступна в базе; снимок прогона сохранён.</Text>}
+                {traceQ.data.source_records.map((record, index) => <Text size="xs" key={index}>{record.entity} / {record.entity_id}, {record.field_name}: {record.source_sheet}!{record.source_cell}, исходно «{record.raw_value ?? 'пусто'}», после нормализации «{record.normalized_value ?? 'пусто'}».</Text>)}
+              </Stack>)}
 
           {dependencyBound && dependencyBound.earliest_start_sprint > 1 && (
             <Text size="sm" c="dimmed">

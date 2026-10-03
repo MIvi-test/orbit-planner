@@ -115,6 +115,15 @@ def write_plan(plan: Plan) -> int:
                  for row in plan.team_capacity],
             )
 
+        if plan.capacity_snapshot:
+            cur.executemany(
+                """INSERT INTO plan_capacity_snapshot
+                   (run_id, engineer_id, team_id, sprint_no, available_hours)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                [(run_id, engineer_id, team_id, sprint_no, hours)
+                 for engineer_id, team_id, sprint_no, hours in plan.capacity_snapshot],
+            )
+
         if plan.graph_bounds:
             cur.executemany(
                 """INSERT INTO plan_dependency_bounds

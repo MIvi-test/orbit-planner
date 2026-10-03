@@ -70,6 +70,17 @@ def engineer(
     )
 
 
+def test_continuing_task_keeps_previous_engineer_when_capacity_allows() -> None:
+    current = inputs(
+        [task("A", status="InProgress", roles={1: 10})],
+        [engineer("E1", rate="1.00"), engineer("E2", rate="0.50")],
+    )
+    stable = replace(current, preferred_engineers={("A", 1): frozenset({"E2"})})
+    plan = planner.build_plan(stable, simulate_next_pi=False)
+    assert {row.engineer_id for row in plan.assignments if row.task_id == "A"} == {"E2"}
+    assert plan.params["stability"]["kept_role_pairs"] == 1
+
+
 def inputs(
     tasks: list[planner.TaskInput],
     engineers: list[planner.EngineerInput],

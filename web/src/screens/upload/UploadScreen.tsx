@@ -4,6 +4,7 @@ import { ActualsDropzone } from './ActualsDropzone'
 import { UploadHistory } from './UploadHistory'
 import { useRun } from '../../hooks/useRun'
 import { useAuth } from '../../hooks/useAuth'
+import { CreatePiContext } from './CreatePiContext'
 
 export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
   const { setRunId } = useRun()
@@ -28,6 +29,7 @@ export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
           У вашей роли нет права загружать данные. Попросите администратора выдать роль «планировщик».
         </Alert>
       )}
+      {can('admin') && <CreatePiContext />}
 
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
         {can('admin') && <DatasetDropzone onDone={openResult} />}

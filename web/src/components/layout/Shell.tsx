@@ -2,6 +2,7 @@ import { AppShell, Badge, Button, Group, ScrollArea, Tabs, Text, Tooltip } from 
 import type { ReactNode } from 'react'
 import { HealthBadge } from './HealthBadge'
 import { PiBadge } from './PiBadge'
+import { PiContextSelect } from './PiContextSelect'
 import { RunSelect } from './RunSelect'
 import type { ScreenId } from '../../hooks/useHashRoute'
 import { useAuth } from '../../hooks/useAuth'
@@ -41,6 +42,7 @@ export function Shell({
             </Text>
           </Group>
           <Group gap="md" wrap="nowrap">
+            <PiContextSelect />
             <PiBadge />
             <RunSelect />
             <HealthBadge />

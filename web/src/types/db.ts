@@ -70,6 +70,16 @@ export interface audit_log {
   detail: Json;
 }
 
+/** таблица public.dq_issue_reviews — 6 кол. · История решений по находке. Исходная находка ETL не перезаписывается. */
+export interface dq_issue_reviews {
+  review_id: number;
+  issue_id: number;
+  decision: 'acknowledged' | 'resolved' | 'reopened';
+  reviewer: string;
+  note: string;
+  reviewed_at: string;
+}
+
 /** таблица public.dq_issues — 7 кол. · Журнал находок ETL. Не блокирует загрузку — материал для слайда «что не так с исходными данными». */
 export interface dq_issues {
   issue_id: number;
@@ -136,16 +146,26 @@ export interface kpi_snapshots {
   calculation_status: 'calculated' | 'no_commitment' | 'no_plan' | 'no_relevant_skills';
 }
 
-/** таблица public.load_batches — 8 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
+/** таблица public.load_batches — 9 кол. · Один прогон ETL. sha256 исходного xlsx — чтобы видеть, на какой версии датасета считали. */
 export interface load_batches {
   batch_id: number;
   source_file: string;
   source_sha256: string;
+  config_sha256: string | null;
   etl_version: string;
   pi_start: string;
   loaded_at: string;
   row_counts: Json;
   loaded_by: string | null;
+}
+
+/** таблица public.pi_contexts — 5 кол. */
+export interface pi_contexts {
+  pi_id: string;
+  scenario_id: string;
+  schema_name: string;
+  dataset_version: string;
+  created_at: string;
 }
 
 /** таблица public.pi_periods — 6 кол. · PI начинается 01.07.2026 и длится шесть двухнедельных спринтов до 22.09.2026 (ADR-025). Фонд ставки = 6 × 80 = 480 ЧЧ; остаток календарного квартала не входит в PI. */
@@ -178,6 +198,15 @@ export interface plan_baseline {
   task_id: string;
   planned_sp: number;
   committed: boolean;
+}
+
+/** таблица public.plan_capacity_snapshot — 5 кол. */
+export interface plan_capacity_snapshot {
+  run_id: number;
+  engineer_id: string;
+  team_id: string;
+  sprint_no: number;
+  available_hours: number;
 }
 
 /** таблица public.plan_decision_goal_map — 3 кол. */
@@ -322,6 +351,19 @@ export interface skills {
   skill_id: number;
   name: string;
   normalized_name: string;
+}
+
+/** таблица public.source_provenance — 9 кол. */
+export interface source_provenance {
+  batch_id: number;
+  entity: string;
+  entity_id: string;
+  field_name: string;
+  source_sheet: string;
+  source_cell: string;
+  raw_value: string | null;
+  normalized_value: string | null;
+  rule_version: string;
 }
 
 /** таблица public.sprints — 5 кол. · Шесть двухнедельных спринтов от PI_START до PI_END; календарь задаётся текущей спецификацией. */
@@ -523,6 +565,22 @@ export interface v_bus_factor_skill {
   risk: string | null;
   critical: boolean | null;
   demand_source: string | null;
+}
+
+/** вьюха public.v_dq_issue_worklist — 12 кол. */
+export interface v_dq_issue_worklist {
+  issue_id: number | null;
+  batch_id: number | null;
+  entity: string | null;
+  entity_id: string | null;
+  rule_code: string | null;
+  severity: string | null;
+  detail: string | null;
+  review_status: string | null;
+  reviewer: string | null;
+  review_note: string | null;
+  reviewed_at: string | null;
+  is_blocking: boolean | null;
 }
 
 /** вьюха public.v_dq_summary — 4 кол. */
@@ -772,6 +830,18 @@ export interface v_sprint_deviation {
   deviation: string | null;
 }
 
+/** вьюха public.v_sprint_forecast_accuracy — 8 кол. · По каждому закрытому спринту: прогноз, сделанный перед ним (SP к закрытию), против факта. Помогает отличить провал исполнения от плохого прогноза; позднее пересчёт прошлое обещание не улучшает. */
+export interface v_sprint_forecast_accuracy {
+  run_id: number | null;
+  sprint_no: number | null;
+  planned_sp: number | null;
+  forecast_run_id: number | null;
+  forecast_done_sp: number | null;
+  actual_done_sp: number | null;
+  forecast_value: number | null;
+  actual_value: number | null;
+}
+
 /** вьюха public.v_sprint_fund_factor — 6 кол. · Фонд спринта = rate × fte_hours_per_sprint × factor. В текущем PI все шесть спринтов полные; для спринта иной длины factor изменит доступные часы. Проверки ENGINEER_OVERLOAD и ORBIT_OVERLOAD берут фонд именно отсюда. */
 export interface v_sprint_fund_factor {
   pi_id: string | null;
@@ -879,6 +949,7 @@ export type RelationName =
   | 'alerts'
   | 'app_users'
   | 'audit_log'
+  | 'dq_issue_reviews'
   | 'dq_issues'
   | 'engineer_orbits'
   | 'engineer_skill_declarations'
@@ -887,9 +958,11 @@ export type RelationName =
   | 'initiatives'
   | 'kpi_snapshots'
   | 'load_batches'
+  | 'pi_contexts'
   | 'pi_periods'
   | 'plan_assignments'
   | 'plan_baseline'
+  | 'plan_capacity_snapshot'
   | 'plan_decision_goal_map'
   | 'plan_dependency_bounds'
   | 'plan_role_demand_snapshot'
@@ -907,6 +980,7 @@ export type RelationName =
   | 'schema_migrations'
   | 'skill_aliases'
   | 'skills'
+  | 'source_provenance'
   | 'sprints'
   | 'task_actual_spent'
   | 'task_actuals'
@@ -927,6 +1001,7 @@ export type RelationName =
   | 'v_backlog_demand'
   | 'v_bus_factor'
   | 'v_bus_factor_skill'
+  | 'v_dq_issue_worklist'
   | 'v_dq_summary'
   | 'v_engineer_absence_risk'
   | 'v_engineer_role_coverage'
@@ -946,6 +1021,7 @@ export type RelationName =
   | 'v_role_supply_hh'
   | 'v_satellite_capacity'
   | 'v_sprint_deviation'
+  | 'v_sprint_forecast_accuracy'
   | 'v_sprint_fund_factor'
   | 'v_task_board'
   | 'v_task_done_sprint'

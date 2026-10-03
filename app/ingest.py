@@ -150,11 +150,22 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None)
 
     from etl import load as etl_load  # тяжёлый импорт (openpyxl) — только когда нужен
 
+    current_pi = {"pi_id": etl_load.C.PI_ID, "start_date": etl_load.C.PI_START}
+    if db.current_schema() != "public":
+        current_pi = db.query_one(
+            "SELECT pi_id, start_date FROM pi_periods ORDER BY pi_id LIMIT 1"
+        ) or current_pi
+
     with WRITE_LOCK, tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / name
         path.write_bytes(data)
         try:
-            seed_sql, counts, dq = etl_load.build_seed_sql(path)
+            if current_pi["pi_id"] == etl_load.C.PI_ID and current_pi["start_date"] == etl_load.C.PI_START:
+                seed_sql, counts, dq = etl_load.build_seed_sql(path)
+            else:
+                seed_sql, counts, dq = etl_load.build_seed_sql(
+                    path, pi_id=current_pi["pi_id"], pi_start=current_pi["start_date"],
+                )
         except etl_load.DataQualityError as exc:
             raise UploadError(str(exc), exc.problems) from None
         except etl_load.DependencyGraphError as exc:
@@ -174,6 +185,12 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None)
                 )
 
             plan = run_plan(0)
+            with db.transaction() as cur:
+                cur.execute(
+                    "UPDATE public.pi_contexts SET dataset_version = %s "
+                    "WHERE schema_name = current_schema()",
+                    (hashlib.sha256(data).hexdigest(),),
+                )
     return {
         "dataset": name,
         "sha256": hashlib.sha256(data).hexdigest(),

@@ -119,9 +119,9 @@ def authenticate(header: str | None) -> Principal | None:
 # ---------------------------------------------------------------- политика
 # (метод, путь) -> минимальная роль; None — маршрут публичный.
 PUBLIC_GET = ("/api/livez", "/api/health", "/api/version")
-ADMIN_POST = ("/api/dataset",)
+ADMIN_POST = ("/api/dataset", "/api/pi-contexts")
 PLANNER_POST = ("/api/actuals", "/api/actuals/role-review", "/api/tasks/goal-confirmation",
-                "/api/initiatives/priority")
+                "/api/initiatives/priority", "/api/dq-issues/review")
 
 
 def required_role(method: str, path: str) -> str | None:

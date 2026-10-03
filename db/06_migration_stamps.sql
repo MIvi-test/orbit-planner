@@ -37,5 +37,8 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0066_team_velocity_observed', 'baseline'),
   ('0067_graph_horizon_reason', 'baseline'),
   ('0068_initiative_business_priority', 'baseline'),
-  ('0069_sprint_forecast_accuracy', 'baseline')
+  ('0069_sprint_forecast_accuracy', 'baseline'),
+  ('0070_dq_issue_worklist', 'baseline'),
+  ('0071_source_trace', 'baseline'),
+  ('0072_pi_contexts', 'baseline')
 ON CONFLICT (version) DO NOTHING;

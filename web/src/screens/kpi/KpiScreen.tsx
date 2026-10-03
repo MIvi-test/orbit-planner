@@ -6,7 +6,8 @@
  * - Bus Factor — счётчик, а не процент: отдельная плашка-число.
  * - `details.note` и `details.method` — готовый русский текст, как есть.
  */
-import { Group, Paper, ScrollArea, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+import { Group, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import { useKpiSnapshots, useSprintForecastAccuracy, useSprints } from '../../hooks/useViews'
 import { QueryError, anyPending, firstError } from '../../components/common/QueryError'
@@ -15,6 +16,7 @@ import { KpiStamp, toneOf } from '../../components/common/KpiStamp'
 import { sprintGridTemplate } from '../../components/common/sprintGrid'
 import { RISK_COLOR } from '../../components/common/RiskRail'
 import { fmtDateShort, fmtSp, num } from '../../api/wire'
+import { fetchPlanQuality } from '../../api/client'
 import type {
   BusFactorKpiDetails,
   KpiSnapshotRow,
@@ -26,7 +28,14 @@ import type {
 const n = (v: string | null): number | null => (v === null ? null : num(v))
 
 export function KpiScreen() {
-  const { runId } = useRun()
+  const { runId, runs } = useRun()
+  const latestRunId = Math.max(0, ...runs.map((run) => run.run_id))
+  const qualityQ = useQuery({
+    queryKey: ['plan-quality', runId],
+    queryFn: () => fetchPlanQuality(runId!),
+    enabled: runId !== null && runId === latestRunId,
+    retry: false,
+  })
   const kpiQ = useKpiSnapshots(runId)
   const sprintsQ = useSprints()
   const accuracyQ = useSprintForecastAccuracy(runId)
@@ -88,8 +97,31 @@ export function KpiScreen() {
           {bus && <BusFactorBlock row={bus} />}
         </>
       )}
+      {runId === latestRunId && <Paper withBorder p="md">
+        <Stack gap="sm">
+          <Title order={3}>Качество и потери плана</Title>
+          {qualityQ.isPending ? <Text size="sm" c="dimmed">Считаем показатели…</Text>
+            : qualityQ.error ? <QueryError error={qualityQ.error} title="Не удалось посчитать качество плана" />
+            : <>
+              <Text size="xs" c="dimmed">{qualityQ.data.method}</Text>
+              <SimpleGrid cols={{ base: 2, md: 3 }}>
+                <QualityNumber label="Подтверждённая ценность" value={`${qualityQ.data.completed_value.sp} SP`} detail={`${qualityQ.data.completed_value.tasks} задач`} />
+                <QualityNumber label="Частичные инициативы" value={qualityQ.data.partial_initiatives.length} detail={qualityQ.data.partial_initiatives.map((item) => item.prodf_id).join(', ') || 'нет'} />
+                <QualityNumber label="Ожидание зависимостей" value={`${qualityQ.data.dependency_wait.earliest_wait_sprints} спринтов`} detail={`${qualityQ.data.dependency_wait.tasks} задач с нижней границей позже первого спринта`} />
+                <QualityNumber label="Перенос обещанного" value={`${qualityQ.data.deferred_commitments.sp} SP`} detail={`${qualityQ.data.deferred_commitments.tasks} задач`} />
+                <QualityNumber label="Внепланово завершено" value={`${qualityQ.data.unplanned_completed_sp} SP`} detail="Вне канонического обещания Недели 0" />
+                <QualityNumber label="Смены исполнителей" value={qualityQ.data.people_switches.length} detail={qualityQ.data.people_switches.map((item) => item.task_id).join(', ') || 'нет'} />
+              </SimpleGrid>
+              {qualityQ.data.scarce_unused_roles.length > 0 && <Text size="sm">Незадействованный фонд дефицитных ролей: {qualityQ.data.scarce_unused_roles.map((item) => `${item.role} ${item.unused_hh} ЧЧ`).join('; ')}.</Text>}
+            </>}
+        </Stack>
+      </Paper>}
     </Stack>
   )
+}
+
+function QualityNumber({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return <Paper withBorder p="sm"><Text size="xs" c="dimmed">{label}</Text><Text fw={700} size="lg">{value}</Text><Text size="xs" c="dimmed">{detail}</Text></Paper>
 }
 
 // ------------------------------------------------ процент выполнения квартала

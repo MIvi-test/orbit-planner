@@ -279,16 +279,6 @@ export interface TeamCapacitySpRow {
   history_age_days: number | null
 }
 
-/** Ёмкость команды, с которой построен прогон (ADR-030). */
-export interface DqIssueRow {
-  issue_id: number
-  entity: string
-  entity_id: string | null
-  rule_code: string
-  severity: 'error' | 'warning' | 'info'
-  detail: string
-}
-
 /** Прогноз перед спринтом против факта (DA-32). */
 export interface SprintForecastAccuracyRow {
   run_id: number
@@ -410,6 +400,30 @@ export interface DqSummaryRow {
   severity: 'info' | 'warning' | 'error'
   n: number
   example: string | null
+}
+
+export interface DqIssueRow {
+  issue_id: number
+  batch_id: number
+  entity: string
+  entity_id: string | null
+  rule_code: string
+  severity: 'info' | 'warning' | 'error'
+  detail: string
+  review_status: 'open' | 'acknowledged' | 'resolved' | 'reopened'
+  reviewer: string | null
+  review_note: string | null
+  reviewed_at: string | null
+  is_blocking: boolean
+}
+
+export interface DqIssueReviewRow {
+  review_id: number
+  issue_id: number
+  decision: 'acknowledged' | 'resolved' | 'reopened'
+  reviewer: string
+  note: string
+  reviewed_at: string
 }
 
 // -------------------------------------------------------------- контракт прогона

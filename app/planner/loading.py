@@ -139,6 +139,19 @@ def load_inputs() -> Inputs:
     for row in db.query_dicts(DONE_IN_SPRINT_SQL, (pi["pi_id"],)):
         done_in_sprint[int(row["sprint_no"])].add(row["task_id"])
     task_dates = db.query_dicts(TASK_DATES_SQL)
+    source = db.query_one(
+        "SELECT source_sha256, config_sha256, etl_version FROM load_batches "
+        "ORDER BY batch_id DESC LIMIT 1"
+    ) or {}
+    previous_people: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for row in db.query_dicts(
+        "SELECT DISTINCT a.task_id, a.role_id, a.engineer_id "
+        "FROM plan_assignments a JOIN tasks t ON t.task_id = a.task_id "
+        "WHERE a.run_id = (SELECT MAX(run_id) FROM plan_runs "
+        "WHERE pi_id = %s AND status IN ('ok', 'infeasible')) "
+        "AND t.status = 'InProgress'", (pi["pi_id"],)
+    ):
+        previous_people[(row["task_id"], row["role_id"])].add(row["engineer_id"])
 
     history_rows = db.query_dicts(TEAM_VELOCITY_HISTORY_SQL)
     velocity_history = {
@@ -169,6 +182,10 @@ def load_inputs() -> Inputs:
             for row in db.query_dicts(TEAM_VELOCITY_OBSERVED_SQL, (pi["pi_id"],))
         ),
         focus_factors={row["team_id"]: Decimal(row["focus_factor"]) for row in history_rows},
+        preferred_engineers={key: frozenset(ids) for key, ids in previous_people.items()},
+        source_sha256=source.get("source_sha256"),
+        config_sha256=source.get("config_sha256"),
+        etl_version=source.get("etl_version"),
         tasks=tasks,
         engineers=tuple(
             EngineerInput(

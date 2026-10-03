@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, auth, db, ingest, views
+from app import absence, auth, contexts, data_quality, db, ingest, plan_quality, sensitivity, trace, views, workforce
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -100,7 +100,10 @@ MIME_OVERRIDES = {
 KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/me", "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
-    "/api/scenarios/absence", "/api/tasks/goal-confirmation", "/api/initiatives/priority", "/metrics",
+    "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/scenarios/workforce",
+    "/api/tasks/goal-confirmation", "/api/initiatives/priority",
+    "/api/dq-issues/review", "/api/plan-quality", "/api/tasks/trace",
+    "/api/pi-contexts", "/metrics",
 )
 
 # Реестр метрик один на процесс: Handler создаётся на каждый запрос.
@@ -236,7 +239,14 @@ class Handler(BaseHTTPRequestHandler):
             if not self._gate(path):
                 pass  # ответ 401/403/429 уже отправлен
             elif path.startswith("/api/") or path == "/metrics":
-                self._api(path)
+                if path in ("/api/livez", "/api/version", "/api/me", "/api/pi-contexts", "/metrics"):
+                    self._api(path)
+                else:
+                    try:
+                        with db.use_pi_context(self.headers.get("X-PI-ID"), self.headers.get("X-Scenario-ID")):
+                            self._api(path)
+                    except db.UnknownPIContext as exc:
+                        self._send_json(HTTPStatus.NOT_FOUND, {"error": "pi_not_found", "message": str(exc)})
             else:
                 self._static(path)
         except Exception as exc:
@@ -283,7 +293,14 @@ class Handler(BaseHTTPRequestHandler):
         METRICS.enter()
         try:
             if self._gate(path):
-                self._upload(path)
+                if path == "/api/pi-contexts":
+                    self._upload(path)
+                else:
+                    try:
+                        with db.use_pi_context(self.headers.get("X-PI-ID"), self.headers.get("X-Scenario-ID")):
+                            self._upload(path)
+                    except db.UnknownPIContext as exc:
+                        self._send_json(HTTPStatus.NOT_FOUND, {"error": "pi_not_found", "message": str(exc)})
         except Exception as exc:
             error_class = type(exc).__name__
             raise
@@ -447,6 +464,25 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля подтверждения результата", [str(exc)]) from None
+            elif path == "/api/dq-issues/review":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = data_quality.review_issue(
+                        int(payload["issue_id"]), str(payload["decision"]),
+                        self._principal.name if auth.mode() == "required"
+                        else str(payload["reviewer"]), str(payload["note"]),
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля решения по находке", [str(exc)]) from None
+            elif path == "/api/pi-contexts":
+                result = contexts.create(
+                    self._read_body(),
+                    self._query_param(query, "filename") or "dataset.xlsx",
+                    self._query_param(query, "pi_id") or "",
+                    self._query_param(query, "scenario_id") or "main",
+                    self._query_param(query, "start_date") or "",
+                    actor=self._principal.name,
+                )
             else:
                 self._send_json(
                     HTTPStatus.NOT_FOUND,
@@ -551,6 +587,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, views.catalog())
             return
 
+        if path == "/api/pi-contexts":
+            try:
+                self._send_json(HTTPStatus.OK, contexts.list_contexts())
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+            return
+
         if path == "/api/scenarios/absence":
             query = parse_qs(urlparse(self.path).query)
             engineer_id = self._query_param(query, "engineer_id")
@@ -570,6 +613,90 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(exc)})
                 return
             except Exception as exc:  # noqa: BLE001 — тот же контракт 503, что у витрин
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/scenarios/sensitivity":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            if not raw_run_id or not raw_run_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите числовой run_id",
+                })
+                return
+            try:
+                result = sensitivity.evaluate(int(raw_run_id))
+            except sensitivity.ScenarioUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/scenarios/workforce":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run = self._query_param(query, "run_id")
+            raw_role = self._query_param(query, "role_id")
+            raw_sprint = self._query_param(query, "start_sprint")
+            team_id = self._query_param(query, "team_id")
+            if (not raw_run or not raw_run.isdigit() or not raw_role or not raw_role.isdigit()
+                    or not raw_sprint or not raw_sprint.isdigit() or not team_id):
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите run_id, role_id, team_id и start_sprint",
+                })
+                return
+            try:
+                result = workforce.evaluate(int(raw_run), int(raw_role), team_id, int(raw_sprint))
+            except workforce.ScenarioUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/plan-quality":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            if not raw_run_id or not raw_run_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите числовой run_id",
+                })
+                return
+            try:
+                result = plan_quality.evaluate(int(raw_run_id))
+            except plan_quality.QualityUnavailable as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "stale_run", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path == "/api/tasks/trace":
+            query = parse_qs(urlparse(self.path).query)
+            raw_run_id = self._query_param(query, "run_id")
+            task_id = self._query_param(query, "task_id")
+            if not raw_run_id or not raw_run_id.isdigit() or not task_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "bad_request", "message": "укажите run_id и task_id",
+                })
+                return
+            try:
+                result = trace.task_trace(int(raw_run_id), task_id)
+            except trace.TraceUnavailable as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
                 return
             self._send_json(HTTPStatus.OK, result)

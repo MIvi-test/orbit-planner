@@ -6,6 +6,8 @@ import { QueryError, anyPending, firstError } from '../../components/common/Quer
 import {
   useBusFactor,
   useDqSummary,
+  useDqIssues,
+  useDqIssueReviews,
   useRoleCoverageOrg,
   useRoleDeficit,
   useRoleDeficitEffective,
@@ -13,6 +15,8 @@ import {
   useTeams,
 } from '../../hooks/useViews'
 import type { RoleDeficitEffectiveRow, RoleDeficitRow } from '../../types/views'
+import { DataQualityWorkbench } from './DataQualityWorkbench'
+import { WorkforceScenarios } from './WorkforceScenarios'
 
 export function RolesScreen() {
   const [problemsOnly, setProblemsOnly] = useState(true)
@@ -23,7 +27,9 @@ export function RolesScreen() {
   const capacityQ = useTeamCapacitySp()
   const teamsQ = useTeams()
   const dqQ = useDqSummary()
-  const queries = [deficitQ, effectiveQ, coverageQ, busQ, capacityQ, teamsQ, dqQ]
+  const dqIssuesQ = useDqIssues()
+  const dqReviewsQ = useDqIssueReviews()
+  const queries = [deficitQ, effectiveQ, coverageQ, busQ, capacityQ, teamsQ, dqQ, dqIssuesQ, dqReviewsQ]
   const error = firstError(queries)
 
   if (anyPending(queries)) {
@@ -135,6 +141,10 @@ export function RolesScreen() {
         </ScrollArea>
       </Section>
 
+      <Section title="Сценарии изменения состава" note="Сколько задач и инициатив возвращают конкретные меры для выбранной роли и команды.">
+        <WorkforceScenarios roles={busQ.data?.items ?? []} teams={teamsQ.data?.items ?? []} />
+      </Section>
+
       <Section title="Диагностика исходных данных" note="Порядок и готовые пояснения приходят из диагностической витрины.">
         <Stack gap={0}>
           {(dqQ.data?.items ?? []).map((row) => (
@@ -150,6 +160,7 @@ export function RolesScreen() {
             </Group>
           ))}
         </Stack>
+        <DataQualityWorkbench issues={dqIssuesQ.data?.items ?? []} reviews={dqReviewsQ.data?.items ?? []} />
       </Section>
     </Stack>
   )

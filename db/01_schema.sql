@@ -7,13 +7,22 @@
 -- =====================================================================
 BEGIN;
 
+CREATE TABLE IF NOT EXISTS public.pi_contexts (
+    pi_id TEXT NOT NULL,
+    scenario_id TEXT NOT NULL,
+    schema_name TEXT NOT NULL UNIQUE,
+    dataset_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (pi_id, scenario_id)
+);
+
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
 DROP TABLE IF EXISTS plan_team_capacity, audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
-    plan_task_schedule, plan_baseline, plan_runs,
+    plan_task_schedule, plan_baseline, plan_capacity_snapshot, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
-    dq_issues, task_sequence, sprints, pi_periods, team_history,
+    source_provenance, dq_issue_reviews, dq_issues, task_sequence, sprints, pi_periods, team_history,
     task_dependencies, task_role_skill_requirements, task_role_skill_reviews,
     task_role_spent, task_role_estimates, tasks, initiatives,
     engineer_skill_declarations, engineer_skills, engineer_orbits, engineers, teams,
@@ -27,6 +36,7 @@ CREATE TABLE load_batches (
     batch_id      SERIAL PRIMARY KEY,
     source_file   TEXT        NOT NULL,
     source_sha256 TEXT        NOT NULL,
+    config_sha256 TEXT,
     etl_version   TEXT        NOT NULL,
     pi_start      DATE        NOT NULL,
     loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -62,6 +72,20 @@ CREATE TABLE audit_log (
 );
 CREATE INDEX ix_audit_log_at ON audit_log (at DESC);
 COMMENT ON TABLE audit_log IS 'Журнал действий, меняющих данные: кто, что, с каким итогом. Только дописывается.';
+
+CREATE TABLE source_provenance (
+    batch_id INT NOT NULL REFERENCES load_batches(batch_id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    source_sheet TEXT NOT NULL,
+    source_cell TEXT NOT NULL,
+    raw_value TEXT,
+    normalized_value TEXT,
+    rule_version TEXT NOT NULL,
+    PRIMARY KEY (batch_id, entity, entity_id, field_name, source_sheet, source_cell)
+);
+CREATE INDEX ix_source_provenance_entity ON source_provenance(entity, entity_id);
 
 -- =====================================================================
 --  1. СПРАВОЧНИКИ
@@ -379,6 +403,17 @@ CREATE TABLE dq_issues (
 );
 COMMENT ON TABLE dq_issues IS 'Журнал находок ETL. Не блокирует загрузку — материал для слайда «что не так с исходными данными».';
 CREATE INDEX ix_dq_rule ON dq_issues(rule_code);
+
+CREATE TABLE dq_issue_reviews (
+    review_id BIGSERIAL PRIMARY KEY,
+    issue_id INT NOT NULL REFERENCES dq_issues(issue_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('acknowledged', 'resolved', 'reopened')),
+    reviewer TEXT NOT NULL CHECK (length(trim(reviewer)) > 0),
+    note TEXT NOT NULL CHECK (length(trim(note)) > 0),
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_dq_issue_reviews_issue ON dq_issue_reviews(issue_id, review_id DESC);
+COMMENT ON TABLE dq_issue_reviews IS 'История решений по находке. Исходная находка ETL не перезаписывается.';
 
 -- =====================================================================
 --  7. ПРИЧИНЫ РЕШЕНИЙ ПЛАНИРОВЩИКА (ADR-022)

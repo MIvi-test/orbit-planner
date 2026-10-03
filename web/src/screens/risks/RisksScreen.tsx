@@ -10,7 +10,8 @@
  * показываются как есть.
  */
 import { useState } from 'react'
-import { Group, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { useQuery } from '@tanstack/react-query'
+import { Group, Paper, Skeleton, Stack, Table, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import {
   useAlerts,
@@ -24,6 +25,7 @@ import {
 import { QueryError, anyPending, firstError } from '../../components/common/QueryError'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { fmtDateShort } from '../../api/wire'
+import { fetchSensitivity } from '../../api/client'
 import { RiskSpine } from './RiskSpine'
 import { AlertCard } from './AlertCard'
 import { PlanChanges } from './PlanChanges'
@@ -43,6 +45,13 @@ export function RisksScreen() {
   const uploadsQ = useActualUploads()
   const sprintsQ = useSprints()
   const reasonsQ = useRefDecisionReasons()
+  const latestRunId = Math.max(0, ...runs.map((run) => run.run_id))
+  const sensitivityQ = useQuery({
+    queryKey: ['sensitivity', runId],
+    queryFn: () => fetchSensitivity(runId!),
+    enabled: runId !== null && runId === latestRunId,
+    retry: false,
+  })
 
   const queries = [alertsQ, diffQ, violationsQ, deviationQ, uploadsQ, sprintsQ]
   const error = firstError(queries)
@@ -182,6 +191,24 @@ export function RisksScreen() {
         note="Проверки контракта планировщика. Отсутствие ошибок означает, что план согласован с ограничениями."
       >
         <ViolationsPanel rows={violationsQ.data?.items ?? []} />
+      </Section>
+
+      <Section title="Чувствительность плана" note="Проверяем три явных ухудшения входа на том же алгоритме. Это сценарии, а не вероятность срыва.">
+        {runId !== latestRunId ? <Text size="sm" c="dimmed">Сценарии доступны для текущего прогона.</Text>
+          : sensitivityQ.isPending ? <Text size="sm" c="dimmed">Считаем сценарии…</Text>
+          : sensitivityQ.error ? <QueryError error={sensitivityQ.error} title="Не удалось посчитать сценарии" />
+          : <Stack gap="xs">
+              <Text size="xs" c="dimmed">{sensitivityQ.data.method}</Text>
+              <Table striped><Table.Thead><Table.Tr><Table.Th>Условия</Table.Th><Table.Th>В PI</Table.Th><Table.Th>Перенесено</Table.Th><Table.Th>Задач с задержкой</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  <Table.Tr><Table.Td>Текущий вход</Table.Td><Table.Td>{sensitivityQ.data.baseline.in_quarter}</Table.Td><Table.Td>{sensitivityQ.data.baseline.deferred}</Table.Td><Table.Td>—</Table.Td></Table.Tr>
+                  {sensitivityQ.data.scenarios.map((item) => <Table.Tr key={item.kind}>
+                    <Table.Td>{item.label}</Table.Td><Table.Td>{item.in_quarter}</Table.Td><Table.Td>{item.deferred}</Table.Td>
+                    <Table.Td>{item.delayed_tasks.length}{item.delayed_tasks.length > 0 && <Text size="xs" c="dimmed">{item.delayed_tasks.map((task) => task.task_id).join(', ')}</Text>}</Table.Td>
+                  </Table.Tr>)}
+                </Table.Tbody>
+              </Table>
+            </Stack>}
       </Section>
     </Stack>
   )

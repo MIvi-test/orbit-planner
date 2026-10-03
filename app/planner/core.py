@@ -878,9 +878,44 @@ def _assemble(
         (task.task_id, role_id) for task in inputs.tasks for role_id in task.needed
     }
     unreviewed_skills = sorted(active_role_pairs - inputs.skill_reviews)
+    assigned_people: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for assignment in assignments:
+        assigned_people[(assignment.task_id, assignment.role_id)].add(assignment.engineer_id)
+    switching: list[dict[str, Any]] = []
+    kept = 0
+    engineers_by_id = {engineer.engineer_id: engineer for engineer in inputs.engineers}
+    for (task_id, role_id), before in sorted(inputs.preferred_engineers.items()):
+        after = assigned_people.get((task_id, role_id), set())
+        if after == before:
+            kept += 1
+            continue
+        required = inputs.skill_requirements.get((task_id, role_id), frozenset())
+        unavailable = any(
+            engineer_id not in engineers_by_id
+            or (engineer_id, role_id) not in inputs.coverage
+            or not required.issubset(inputs.engineer_skills.get(engineer_id, frozenset()))
+            for engineer_id in before
+        )
+        switching.append({
+            "task_id": task_id, "role_id": role_id,
+            "before": sorted(before), "after": sorted(after),
+            "changed_people": len(before.symmetric_difference(after)),
+            "cause": "unavailable_or_unqualified" if unavailable else
+                     "task_deferred" if not after else "capacity_or_competition",
+        })
 
     params: dict[str, Any] = {
         "algorithm": ALGORITHM,
+        "source_sha256": inputs.source_sha256,
+        "config_sha256": inputs.config_sha256,
+        "etl_version": inputs.etl_version,
+        "stability": {
+            "continued_role_pairs": len(inputs.preferred_engineers),
+            "kept_role_pairs": kept,
+            "switched_role_pairs": len(switching),
+            "people_changed": sum(item["changed_people"] for item in switching),
+            "switches": switching,
+        },
         "estimate_source": ESTIMATE_SOURCE,
         "skill_validation": {
             "confirmed_roles": len(active_role_pairs) - len(unreviewed_skills),
@@ -985,4 +1020,13 @@ def _assemble(
         ),
         graph_bounds=tuple((task.task_id, task.earliest_start_sprint) for task in inputs.tasks),
         team_capacity=capacity_rows,
+        capacity_snapshot=tuple(
+            (engineer.engineer_id, team_id, sprint_no,
+             inputs.sprint_orbit_rates.get((engineer.engineer_id, team_id, sprint_no), rate)
+             * Decimal(inputs.fte_hours_per_sprint)
+             * inputs.sprint_factors.get(sprint_no, Decimal(1)))
+            for engineer in inputs.engineers
+            for team_id, rate in engineer.orbits.items()
+            for sprint_no in range(1, inputs.sprint_count + 1)
+        ),
     )

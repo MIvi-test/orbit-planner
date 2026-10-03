@@ -5,6 +5,50 @@
 import { authHeaders, notifyUnauthorized } from './auth'
 
 const BASE = '/api'
+const CONTEXT_KEY = 'pi-planner-context'
+
+export interface PiContext {
+  pi_id: string
+  scenario_id: string
+  schema_name: string
+  dataset_version: string
+  created_at: string | null
+}
+
+export function selectedPiContext(): Pick<PiContext, 'pi_id' | 'scenario_id'> | null {
+  try {
+    const raw = localStorage.getItem(CONTEXT_KEY)
+    if (!raw) return null
+    const value = JSON.parse(raw)
+    return typeof value.pi_id === 'string' && typeof value.scenario_id === 'string' ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function selectPiContext(context: Pick<PiContext, 'pi_id' | 'scenario_id'> | null): void {
+  if (context) localStorage.setItem(CONTEXT_KEY, JSON.stringify(context))
+  else localStorage.removeItem(CONTEXT_KEY)
+  window.location.reload()
+}
+
+export function contextHeaders(): Headers {
+  const headers = new Headers()
+  const selected = selectedPiContext()
+  if (selected) {
+    headers.set('X-PI-ID', selected.pi_id)
+    headers.set('X-Scenario-ID', selected.scenario_id)
+  }
+  return headers
+}
+
+export function fetchPiContexts(): Promise<{ contexts: PiContext[] }> {
+  return request('/pi-contexts')
+}
+
+export function createPiContext(file: File, piId: string, scenarioId: string, startDate: string): Promise<PiContext & { plan: { run_id: number } }> {
+  return postFile('/pi-contexts', file, { pi_id: piId, scenario_id: scenarioId, start_date: startDate })
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -55,10 +99,10 @@ function failOnUnauthorized(res: Response): void {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}`, {
-      ...init,
-      headers: { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) },
-    })
+    const headers = contextHeaders()
+    new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value))
+    res = await fetch(`${BASE}${path}`, { ...init, headers })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',
@@ -142,6 +186,92 @@ export function fetchAbsenceScenario(engineerId: string, runId: number): Promise
   return request<AbsenceScenario>(`/scenarios/absence?${query}`)
 }
 
+export interface SensitivityScenario {
+  kind: string
+  label: string
+  in_quarter: number
+  deferred: number
+  delayed_tasks: Array<{
+    task_id: string
+    previous_end_sprint: number
+    scenario_end_sprint: number | null
+    decision: string
+  }>
+}
+
+export interface SensitivityResult {
+  run_id: number
+  method: string
+  baseline: { in_quarter: number; deferred: number }
+  scenarios: SensitivityScenario[]
+}
+
+export function fetchSensitivity(runId: number): Promise<SensitivityResult> {
+  return request<SensitivityResult>(`/scenarios/sensitivity?run_id=${runId}`)
+}
+
+export interface PlanQualityResult {
+  run_id: number
+  completed_value: { tasks: number; sp: string }
+  partial_initiatives: Array<{ prodf_id: string; total: number; planned: number }>
+  dependency_wait: { tasks: number; earliest_wait_sprints: number }
+  deferred_commitments: { tasks: number; sp: string }
+  unplanned_completed_sp: string
+  scarce_unused_roles: Array<{ role: string; demand_hh: string; supply_hh: string; unused_hh: string }>
+  people_switches: Array<{ task_id: string; role_id: number; before: string[]; after: string[] }>
+  method: string
+}
+
+export function fetchPlanQuality(runId: number): Promise<PlanQualityResult> {
+  return request<PlanQualityResult>(`/plan-quality?run_id=${runId}`)
+}
+
+export interface TaskTrace {
+  run: { run_id: number; algorithm: string; params: Record<string, unknown>; actuals_upload_id: number | null }
+  state: { status: string; remaining_hh: string; remaining_sp: string }
+  decision: { decision: string; reason_text: string; reason_details: Record<string, unknown> } | null
+  role_demands: Array<{ role_id: number; role_name: string; needed_hours: string }>
+  assignments: Array<{ sprint_no: number; role_id: number; engineer_id: string; home_team_id: string; hours: string; available_hours: string | null }>
+  dependency_bound: { earliest_start_sprint: number } | null
+  source_batch: { source_file: string; source_sha256: string; config_sha256: string | null; etl_version: string } | null
+  source_available: boolean
+  source_records: Array<{ entity: string; entity_id: string; field_name: string; source_sheet: string; source_cell: string; raw_value: string | null; normalized_value: string | null; rule_version: string }>
+}
+
+export function fetchTaskTrace(runId: number, taskId: string): Promise<TaskTrace> {
+  const query = new URLSearchParams({ run_id: String(runId), task_id: taskId })
+  return request<TaskTrace>(`/tasks/trace?${query}`)
+}
+
+export interface WorkforceMeasure {
+  kind: 'hire' | 'train' | 'loan'
+  label: string
+  effective_sprint: number
+  resource_cost: string
+  restored_initiatives: string[]
+  gained_tasks: string[]
+  lost_tasks: string[]
+  net_sp_gain: string
+  earlier_task_sprints: number
+  in_quarter: number
+}
+
+export interface WorkforceResult {
+  run_id: number
+  role_id: number
+  team_id: string
+  start_sprint: number
+  assumptions: string
+  assumed_skill_ids: number[]
+  baseline_in_quarter: number
+  ranked_measures: WorkforceMeasure[]
+}
+
+export function fetchWorkforceScenario(runId: number, roleId: number, teamId: string, startSprint: number): Promise<WorkforceResult> {
+  const query = new URLSearchParams({ run_id: String(runId), role_id: String(roleId), team_id: teamId, start_sprint: String(startSprint) })
+  return request<WorkforceResult>(`/scenarios/workforce?${query}`)
+}
+
 export interface ViewSource {
   name: string
   kind: 'view' | 'table'
@@ -188,7 +318,9 @@ export function fetchMe(): Promise<MeResponse> {
 /** Шаблон факта: ссылка `<a download>` не передаёт заголовок авторизации, поэтому — через fetch. */
 export async function downloadTemplate(sprintNo?: number): Promise<void> {
   const query = sprintNo ? `?sprint=${sprintNo}` : ''
-  const res = await fetch(`${BASE}/actuals/template${query}`, { headers: authHeaders() })
+  const headers = contextHeaders()
+  new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+  const res = await fetch(`${BASE}/actuals/template${query}`, { headers })
   if (!res.ok) {
     failOnUnauthorized(res)
     const body = await parseErrorBody(res)
@@ -216,7 +348,9 @@ async function postFile<T>(path: string, file: File, extraQuery: Record<string, 
   const q = new URLSearchParams({ filename: file.name, ...extraQuery })
   let res: Response
   try {
-    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file, headers: authHeaders() })
+    const headers = contextHeaders()
+    new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+    res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file, headers })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
       error: 'network_error',

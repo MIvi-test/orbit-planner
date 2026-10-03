@@ -105,6 +105,11 @@ class Inputs:
     # Наблюдения текущего PI: (команда, спринт, поставленные SP).
     velocity_observed: tuple[tuple[str, int, Decimal], ...] = ()
     focus_factors: dict[str, Decimal] = field(default_factory=dict)
+    preferred_engineers: dict[tuple[str, int], frozenset[str]] = field(default_factory=dict)
+    sprint_orbit_rates: dict[tuple[str, str, int], Decimal] = field(default_factory=dict)
+    source_sha256: str | None = None
+    config_sha256: str | None = None
+    etl_version: str | None = None
 
     @property
     def fund_hours_per_fte(self) -> Decimal:
@@ -220,6 +225,7 @@ class Plan:
     role_demands: tuple[tuple[str, int, Decimal], ...] = ()
     graph_bounds: tuple[tuple[str, int], ...] = ()
     team_capacity: tuple[CapacityRow, ...] = ()
+    capacity_snapshot: tuple[tuple[str, str, int, Decimal], ...] = ()
 
     @property
     def in_quarter(self) -> tuple[ScheduleRow, ...]:

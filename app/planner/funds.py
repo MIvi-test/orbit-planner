@@ -30,11 +30,8 @@ class _Funds:
         # считаем спринт полным: дефолт для тестовых календарей.
         self.factors: dict[int, Decimal] = dict(inputs.sprint_factors)
         self.engineers: dict[str, EngineerInput] = {e.engineer_id: e for e in inputs.engineers}
-        self._budget: dict[tuple[str, str], Decimal] = {
-            (engineer.engineer_id, team_id): rate * self.fte
-            for engineer in inputs.engineers
-            for team_id, rate in engineer.orbits.items()
-        }
+        self.preferred = inputs.preferred_engineers
+        self.sprint_orbit_rates = inputs.sprint_orbit_rates
         self._spent: dict[tuple[str, str, int], Decimal] = defaultdict(Decimal)
         self.used_sp: dict[tuple[str, int], Decimal] = defaultdict(Decimal)
 
@@ -44,10 +41,11 @@ class _Funds:
 
     # ---- часы ------------------------------------------------------------
     def orbit_left(self, engineer_id: str, team_id: str, sprint_no: int) -> Decimal:
-        budget = (
-            self._budget.get((engineer_id, team_id), Decimal("0"))
-            * self.sprint_factor(sprint_no)
+        rate = self.sprint_orbit_rates.get(
+            (engineer_id, team_id, sprint_no),
+            self.engineers[engineer_id].orbits.get(team_id, Decimal(0)),
         )
+        budget = rate * self.fte * self.sprint_factor(sprint_no)
         return budget - self._spent[(engineer_id, team_id, sprint_no)]
 
     def total_left(self, engineer_id: str, sprint_no: int) -> Decimal:
@@ -56,9 +54,9 @@ class _Funds:
             (self._spent[(engineer_id, team_id, sprint_no)] for team_id in engineer.orbits),
             Decimal("0"),
         )
-        return (
-            engineer.total_capacity_rate * self.fte * self.sprint_factor(sprint_no) - spent
-        )
+        rate = sum((self.sprint_orbit_rates.get((engineer_id, team_id, sprint_no), orbit_rate)
+                    for team_id, orbit_rate in engineer.orbits.items()), Decimal(0))
+        return min(engineer.total_capacity_rate, rate) * self.fte * self.sprint_factor(sprint_no) - spent
 
     def spend(self, engineer_id: str, team_id: str, sprint_no: int, hours: Decimal) -> None:
         self._spent[(engineer_id, team_id, sprint_no)] += hours
@@ -76,7 +74,8 @@ class _Funds:
 
 
 def _candidate_engineers(
-    task_team: str, role_id: int, sprint_no: int, funds: _Funds, by_role: dict[int, list[str]]
+    task_team: str, role_id: int, sprint_no: int, funds: _Funds, by_role: dict[int, list[str]],
+    preferred: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Кого можно поставить на роль: свои орбиты первыми, потом заёмщики.
 
@@ -97,8 +96,8 @@ def _candidate_engineers(
             own.append((funds.orbit_left(engineer_id, task_team, sprint_no), left, engineer_id))
         else:
             loans.append((left, engineer_id))
-    own.sort(key=lambda item: (-item[0], -item[1], item[2]))
-    loans.sort(key=lambda item: (-item[0], item[1]))
+    own.sort(key=lambda item: (item[2] not in preferred, -item[0], -item[1], item[2]))
+    loans.sort(key=lambda item: (item[1] not in preferred, -item[0], item[1]))
     return [item[2] for item in own] + [item[1] for item in loans]
 
 
@@ -204,7 +203,10 @@ def _allocate_task(
             need = remaining[role_id]
             if need <= 0:
                 continue
-            for engineer_id in _candidate_engineers(task.team_id, role_id, sprint_no, funds, by_role):
+            for engineer_id in _candidate_engineers(
+                task.team_id, role_id, sprint_no, funds, by_role,
+                funds.preferred.get((task.task_id, role_id), frozenset()),
+            ):
                 want = need
                 if budget is not None:
                     room = budget - sprint_work

@@ -14,6 +14,12 @@
 обновляет KPI. Звёздная карта показывает состав команд, компетенции инженеров и
 Bus Factor.
 
+Для нескольких кварталов на экране «Загрузка» создайте новый PI или сценарий:
+укажите идентификатор PI, имя сценария, дату начала и Excel. Сервис построит
+отдельный план, не меняя данные прежних PI. Выбранный PI переключается в верхней
+панели; все экраны, факты и шаблон относятся к нему. Исходный PI-2026-Q3
+доступен как сценарий `main`.
+
 ## Содержание
 
 1. [Быстрый старт](#1-быстрый-старт)
@@ -469,8 +475,6 @@ Bus Factor считается **по компетенциям**: для кажд
 
 ## 10. HTTP API
 
-| Метод и путь | База | Назначение |
-|---|---|---|
 | Метод и путь | Роль | База | Назначение |
 |---|---|---|---|
 | `GET /api/livez` | — | не трогает | liveness: 200, пока процесс жив |
@@ -480,12 +484,19 @@ Bus Factor считается **по компетенциям**: для кажд
 | `GET /api/views` | viewer | — | список витрин с описаниями |
 | `GET /api/views/{view}` | viewer | читает | строки витрины: `?run_id=&limit=&offset=&order=` |
 | `GET /api/scenarios/absence?engineer_id=&run_id=` | viewer | читает | сценарий отсутствия инженера |
+| `GET /api/scenarios/sensitivity?run_id=` | viewer | читает | три сценария чувствительности |
+| `GET /api/scenarios/workforce?run_id=&role_id=&team_id=&start_sprint=` | viewer | читает | сравнение найма, обучения и перевода |
+| `GET /api/plan-quality?run_id=` | viewer | читает | качество и потери плана |
+| `GET /api/tasks/trace?run_id=&task_id=` | viewer | читает | путь решения до исходных ячеек Excel |
+| `GET /api/pi-contexts` | viewer | читает | список PI и сценариев |
 | `GET /api/actuals/template?sprint=N` | viewer | читает | CSV-шаблон факта спринта |
 | `POST /api/actuals?sprint=N&confirm_complete=` | planner | пишет | загрузить факт спринта, пересчитать план |
 | `POST /api/actuals/role-review` | planner | пишет | подтвердить остаток (ETC) роли |
 | `POST /api/tasks/goal-confirmation` | planner | пишет | подтвердить бизнес-результат задачи |
 | `POST /api/initiatives/priority` | planner | пишет | задать или снять явный бизнес-приоритет инициативы (`prodf_id`, `business_priority`, `note`), пересчитать план |
+| `POST /api/dq-issues/review` | planner | пишет | сохранить решение по находке качества данных |
 | `POST /api/dataset?filename=x.xlsx` | admin | пишет | загрузить датасет, построить базовый план |
+| `POST /api/pi-contexts?pi_id=&scenario_id=&start_date=&filename=` | admin | пишет | создать отдельный PI или сценарий из Excel |
 | `GET /metrics` | внутренний | читает, кэш 15 с | метрики Prometheus (наружу закрыт Caddy) |
 
 Коды доступа: `401` — нет или неверный токен (`WWW-Authenticate: Bearer`), `403` —

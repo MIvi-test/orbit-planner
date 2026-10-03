@@ -22,6 +22,14 @@ CREATE TABLE plan_runs (
     actuals_upload_id INT REFERENCES actual_uploads(upload_id) ON DELETE SET NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE plan_capacity_snapshot (
+    run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id),
+    team_id TEXT NOT NULL REFERENCES teams(team_id),
+    sprint_no SMALLINT NOT NULL,
+    available_hours NUMERIC(12,4) NOT NULL CHECK (available_hours >= 0),
+    PRIMARY KEY (run_id, engineer_id, team_id, sprint_no)
+);
 ALTER TABLE actual_uploads ADD CONSTRAINT actual_uploads_plan_run_fk
     FOREIGN KEY (plan_run_id) REFERENCES plan_runs(run_id) ON DELETE SET NULL;
 COMMENT ON COLUMN plan_runs.actuals_upload_id IS

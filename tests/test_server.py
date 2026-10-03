@@ -153,6 +153,13 @@ def test_livez_answers_without_the_database(base_url: str, monkeypatch) -> None:
     assert payload["version"] == server.APP_VERSION
     assert payload["uptime_seconds"] >= 0
 
+    # A stale browser PI selection must not turn a liveness probe into a DB lookup.
+    request = urllib.request.Request(
+        f"{base_url}/api/livez", headers={"X-PI-ID": "missing-pi"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.status == 200
+
 
 def test_version_reports_app_etl_and_pi(base_url: str, monkeypatch) -> None:
     """Версии доступны без базы: devops спрашивает их до первой заливки данных."""
