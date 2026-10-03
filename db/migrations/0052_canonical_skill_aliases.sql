@@ -26,7 +26,7 @@ WHERE NOT EXISTS (
 CREATE TEMP TABLE tmp_skill_expansions (
     alias_key TEXT, canonical_name TEXT, rule TEXT,
     PRIMARY KEY (alias_key, canonical_name)
-) ON COMMIT DROP;
+);
 INSERT INTO tmp_skill_expansions VALUES
     ('apache kafka', 'Kafka', 'synonym'),
     ('core spring', 'Spring Core', 'synonym'),
@@ -91,3 +91,4 @@ WHERE s.normalized_name = x.alias_key
   AND NOT EXISTS (SELECT 1 FROM task_role_skill_requirements q WHERE q.skill_id = s.skill_id)
   AND NOT EXISTS (SELECT 1 FROM engineer_skill_declarations d WHERE d.skill_id = s.skill_id)
   AND NOT EXISTS (SELECT 1 FROM engineer_skills es WHERE es.skill_id = s.skill_id);
+DROP TABLE tmp_skill_expansions;
