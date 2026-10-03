@@ -230,8 +230,10 @@ class Sheet:
                decimal_places=None):
         cell = self.ws.cell(row, column)
         value = cell.value
-        original = self.formulas.cell(row, column) if self.formulas else None
         if value in (None, ""):
+            # Читалка формул (read_only) разбирает лист заново при каждом доступе к ячейке, поэтому
+            # обращаемся к ней только для пустых значений: иначе загрузка шла 17 секунд вместо 1.
+            original = self.formulas.cell(row, column) if self.formulas else None
             if original is not None and original.data_type == "f":
                 problem = "у формулы нет сохранённого вычисленного значения"
             elif required:
@@ -384,9 +386,10 @@ def parse(path: Path):
             canon_roles.append(canon)
         role_rows[canon].append(r)
 
+    # Справочник ролей = строки матрицы сметы + роли из профилей инженеров (DA-25): отсутствие
+    # спроса на роль в нынешнем бэклоге не делает профиль ошибочным. Роли из профилей
+    # добавляются ниже, после чтения инженеров; role_id сметных ролей при этом не меняются.
     role_id = {name: i for i, name in enumerate(canon_roles, start=1)}
-    D["roles"] = [(role_id[n], n, C.ROLE_GROUPS.get(n, "other")) for n in canon_roles]
-    D["role_aliases"] = [(a, role_id[c]) for a, c in C.ROLE_ALIASES.items() if c in role_id]
 
     # ---------- задачи ----------
     t_title = sh.find_block(C.BLOCK_MARKERS["tasks"])
@@ -541,10 +544,18 @@ def parse(path: Path):
         team = norm_text(sh.cell(r, ec["team_id"]))
         raw_role = norm_text(sh.cell(r, ec["role"]))
         canon = C.ROLE_ALIASES.get(raw_role, raw_role)
-        if canon not in role_id:
-            dq.add("engineers", eid, "ENGINEER_ROLE_UNKNOWN", "error",
-                   f"Строка Excel {r}: роль '{raw_role}' отсутствует в матрице сметы — добавь алиас в config.ROLE_ALIASES.")
+        if not canon:
+            dq.add("engineers", eid, "ENGINEER_ROLE_EMPTY", "error",
+                   f"Строка Excel {r}: у инженера {eid} не указана роль.")
             continue
+        if canon not in role_id:
+            # Роль есть в профиле, но не в смете: сотрудник остаётся в штате, роль получает id
+            # после сметных. Разнописание, которое на самом деле та же роль, лечится алиасом.
+            role_id[canon] = len(role_id) + 1
+            canon_roles.append(canon)
+            dq.add("roles", canon, "ROLE_WITHOUT_ESTIMATE", "info",
+                   f"Роль '{canon}' есть в профиле {eid}, но не в матрице сметы: спроса на неё в бэклоге нет. "
+                   f"Если это разнописание сметной роли — добавьте алиас в config.ROLE_ALIASES.")
         if canon != raw_role:
             dq.add("engineers", eid, "ROLE_ALIAS_APPLIED", "info", f"Роль '{raw_role}' -> '{canon}'.")
         grade = norm_text(sh.cell(r, ec["grade"]))
@@ -631,6 +642,9 @@ def parse(path: Path):
         # лексикографически старший заголовок: одинаково на любой машине.
         title = max(sorted(set(v["titles"])), key=v["titles"].count) if v["titles"] else None
         ini_rows.append((prodf, v["br"], title, pr))
+
+    D["roles"] = [(role_id[n], n, C.ROLE_GROUPS.get(n, "other")) for n in canon_roles]
+    D["role_aliases"] = [(a, role_id[c]) for a, c in C.ROLE_ALIASES.items() if c in role_id]
 
     D.update(tasks=tasks, initiatives=ini_rows, estimates=estimates, spent=spent,
              deps=deps, dep_source_rows=dep_source_rows, engineers=engineers, orbits=orbits,
