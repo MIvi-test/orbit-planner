@@ -1,23 +1,26 @@
--- =====================================================================
---  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
---
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id;
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
---
---  КРИТЕРИЙ ПРИЁМКИ: нет строк с severity = 'error'.
---  severity = 'warning' план не отменяет, но обязан быть показан в UI
---  (замещение роли, выход за даты исходного плана, разрыв в окне задачи).
---  Каждая строка — нарушение правила из docs/PLANNER_SPEC.md, раздел 7.
---  Проверки только читают, ничего не меняют: гонять можно сколько угодно.
---
---  Проверок 29 (A..AC). Разбор ревью M2 и что из него закрыто —
---  docs/REVIEW_RESPONSE.md.
--- =====================================================================
-BEGIN;
+-- Undefined ratios and absent skill demand have no numeric value.
+ALTER TABLE kpi_snapshots ALTER COLUMN value DROP NOT NULL;
+ALTER TABLE kpi_snapshots ADD COLUMN IF NOT EXISTS calculation_status TEXT NOT NULL DEFAULT 'calculated';
+UPDATE kpi_snapshots
+SET calculation_status = CASE
+    WHEN kpi_code = 'pi_predictability' AND COALESCE((details->>'committed_n')::int, 0) = 0
+        THEN 'no_commitment'
+    WHEN kpi_code = 'say_do_ratio' AND COALESCE((details->>'planned_sp')::numeric, 0) = 0
+        THEN 'no_plan'
+    WHEN kpi_code = 'bus_factor' AND NOT EXISTS (
+        SELECT 1 FROM v_bus_factor_skill s WHERE s.in_demand
+    ) THEN 'no_relevant_skills'
+    ELSE 'calculated'
+END;
+UPDATE kpi_snapshots SET value = NULL WHERE calculation_status <> 'calculated';
+ALTER TABLE kpi_snapshots ADD CONSTRAINT kpi_calculation_status_check
+    CHECK (calculation_status IN ('calculated','no_commitment','no_plan','no_relevant_skills'));
+ALTER TABLE kpi_snapshots ADD CONSTRAINT kpi_calculation_value_check
+    CHECK ((calculation_status = 'calculated' AND value IS NOT NULL)
+        OR (calculation_status <> 'calculated' AND value IS NULL));
 
-DROP VIEW IF EXISTS v_plan_violations CASCADE;
-
-CREATE VIEW v_plan_violations AS
+-- Make SQL acceptance use the dependency mode recorded with each plan.
+CREATE OR REPLACE VIEW v_plan_violations AS
 
 -- A. Ёмкость команды в SP (SP засчитываются в start_sprint) ------------
 -- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: 7-й спринт
@@ -449,4 +452,3 @@ COMMENT ON VIEW v_plan_violations IS
  'отменяют, но требуют отображения в UI. Правила — docs/PLANNER_SPEC.md, раздел 7; '
  'разбор ревью M2 — docs/REVIEW_RESPONSE.md.';
 
-COMMIT;

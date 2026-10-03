@@ -109,8 +109,8 @@ function PredictabilityBlock({ rows }: { rows: KpiSnapshotRow[] }) {
       <Group align="flex-start" gap="xl" wrap="wrap">
         <KpiStamp
           title="Инициативы квартала"
-          forecast={forecast ? num(forecast.value) : null}
-          actual={actual ? num(actual.value) : null}
+          forecast={forecast ? n(forecast.value) : null}
+          actual={actual ? n(actual.value) : null}
           targetMin={n(any.target_min)}
           targetMax={n(any.target_max)}
           caption={`норма ${normText(any)}`}
@@ -156,13 +156,18 @@ function Pair({ label, row, emptyText }: { label: string; row?: KpiSnapshotRow; 
       </Text>
     ) : null
   }
-  const tone = toneOf(num(row.value), n(row.target_min), n(row.target_max))
+  const value = n(row.value)
+  const tone = value === null ? null : toneOf(value, n(row.target_min), n(row.target_max))
   const note = (row.details as { note?: string } | null)?.note
+  const statusText = row.calculation_status === 'no_commitment' ? 'нет обязательств в базовом плане'
+    : row.calculation_status === 'no_plan' ? 'на спринт ничего не планировали'
+    : row.calculation_status === 'no_relevant_skills' ? 'нет востребованных компетенций'
+    : 'не определено'
   return (
-    <div style={{ borderLeft: `4px solid ${RISK_COLOR[toneToRisk(tone)]}`, paddingLeft: 10 }}>
+    <div style={{ borderLeft: `4px solid ${tone === null ? 'var(--line)' : RISK_COLOR[toneToRisk(tone)]}`, paddingLeft: 10 }}>
       <Text size="sm" component="div">
-        {label}: <b className="mono">{num(row.value).toFixed(2)}%</b>{' '}
-        <span style={{ color: RISK_COLOR[toneToRisk(tone)] }}>{TONE_WORD[tone]}</span>
+        {label}: <b className="mono">{value === null ? 'н/д' : `${value.toFixed(2)}%`}</b>{' '}
+        {tone === null ? statusText : <span style={{ color: RISK_COLOR[toneToRisk(tone)] }}>{TONE_WORD[tone]}</span>}
       </Text>
       {note && (
         <Text size="xs" c="dimmed" component="div">
@@ -212,7 +217,7 @@ function SayDoBlock({ rows, sprints }: { rows: KpiSnapshotRow[]; sprints: { spri
             const r = bySprint.get(s.sprint_no)
             if (!r) return <Cell key={s.sprint_no} center>—</Cell>
             const d = r.details as unknown as SayDoDetails
-            const v = num(r.value)
+            const v = n(r.value)
             return (
               <Cell key={s.sprint_no} center>
                 <div style={{ transform: 'scale(0.82)', transformOrigin: 'top center', height: 150 }}>
@@ -230,7 +235,7 @@ function SayDoBlock({ rows, sprints }: { rows: KpiSnapshotRow[]; sprints: { spri
                 </Text>
                 {num(d.planned_sp) === 0 && (
                   <Text size="10px" c="dimmed">
-                    план был пуст
+                    план был пуст{num(d.unplanned_sp ?? '0') > 0 ? `; вне плана ${fmtSp(d.unplanned_sp)} SP` : ''}
                   </Text>
                 )}
               </Cell>
@@ -263,10 +268,10 @@ function Cell({ children, head, center }: { children?: React.ReactNode; head?: b
 // ---------------------------------------------------------------- Bus Factor
 function BusFactorBlock({ row }: { row: KpiSnapshotRow }) {
   const d = row.details as unknown as BusFactorKpiDetails
-  const value = num(row.value)
+  const value = n(row.value)
   const min = n(row.target_min)
-  const tone = toneOf(value, min, n(row.target_max))
-  const color = RISK_COLOR[toneToRisk(tone)]
+  const tone = value === null ? null : toneOf(value, min, n(row.target_max))
+  const color = tone === null ? 'var(--line)' : RISK_COLOR[toneToRisk(tone)]
   return (
     <Paper withBorder p="md">
       <Title order={3}>Bus Factor</Title>
@@ -276,10 +281,10 @@ function BusFactorBlock({ row }: { row: KpiSnapshotRow }) {
       <Group align="flex-start" gap="xl" wrap="wrap">
         <div style={{ borderLeft: `4px solid ${color}`, paddingLeft: 12, minWidth: 150 }}>
           <Text className="mono" style={{ fontSize: 44, lineHeight: 1, fontWeight: 600 }}>
-            {fmtSp(value)}
+            {value === null ? 'н/д' : fmtSp(value)}
           </Text>
           <Text size="sm" mt={6} style={{ color }}>
-            {TONE_WORD[tone]}
+            {tone === null ? 'нет востребованных компетенций' : TONE_WORD[tone]}
           </Text>
           <Text size="xs" c="dimmed">
             норма {normText(row, '')}

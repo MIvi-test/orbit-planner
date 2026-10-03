@@ -394,7 +394,8 @@ export interface KpiSnapshotRow {
   run_id: number
   sprint_no: number
   kpi_code: KpiCode
-  value: NumericString
+  value: NumericString | null
+  calculation_status: 'calculated' | 'no_commitment' | 'no_plan' | 'no_relevant_skills'
   target_min: NumericString | null
   target_max: NumericString | null
   details: Json
@@ -417,6 +418,7 @@ export interface SayDoDetails {
   formula: string
   planned_sp: NumericString
   done_sp: NumericString
+  unplanned_sp: NumericString
   planned_tasks: string[]
   done_tasks: string[]
   note: string

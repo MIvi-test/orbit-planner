@@ -169,11 +169,17 @@ CREATE TABLE kpi_snapshots (
     run_id     INT      NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
     sprint_no  SMALLINT NOT NULL,
     kpi_code   TEXT     NOT NULL CHECK (kpi_code IN ('pi_predictability','say_do_ratio','bus_factor')),
-    value      NUMERIC(8,2) NOT NULL,
+    value      NUMERIC(8,2),
     target_min NUMERIC(8,2),
     target_max NUMERIC(8,2),
     details    JSONB    NOT NULL DEFAULT '{}'::jsonb,
     kind       TEXT     NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast','actual')),
+    calculation_status TEXT NOT NULL DEFAULT 'calculated'
+        CHECK (calculation_status IN ('calculated','no_commitment','no_plan','no_relevant_skills')),
+    CONSTRAINT kpi_calculation_value_check CHECK (
+        (calculation_status = 'calculated' AND value IS NOT NULL)
+        OR (calculation_status <> 'calculated' AND value IS NULL)
+    ),
     PRIMARY KEY (run_id, sprint_no, kpi_code, kind)
 );
 COMMENT ON TABLE kpi_snapshots IS

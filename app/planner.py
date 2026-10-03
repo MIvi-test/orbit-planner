@@ -593,11 +593,12 @@ class AlertRow:
 class KpiRow:
     sprint_no: int
     kpi_code: str
-    value: Decimal
+    value: Decimal | None
     target_min: Decimal | None
     target_max: Decimal | None
     details: dict[str, Any]
     kind: str = "forecast"  # forecast | actual (ТЗ: прогноз отличать от факта)
+    calculation_status: str = "calculated"
 
 
 @dataclass(frozen=True)
@@ -1842,9 +1843,9 @@ def _build_kpis(
         base = {row.task_id: (row.decision, row.start_sprint, row.end_sprint) for row in schedule}
         base_source = "этот прогон" if as_of_sprint == 0 else "этот прогон (базового ещё нет)"
 
-    def pct(numerator: Decimal | int, denominator: Decimal | int) -> Decimal:
+    def pct(numerator: Decimal | int, denominator: Decimal | int) -> Decimal | None:
         if not denominator:
-            return Decimal("0.00")
+            return None
         return (Decimal(numerator) / Decimal(denominator) * 100).quantize(Decimal("0.01"))
 
     # --- процент выполнения квартального плана ----------------------------
@@ -1891,6 +1892,7 @@ def _build_kpis(
                 "план не обещал их завершить",
             },
             kind="forecast",
+            calculation_status="calculated" if committed else "no_commitment",
         )
     ]
     if inputs.last_reported_sprint > 0:
@@ -1909,6 +1911,7 @@ def _build_kpis(
                     f"выполнены все задачи инициативы. До конца квартала значение промежуточное",
                 },
                 kind="actual",
+                calculation_status="calculated" if committed else "no_commitment",
             )
         )
 
@@ -1933,23 +1936,25 @@ def _build_kpis(
             kind, note = "forecast", "прогноз: SP задач, которые этот прогон закрывает в этом спринте"
         got = sum((sp_of.get(task_id, Decimal("0")) for task_id in ids), Decimal("0"))
         if need <= 0:
-            note += "; на спринт первоначально ничего не планировали — показатель 100%"
+            note += "; на спринт первоначально ничего не планировали — отношение не определено"
         kpis.append(
             KpiRow(
                 sprint_no=sprint_no,
                 kpi_code="say_do_ratio",
-                value=pct(got, need) if need > 0 else Decimal("100.00"),
+                value=pct(got, need),
                 target_min=low,
                 target_max=high,
                 details={
                     "formula": "фактически выполненные SP / первоначально запланированные SP × 100%",
                     "planned_sp": str(need),
                     "done_sp": str(got),
+                    "unplanned_sp": str(got) if need <= 0 else "0",
                     "planned_tasks": sorted(planned_ids.get(sprint_no, [])),
                     "done_tasks": ids,
                     "note": note,
                 },
                 kind=kind,
+                calculation_status="calculated" if need > 0 else "no_plan",
             )
         )
 
@@ -1960,7 +1965,7 @@ def _build_kpis(
         KpiRow(
             sprint_no=inputs.sprint_count,
             kpi_code="bus_factor",
-            value=Decimal(min((bf for _name, bf in in_demand), default=0)),
+            value=Decimal(min(bf for _name, bf in in_demand)) if in_demand else None,
             target_min=low,
             target_max=high,
             details={
@@ -1976,6 +1981,7 @@ def _build_kpis(
                 "отдельная проблема найма",
             },
             kind="actual",
+            calculation_status="calculated" if in_demand else "no_relevant_skills",
         )
     )
     return kpis
@@ -2172,8 +2178,8 @@ def write_plan(plan: Plan) -> int:
         cur.executemany(
             """
             INSERT INTO kpi_snapshots
-                (run_id, sprint_no, kpi_code, value, target_min, target_max, details, kind)
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                (run_id, sprint_no, kpi_code, value, target_min, target_max, details, kind, calculation_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
             """,
             [
                 (
@@ -2185,6 +2191,7 @@ def write_plan(plan: Plan) -> int:
                     row.target_max,
                     json.dumps(row.details, ensure_ascii=False),
                     row.kind,
+                    row.calculation_status,
                 )
                 for row in plan.kpis
             ],
