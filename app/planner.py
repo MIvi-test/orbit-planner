@@ -1620,8 +1620,8 @@ def _build_alerts(
     * red — «выход прогнозной даты завершения за пределы квартала»: инициатива,
       у которой есть задачи вне квартала; для целей первоначального плана это
       «цель квартала под угрозой»;
-    * yellow — «сдвиг цепочки зависимых задач»: задача с зависимыми стартует
-      позже, чем в первоначальном плане; в payload — причина сдвига.
+    * yellow — «сдвиг цепочки зависимых задач»: прогноз окончания предшественника
+      и срок хотя бы одного потомка ухудшились относительно базового плана.
     """
     by_id = {task.task_id: task for task in inputs.tasks}
     fte = Decimal(inputs.fte_hours_per_sprint)
@@ -1734,27 +1734,41 @@ def _build_alerts(
             )
         )
 
-    # --- yellow: сдвиг задачи, у которой есть зависимые ---------------------
+    # --- yellow: сдвиг сроков в цепочке зависимостей -------------------------
     dependents: dict[str, list[str]] = defaultdict(list)
     blockers_of: dict[str, list[str]] = defaultdict(list)
     for blocking, blocked, _gap in inputs.deps:
         dependents[blocking].append(blocked)
         blockers_of[blocked].append(blocking)
-    base_starts = dict(baseline_starts) or {
-        task_id: start for task_id, (_d, start, _e) in base.items() if start is not None
-    }
     current = {row.task_id: row for row in schedule}
     for row in schedule:
-        base_start = base_starts.get(row.task_id)
-        if row.decision != "in_quarter" or base_start is None or row.start_sprint is None:
+        base_entry = base.get(row.task_id)
+        if row.decision != "in_quarter" or base_entry is None or row.end_sprint is None:
             continue
-        if row.start_sprint <= base_start or not dependents.get(row.task_id):
+        base_end = base_entry[2]
+        if base_end is None or row.end_sprint <= base_end or not dependents.get(row.task_id):
             continue
-        base_end = base.get(row.task_id, (None, None, None))[2]
+        affected = []
+        for child_id in sorted(dependents[row.task_id]):
+            child_base = base.get(child_id)
+            child = current.get(child_id)
+            if child_base is None or child_base[2] is None or child is None:
+                continue
+            new_end = child.end_sprint if child.decision == "in_quarter" else None
+            if new_end is None or new_end > child_base[2]:
+                affected.append({
+                    "task_id": child_id,
+                    "baseline_end_sprint": child_base[2],
+                    "new_end_sprint": new_end,
+                    "delay_sprints": new_end - child_base[2] if new_end is not None else None,
+                })
+        if not affected:
+            continue
+        base_start = baseline_starts.get(row.task_id) or base_entry[1]
         shifted_blockers = [
             b for b in blockers_of.get(row.task_id, ())
-            if b in current and b in base_starts
-            and (current[b].start_sprint or 0) > base_starts[b]
+            if b in current and b in base and base[b][2] is not None
+            and (current[b].end_sprint or 0) > base[b][2]
         ]
         if inputs.last_reported_sprint and base_end is not None and base_end <= inputs.last_reported_sprint:
             cause, cause_text = "own_slip", (
@@ -1766,19 +1780,22 @@ def _build_alerts(
             cause, cause_text = "capacity", "ресурс перераспределён после отклонений других задач"
         alerts.append(
             AlertRow(
-                sprint_no=row.start_sprint,
+                sprint_no=row.end_sprint,
                 level="yellow",
                 alert_type="cascade_shift",
                 entity_type="task",
                 entity_id=row.task_id,
                 message=(
-                    f"{row.task_id} сдвинулась со спринта {base_start} на {row.start_sprint} "
-                    f"и тянет {len(dependents[row.task_id])} зависимых задач — {cause_text}"
+                    f"{row.task_id} завершится в спринте {row.end_sprint} вместо {base_end}; "
+                    f"сдвинулись {len(affected)} зависимых задач — {cause_text}"
                 ),
                 payload={
                     "baseline_start_sprint": base_start,
                     "new_start_sprint": row.start_sprint,
                     "dependents": sorted(dependents[row.task_id]),
+                    "baseline_end_sprint": base_end,
+                    "new_end_sprint": row.end_sprint,
+                    "affected_dependents": affected,
                     "cause": cause,
                     "cause_text": cause_text,
                     "reported_sprint": inputs.last_reported_sprint,
