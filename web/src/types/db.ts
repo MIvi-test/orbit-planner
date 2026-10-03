@@ -260,6 +260,13 @@ export interface roles {
   role_group: 'analysis' | 'development' | 'testing' | 'ops' | 'management' | 'support' | 'design' | 'other';
 }
 
+/** таблица public.schema_migrations — 3 кол. */
+export interface schema_migrations {
+  version: string;
+  checksum: string;
+  applied_at: string;
+}
+
 /** таблица public.skill_aliases — 4 кол. */
 export interface skill_aliases {
   alias_key: string;
@@ -760,7 +767,7 @@ export interface v_task_board {
   blocks: number | null;
 }
 
-/** вьюха public.v_task_remaining_hh — 7 кол. */
+/** вьюха public.v_task_remaining_hh — 8 кол. · Остаток часов по задаче и роли. ETC (task_role_etc) главнее; без ETC остаток = смета − факт (remaining_provisional = факт есть, но прогресс не подтверждён). remaining_unknown — смета роли исчерпана у незакрытой задачи: нужен ETC, сам по себе остаток 0 не означает готовность. */
 export interface v_task_remaining_hh {
   task_id: string | null;
   role_id: number | null;
@@ -769,6 +776,7 @@ export interface v_task_remaining_hh {
   remaining_hours: number | null;
   remaining_unknown: boolean | null;
   etc_reason: string | null;
+  remaining_provisional: boolean | null;
 }
 
 /** вьюха public.v_team_capacity_sp — 6 кол. · history_points = 2 на команду: среднее шаткое, на защите оговорить. available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта; для иной длины умножать на v_sprint_fund_factor.factor (так делает проверка SP_OVERFLOW). */
@@ -829,6 +837,7 @@ export type RelationName =
   | 'role_aliases'
   | 'role_substitutions'
   | 'roles'
+  | 'schema_migrations'
   | 'skill_aliases'
   | 'skills'
   | 'sprints'
