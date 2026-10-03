@@ -1614,10 +1614,9 @@ def _build_alerts(
 ) -> list[AlertRow]:
     """Три типа рисков из ТЗ.
 
-    * orange — «дефицит специалистов на следующий спринт»: потребность роли на
-      спринт, который начинается сейчас (часы, уже поставленные на него, плюс
-      остаток задач, которые могли бы в нём стартовать, но не получили
-      специалиста), больше фонда этой роли в спринте;
+    * orange — «дефицит специалистов на следующий спринт»: независимый от
+      расписания спрос готовых задач за один спринт больше фонда роли. Доля
+      каждой задачи ограничена одним полным фондом инженера за спринт;
     * red — «выход прогнозной даты завершения за пределы квартала»: инициатива,
       у которой есть задачи вне квартала; для целей первоначального плана это
       «цель квартала под угрозой»;
@@ -1627,7 +1626,6 @@ def _build_alerts(
     by_id = {task.task_id: task for task in inputs.tasks}
     fte = Decimal(inputs.fte_hours_per_sprint)
     lower_bounds = lower_bounds or {}
-    staffed = {role_id for (_engineer_id, role_id) in inputs.coverage}
     alerts: list[AlertRow] = []
 
     # --- orange: дефицит специалистов на следующий спринт -------------------
@@ -1637,37 +1635,26 @@ def _build_alerts(
         supply: dict[int, Decimal] = defaultdict(Decimal)
         for engineer in inputs.engineers:
             supply[engineer.role_id] += engineer.total_capacity_rate * fte * factor
-        planned: dict[int, Decimal] = defaultdict(Decimal)
-        for row in assignments:
-            if row.sprint_no == next_sprint:
-                planned[row.role_id] += row.hours
-        unmet: dict[int, Decimal] = defaultdict(Decimal)
-        unmet_tasks: dict[int, list[str]] = defaultdict(list)
+        demand: dict[int, Decimal] = defaultdict(Decimal)
+        ready_tasks: dict[int, list[str]] = defaultdict(list)
         names: dict[int, str] = {}
         for row in schedule:
             task = by_id.get(row.task_id)
-            if task is None or row.decision == "in_quarter":
+            if task is None or row.decision == "cancelled":
                 continue
             if lower_bounds.get(row.task_id, next_sprint + 1) > next_sprint:
-                continue  # задача и так не могла стартовать в этом спринте
-            cause = row.reason_details.get("cause_code", row.reason_code)
-            if cause == REASON_ROLE_NOT_IN_STAFF:
-                roles = [role_id for role_id in task.needed if role_id not in staffed]
-            elif cause == REASON_ROLE_HOURS:
-                by_name = {name: role_id for role_id, name in task.role_names.items()}
-                roles = [
-                    by_name[item["role"]]
-                    for item in row.reason_details.get("shortages", [])
-                    if item["role"] in by_name
-                ]
-            else:
                 continue
-            for role_id in roles:
-                unmet[role_id] += task.needed.get(role_id, Decimal("0"))
-                unmet_tasks[role_id].append(task.task_id)
+            for role_id, remaining_hh in task.needed.items():
+                if remaining_hh <= 0:
+                    continue
+                # У длинной задачи спрос одного спринта не равен всему
+                # квартальному остатку. Одна задача не требует более одного
+                # полного инженера одной роли в этом индикаторе.
+                demand[role_id] += min(remaining_hh, fte * factor)
+                ready_tasks[role_id].append(task.task_id)
                 names[role_id] = task.role_names.get(role_id, str(role_id))
-        for role_id in sorted(unmet):
-            need = planned[role_id] + unmet[role_id]
+        for role_id in sorted(demand):
+            need = demand[role_id]
             have = supply.get(role_id, Decimal("0"))
             if need <= have:
                 continue
@@ -1684,19 +1671,17 @@ def _build_alerts(
                     entity_type="role",
                     entity_id=names[role_id],
                     message=(
-                        f"спринт {next_sprint}: роли «{names[role_id]}» нужно {_q(need)} ЧЧ "
-                        f"({_q(planned[role_id])} уже в плане + {_q(unmet[role_id])} на задачах, "
-                        f"которые ждут этот ресурс), доступно {_q(have)} ЧЧ — {tail}"
+                        f"спринт {next_sprint}: готовому бэклогу роли «{names[role_id]}» "
+                        f"нужно {_q(need)} ЧЧ, доступно {_q(have)} ЧЧ — {tail}"
                     ),
                     payload={
                         "role_id": role_id,
                         "role_name": names[role_id],
                         "sprint_no": next_sprint,
                         "demand_hh": str(need),
-                        "planned_hh": str(planned[role_id]),
-                        "unmet_hh": str(unmet[role_id]),
+                        "demand_rule": "для каждой готовой задачи min(остаток роли, 80 ЧЧ × доля спринта)",
                         "supply_hh": str(have),
-                        "tasks": sorted(unmet_tasks[role_id]),
+                        "tasks": sorted(ready_tasks[role_id]),
                         "verdict": "НАЙМ: закрыть некем" if have == 0 else "НАЙМ: не хватает часов",
                         "reason": "замещения ролей отклонены организаторами (ответ №2, ADR-010)",
                     },
