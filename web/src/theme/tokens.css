@@ -1,7 +1,7 @@
 /**
  * Дизайн-токены «Маршрутного листа» (docs/UI_DESIGN.md, §2–3).
- * Светлая тема — весь продукт; тёмная — только звёздная карта,
- * включается классом .starmap-scope на контейнере экрана.
+ * Светлая и тёмная темы продукта. Звёздная карта сохраняет собственную
+ * тёмную палитру при любом выборе пользователя.
  */
 
 :root {
@@ -16,6 +16,7 @@
   --wax-text: #8a6212;
   --route: #2a9d8f;
   --route-text: #1e7268;
+  --bar-text: #ffffff;
 
   /* --- тёмная палитра (только звёздная карта) -------------------------- */
   --void: #0b1020;
@@ -31,6 +32,21 @@
   --font-mono: 'PT Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   color-scheme: light;
+}
+
+:root[data-mantine-color-scheme='dark'] {
+  --ink: #e8ecf5;
+  --paper: #0b1020;
+  --surface: #141b2e;
+  --line: #33415b;
+  --muted: #a9b5cc;
+  --stamp: #ff8175;
+  --wax: #ffc857;
+  --wax-text: #ffd271;
+  --route: #6ccfa6;
+  --route-text: #87dfba;
+  --bar-text: #0b1020;
+  color-scheme: dark;
 }
 
 * {

@@ -20,6 +20,18 @@ export const theme = createTheme({
     },
   },
   colors: {
+    dark: [
+      '#f3f6fc',
+      '#dce4f1',
+      '#a9b5cc',
+      '#74839e',
+      '#33415b',
+      '#25324a',
+      '#141b2e',
+      '#0b1020',
+      '#080d1a',
+      '#050914',
+    ],
     post: [
       '#EEF1F6',
       '#D8DFEA',

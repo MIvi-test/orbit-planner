@@ -288,7 +288,7 @@ function BarCell({
         />
       )}
       {spLabel && (
-        <Text size="9px" className="mono tabular" style={{ position: 'relative', color: '#fff', zIndex: 1, marginBottom: 8 }}>
+        <Text size="9px" className="mono tabular" style={{ position: 'relative', color: 'var(--bar-text)', zIndex: 1, marginBottom: 8 }}>
           {spLabel}
         </Text>
       )}

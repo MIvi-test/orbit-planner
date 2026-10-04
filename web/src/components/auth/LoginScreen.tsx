@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { setToken, clearToken } from '../../api/auth'
 import { ApiError, fetchMe } from '../../api/client'
 import { useAuth } from '../../hooks/useAuth'
+import { ThemeToggle } from '../common/ThemeToggle'
 
 /** Экран входа по токену доступа (ADR-027). Токен выдаёт администратор сервиса. */
 export function LoginScreen() {
@@ -36,6 +37,9 @@ export function LoginScreen() {
 
   return (
     <Center mih="100vh" px="md">
+      <div style={{ position: 'absolute', top: 16, right: 16 }}>
+        <ThemeToggle />
+      </div>
       <Paper withBorder p="xl" maw={440} w="100%">
         <form onSubmit={submit}>
           <Stack gap="md">

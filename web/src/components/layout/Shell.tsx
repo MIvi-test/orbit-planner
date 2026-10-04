@@ -7,6 +7,7 @@ import { RunSelect } from './RunSelect'
 import type { ScreenId } from '../../hooks/useHashRoute'
 import { useAuth } from '../../hooks/useAuth'
 import { ROLE_LABEL } from '../../api/auth'
+import { ThemeToggle } from '../common/ThemeToggle'
 
 const NAV: { id: ScreenId; label: string }[] = [
   { id: 'upload', label: 'Загрузка' },
@@ -37,6 +38,7 @@ export function Shell({
             <Text fw={600} size="lg" style={{ whiteSpace: 'nowrap' }}>
               PI-Planner
             </Text>
+            <ThemeToggle />
             <Text size="sm" c="dimmed">
               ПочтаТех
             </Text>
