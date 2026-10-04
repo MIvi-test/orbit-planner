@@ -31,7 +31,8 @@ def set_rate(engineer_id: str, team_id: str, sprint_no: int, rate: Decimal | Non
             if cur.fetchone() is None:
                 raise ingest.UploadError("спринт не входит в выбранный PI")
             if rate is None:
-                cur.execute("DELETE FROM engineer_orbit_availability WHERE engineer_id = %s AND team_id = %s AND pi_id = %s AND sprint_no = %s",
+                cur.execute("""DELETE FROM engineer_orbit_availability
+                               WHERE engineer_id = %s AND team_id = %s AND pi_id = %s AND sprint_no = %s""",
                             (engineer_id, team_id, pi["pi_id"], sprint_no))
             else:
                 cur.execute(

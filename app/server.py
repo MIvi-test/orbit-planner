@@ -61,7 +61,10 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, auth, availability, contexts, data_quality, db, ingest, plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce
+from app import (
+    absence, auth, availability, contexts, data_quality, db, ingest,
+    plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
+)
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
