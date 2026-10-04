@@ -26,6 +26,7 @@ from app.planner.queries import (
     PI_SQL,
     SKILL_BUS_FACTOR_SQL,
     SPRINTS_SQL,
+    SPRINT_ORBIT_RATES_SQL,
     SUBSTITUTION_ROWS_SQL,
     TASK_DATES_SQL,
     TASK_PRODF_SQL,
@@ -253,6 +254,10 @@ def load_inputs() -> Inputs:
         skill_reviews=frozenset(skill_reviews),
         engineer_skills={key: frozenset(ids) for key, ids in engineer_skills.items()},
         skill_names=skill_names,
+        sprint_orbit_rates={
+            (row["engineer_id"], row["team_id"], int(row["sprint_no"])): Decimal(row["capacity_rate"])
+            for row in db.query_dicts(SPRINT_ORBIT_RATES_SQL, (pi["pi_id"],))
+        },
     )
 
 

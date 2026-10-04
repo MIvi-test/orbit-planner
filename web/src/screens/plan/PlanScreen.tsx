@@ -108,7 +108,9 @@ export function PlanScreen() {
 function Legend({ hasBaseline }: { hasBaseline: boolean }) {
   return (
     <Group gap="lg" wrap="wrap">
-      <LegendItem swatch={{ background: 'var(--ink)' }} label="в квартале" />
+      <LegendItem swatch={{ background: 'var(--ink)' }} label="назначена работа" />
+      <LegendItem swatch={{ background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} label="ожидание в окне задачи" />
+      <Text size="xs" c="dimmed">✓ — завершена по факту</Text>
       <LegendItem
         swatch={{
           background:

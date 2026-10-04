@@ -184,15 +184,17 @@ COMMENT ON VIEW v_task_remaining_hh IS
 CREATE VIEW v_satellite_capacity AS
 SELECT o.engineer_id, o.team_id, e.role_id, e.grade,
        s.pi_id, s.sprint_no, s.start_date, s.end_date,
-       o.capacity_rate,
+       COALESCE(a.available_rate, o.capacity_rate) AS capacity_rate,
        (SELECT COUNT(*) > 1 FROM engineer_orbits x WHERE x.engineer_id = o.engineer_id) AS is_shared_orbit,
        s.length_days,
-       ROUND(o.capacity_rate * p.fte_hours_per_sprint * f.factor, 2) AS hours_own
+       ROUND(COALESCE(a.available_rate, o.capacity_rate) * p.fte_hours_per_sprint * f.factor, 2) AS hours_own
 FROM engineer_orbits o
 JOIN engineers  e ON e.engineer_id = o.engineer_id
 JOIN sprints    s ON TRUE
 JOIN pi_periods p ON p.pi_id = s.pi_id
-JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no;
+JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no
+LEFT JOIN engineer_orbit_availability a ON a.engineer_id = o.engineer_id AND a.team_id = o.team_id
+  AND a.pi_id = s.pi_id AND a.sprint_no = s.sprint_no;
 COMMENT ON VIEW v_satellite_capacity IS
  'hours_own — фонд спутника на орбите в КОНКРЕТНОМ спринте: rate × 80 × factor спринта. '
  'В текущем PI все шесть спринтов полные.';
@@ -201,19 +203,26 @@ COMMENT ON VIEW v_satellite_capacity IS
 --  Предложение часов по роли: в разрезе ядра и по всей компании.
 -- --------------------------------------------------------------------
 CREATE VIEW v_role_supply_hh AS
-SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
-       COUNT(DISTINCT o.engineer_id)                                     AS engineers,
-       SUM(o.capacity_rate)                                              AS fte,
-       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2)           AS hh_per_sprint,
-       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint)
-             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2)         AS hh_per_pi,
-       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint)
-             * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1), 2) AS hh_remaining_pi
-FROM roles r
-JOIN engineers       e ON e.role_id = r.role_id
-JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
-CROSS JOIN pi_periods p
-GROUP BY r.role_id, r.canonical_name, o.team_id;
+WITH nominal AS (
+    SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
+           COUNT(DISTINCT o.engineer_id) AS engineers,
+           SUM(o.capacity_rate) AS fte,
+           ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2) AS hh_per_sprint
+    FROM roles r JOIN engineers e ON e.role_id = r.role_id
+    JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
+    CROSS JOIN pi_periods p
+    GROUP BY r.role_id, r.canonical_name, o.team_id
+), calendar AS (
+    SELECT c.role_id, c.team_id, ROUND(SUM(c.hours_own), 2) AS hh_per_pi,
+           ROUND(COALESCE(SUM(c.hours_own) FILTER (
+               WHERE c.sprint_no > f.last_reported_sprint), 0), 2) AS hh_remaining_pi
+    FROM v_satellite_capacity c
+    JOIN v_remaining_pi_fund_factor f ON f.pi_id = c.pi_id
+    GROUP BY c.role_id, c.team_id
+)
+SELECT n.role_id, n.role_name, n.team_id, n.engineers, n.fte, n.hh_per_sprint,
+       c.hh_per_pi, c.hh_remaining_pi
+FROM nominal n JOIN calendar c USING (role_id, team_id);
 COMMENT ON VIEW v_role_supply_hh IS
  'hh_per_sprint — фонд одного ПОЛНОГО спринта. hh_per_pi — фонд всего квартала: '
  '× v_pi_fund_factor.factor (сейчас 6.0000). hh_remaining_pi — фонд '

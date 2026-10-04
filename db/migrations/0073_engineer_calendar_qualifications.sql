@@ -1,23 +1,78 @@
--- =====================================================================
---  ИНВАРИАНТЫ ПЛАНА — автоматическая приёмка результата планировщика.
---
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id;
---      SELECT * FROM v_plan_violations WHERE run_id = :run_id AND severity = 'error';
---
---  КРИТЕРИЙ ПРИЁМКИ: нет строк с severity = 'error'.
---  severity = 'warning' план не отменяет, но обязан быть показан в UI
---  (замещение роли, выход за даты исходного плана, разрыв в окне задачи).
---  Каждая строка — нарушение правила из docs/PLANNER_SPEC.md, раздел 7.
---  Проверки только читают, ничего не меняют: гонять можно сколько угодно.
---
---  Проверок 29 (A..AC). Разбор ревью M2 и что из него закрыто —
---  docs/REVIEW_RESPONSE.md.
--- =====================================================================
 BEGIN;
 
-DROP VIEW IF EXISTS v_plan_violations CASCADE;
+CREATE TABLE IF NOT EXISTS engineer_role_qualifications (
+    engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id) ON DELETE CASCADE,
+    role_id SMALLINT NOT NULL REFERENCES roles(role_id),
+    valid_from DATE NOT NULL,
+    valid_until DATE,
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    confirmed_by TEXT NOT NULL CHECK (btrim(confirmed_by) <> ''),
+    PRIMARY KEY (engineer_id, role_id, valid_from),
+    CHECK (valid_until IS NULL OR valid_until >= valid_from)
+);
+COMMENT ON TABLE engineer_role_qualifications IS
+ 'Подтверждённая дополнительная квалификация с датой действия. Сама по себе не разрешает замещение роли в планировщике.';
 
-CREATE VIEW v_plan_violations AS
+CREATE TABLE IF NOT EXISTS engineer_orbit_availability (
+    engineer_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    pi_id TEXT NOT NULL,
+    sprint_no SMALLINT NOT NULL,
+    available_rate NUMERIC(3,2) NOT NULL CHECK (available_rate BETWEEN 0 AND 1),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (engineer_id, team_id, pi_id, sprint_no),
+    FOREIGN KEY (engineer_id, team_id) REFERENCES engineer_orbits(engineer_id, team_id) ON DELETE CASCADE,
+    FOREIGN KEY (pi_id, sprint_no) REFERENCES sprints(pi_id, sprint_no) ON DELETE CASCADE
+);
+COMMENT ON TABLE engineer_orbit_availability IS
+ 'Исключения из штатной ставки орбиты по спринтам. Ставка 0 означает отсутствие; без строки действует engineer_orbits.capacity_rate.';
+
+CREATE OR REPLACE VIEW v_satellite_capacity AS
+SELECT o.engineer_id, o.team_id, e.role_id, e.grade,
+       s.pi_id, s.sprint_no, s.start_date, s.end_date,
+       COALESCE(a.available_rate, o.capacity_rate) AS capacity_rate,
+       (SELECT COUNT(*) > 1 FROM engineer_orbits x WHERE x.engineer_id = o.engineer_id) AS is_shared_orbit,
+       s.length_days,
+       ROUND(COALESCE(a.available_rate, o.capacity_rate) * p.fte_hours_per_sprint * f.factor, 2) AS hours_own
+FROM engineer_orbits o
+JOIN engineers  e ON e.engineer_id = o.engineer_id
+JOIN sprints    s ON TRUE
+JOIN pi_periods p ON p.pi_id = s.pi_id
+JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no
+LEFT JOIN engineer_orbit_availability a ON a.engineer_id = o.engineer_id AND a.team_id = o.team_id
+  AND a.pi_id = s.pi_id AND a.sprint_no = s.sprint_no;
+COMMENT ON VIEW v_satellite_capacity IS
+ 'hours_own — фонд спутника на орбите в КОНКРЕТНОМ спринте: rate × 80 × factor спринта. '
+ 'В текущем PI все шесть спринтов полные.';
+
+CREATE OR REPLACE VIEW v_role_supply_hh AS
+WITH nominal AS (
+    SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
+           COUNT(DISTINCT o.engineer_id) AS engineers,
+           SUM(o.capacity_rate) AS fte,
+           ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2) AS hh_per_sprint
+    FROM roles r JOIN engineers e ON e.role_id = r.role_id
+    JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
+    CROSS JOIN pi_periods p
+    GROUP BY r.role_id, r.canonical_name, o.team_id
+), calendar AS (
+    SELECT c.role_id, c.team_id, ROUND(SUM(c.hours_own), 2) AS hh_per_pi,
+           ROUND(COALESCE(SUM(c.hours_own) FILTER (
+               WHERE c.sprint_no > f.last_reported_sprint), 0), 2) AS hh_remaining_pi
+    FROM v_satellite_capacity c
+    JOIN v_remaining_pi_fund_factor f ON f.pi_id = c.pi_id
+    GROUP BY c.role_id, c.team_id
+)
+SELECT n.role_id, n.role_name, n.team_id, n.engineers, n.fte, n.hh_per_sprint,
+       c.hh_per_pi, c.hh_remaining_pi
+FROM nominal n JOIN calendar c USING (role_id, team_id);
+COMMENT ON VIEW v_role_supply_hh IS
+ 'hh_per_sprint — фонд одного ПОЛНОГО спринта. hh_per_pi — фонд всего квартала: '
+ '× v_pi_fund_factor.factor (сейчас 6.0000). hh_remaining_pi — фонд '
+ 'будущих спринтов после последнего принятого факта.';
+
+CREATE OR REPLACE VIEW v_plan_violations AS
 
 -- A. Ёмкость команды в SP (SP учитываются по долям plan_task_sp) ------------
 -- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: в текущем PI все шесть спринтов полные (ADR-025).

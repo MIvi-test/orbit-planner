@@ -138,17 +138,23 @@ export function GanttGrid({
                     s.sprint_no >= baseline.start_sprint &&
                     s.sprint_no <= baseline.end_sprint
                   const sp = spRows.find((r) => r.sprint_no === s.sprint_no)
-                  const hasLoan = assignments.some((a) => a.sprint_no === s.sprint_no && a.is_loan)
+                  const sprintAssignments = assignments.filter((a) => a.sprint_no === s.sprint_no)
+                  const hasLoan = sprintAssignments.some((a) => a.is_loan)
                   const isDeferredGhost = schedule && schedule.decision !== 'in_quarter'
+                  const doneSprint = task.status === 'Done' && task.actual_end
+                    ? s.start_date <= task.actual_end && task.actual_end <= s.end_date
+                    : false
 
                   return (
                     <BarCell
                       key={s.sprint_no}
                       onClick={() => onSelect(task)}
-                      inQuarter={Boolean(inQuarter)}
+                      working={sprintAssignments.length > 0}
+                      waiting={Boolean(inQuarter) && sprintAssignments.length === 0}
+                      done={Boolean(doneSprint)}
                       isBaselineSprint={Boolean(isBaselineSprint)}
                       hasLoan={hasLoan}
-                      spLabel={spRows.length > 1 && sp ? num(sp.sp).toFixed(1).replace(/\.0$/, '') : null}
+                      spLabel={sp ? num(sp.sp).toFixed(1).replace(/\.0$/, '') : null}
                       ghost={Boolean(isDeferredGhost)}
                     />
                   )
@@ -220,14 +226,18 @@ function RowCell({
 
 function BarCell({
   onClick,
-  inQuarter,
+  working,
+  waiting,
+  done,
   isBaselineSprint,
   hasLoan,
   spLabel,
   ghost,
 }: {
   onClick: () => void
-  inQuarter: boolean
+  working: boolean
+  waiting: boolean
+  done: boolean
   isBaselineSprint: boolean
   hasLoan: boolean
   spLabel: string | null
@@ -260,7 +270,10 @@ function BarCell({
           }}
         />
       )}
-      {inQuarter && (
+      {waiting && (
+        <div title="Ожидание без назначений" style={{ position: 'absolute', left: 2, right: 2, top: 6, bottom: 4, background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} />
+      )}
+      {working && (
         <div
           style={{
             position: 'absolute',
@@ -274,6 +287,9 @@ function BarCell({
               : 'var(--ink)',
           }}
         />
+      )}
+      {done && (
+        <span title="Завершена по факту" style={{ position: 'absolute', right: 4, top: 3, zIndex: 2, color: 'var(--flare)', fontWeight: 700 }}>✓</span>
       )}
       {isBaselineSprint && (
         <div

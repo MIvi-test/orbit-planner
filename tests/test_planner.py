@@ -17,7 +17,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import planner
+from app import plan_quality, planner
 
 T1, T2 = "Team-1", "Team-2"
 
@@ -869,6 +869,34 @@ def test_repack_uses_capacity_freed_by_deferrals() -> None:
         "B": "deferred_next_pi",
         "C": "in_quarter",
     }
+
+
+def test_atomic_repack_uses_capacity_released_by_blocked_initiative() -> None:
+    """An initiative rejected after dependency propagation must release its hours for the next one."""
+    tasks = [
+        task("B", rung=90, topo=1, roles={1: 80}, prodf="P-1"),
+        task("C", rung=50, topo=2, roles={1: 80}, prodf="P-2"),
+        task("A", rung=10, topo=3, roles={99: 40}, prodf="P-3"),
+    ]
+    plan = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),), sprint_count=1),
+        initiative_mode=planner.INITIATIVE_MODE_ATOMIC, simulate_next_pi=False,
+    )
+    assert starts_of(plan) == {"A": None, "B": None, "C": 1}
+    assert plan.params["repack"] is True
+
+
+def test_small_order_search_exposes_a_better_complete_initiative() -> None:
+    source = inputs([
+        task("A", sp=5, rung=90, roles={1: 80}, prodf="P-A"),
+        task("B", sp=10, rung=50, roles={1: 80}, prodf="P-B"),
+    ], [engineer("ENG-1")], sprint_count=1)
+    ordinary = planner.build_plan(source, simulate_next_pi=False)
+    assert {row.task_id for row in ordinary.in_quarter} == {"A"}
+    benchmark = plan_quality.reference_order_search(source, 0, {})
+    assert benchmark["permutations"] == 2
+    assert benchmark["best_by_mode"]["atomic"]["complete_initiative_sp"] == "10"
+    assert benchmark["best_by_mode"]["greedy"]["order"][0] == "P-B"
 
 
 def test_every_decision_carries_a_human_explanation() -> None:

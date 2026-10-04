@@ -40,5 +40,7 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0069_sprint_forecast_accuracy', 'baseline'),
   ('0070_dq_issue_worklist', 'baseline'),
   ('0071_source_trace', 'baseline'),
-  ('0072_pi_contexts', 'baseline')
+  ('0072_pi_contexts', 'baseline'),
+  ('0073_engineer_calendar_qualifications', 'baseline'),
+  ('0074_upload_revisions', 'baseline')
 ON CONFLICT (version) DO NOTHING;

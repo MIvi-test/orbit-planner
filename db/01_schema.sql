@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS public.pi_contexts (
 
 -- ---------- полный сброс (ETL идемпотентен, датасет ожидается v2) ----
 DROP FUNCTION IF EXISTS apply_actuals() CASCADE;
-DROP TABLE IF EXISTS plan_team_capacity, audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
+DROP TABLE IF EXISTS upload_revisions, engineer_role_qualifications, engineer_orbit_availability,
+    plan_team_capacity, audit_log, app_users, plan_dependency_bounds, plan_task_sp, kpi_snapshots, alerts, task_state, plan_assignments,
     plan_task_schedule, plan_baseline, plan_capacity_snapshot, plan_runs,
     task_goal_confirmations, plan_decision_goal_map, actual_report_issues, task_actual_spent, task_actuals, actual_uploads, task_role_spent_seed, tasks_seed_state,
     ref_decision_reasons,
@@ -185,6 +186,19 @@ CREATE TABLE engineer_orbits (
 COMMENT ON TABLE engineer_orbits IS
  'ОРБИТА: привязка спутника к ядру со ставкой. 34 строки / 30 инженеров — 4 висят на двух орбитах '
  '(ENG-405, ENG-406, ENG-419, ENG-426). Политика часов — «орбита с приоритетом», см. ADR-001.';
+
+CREATE TABLE engineer_role_qualifications (
+    engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id) ON DELETE CASCADE,
+    role_id SMALLINT NOT NULL REFERENCES roles(role_id),
+    valid_from DATE NOT NULL,
+    valid_until DATE,
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    confirmed_by TEXT NOT NULL CHECK (btrim(confirmed_by) <> ''),
+    PRIMARY KEY (engineer_id, role_id, valid_from),
+    CHECK (valid_until IS NULL OR valid_until >= valid_from)
+);
+COMMENT ON TABLE engineer_role_qualifications IS
+ 'Подтверждённая дополнительная квалификация с датой действия. Сама по себе не разрешает замещение роли в планировщике.';
 
 CREATE TABLE engineer_skills (
     engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id) ON DELETE CASCADE,
@@ -375,6 +389,21 @@ COMMENT ON COLUMN sprints.length_days IS
  'Длина спринта в днях (включительно). Генерируемая колонка: ETL её не пишет. '
  'Множитель фонда = length_days / pi_periods.sprint_length_days.';
 
+CREATE TABLE engineer_orbit_availability (
+    engineer_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    pi_id TEXT NOT NULL,
+    sprint_no SMALLINT NOT NULL,
+    available_rate NUMERIC(3,2) NOT NULL CHECK (available_rate BETWEEN 0 AND 1),
+    source_text TEXT NOT NULL CHECK (btrim(source_text) <> ''),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (engineer_id, team_id, pi_id, sprint_no),
+    FOREIGN KEY (engineer_id, team_id) REFERENCES engineer_orbits(engineer_id, team_id) ON DELETE CASCADE,
+    FOREIGN KEY (pi_id, sprint_no) REFERENCES sprints(pi_id, sprint_no) ON DELETE CASCADE
+);
+COMMENT ON TABLE engineer_orbit_availability IS
+ 'Исключения из штатной ставки орбиты по спринтам. Ставка 0 означает отсутствие; без строки действует engineer_orbits.capacity_rate.';
+
 -- =====================================================================
 --  5. ПРЕДРАСЧЁТ ГРАФА ЗАВИСИМОСТЕЙ
 -- =====================================================================
@@ -454,6 +483,25 @@ CREATE TABLE task_role_spent_seed (
 );
 COMMENT ON TABLE tasks_seed_state IS
  'Состояние задач ровно как в загруженном датасете. Точка отсчёта для воспроизведения факта.';
+
+CREATE TABLE upload_revisions (
+    revision_id BIGSERIAL PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('dataset', 'actuals')),
+    pi_id TEXT NOT NULL,
+    sprint_no SMALLINT,
+    source_file TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    content BYTEA NOT NULL,
+    idempotency_key TEXT,
+    response JSONB,
+    plan_snapshot JSONB,
+    superseded_by BIGINT REFERENCES upload_revisions(revision_id),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((kind = 'dataset' AND sprint_no IS NULL) OR (kind = 'actuals' AND sprint_no IS NOT NULL)),
+    UNIQUE (kind, idempotency_key)
+);
+COMMENT ON TABLE upload_revisions IS
+ 'Неизменяемые исходные файлы загрузок и связь замещения. Активное состояние остаётся в actual_uploads и tasks.';
 
 CREATE TABLE actual_uploads (
     upload_id     SERIAL PRIMARY KEY,

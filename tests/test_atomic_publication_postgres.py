@@ -134,6 +134,9 @@ def test_failed_dataset_plan_restores_previous_dataset(monkeypatch, tmp_path) ->
     substitution_sql = tmp_path / "substitutions.sql"
     substitution_sql.write_text("BEGIN;\nCOMMIT;\n")
     monkeypatch.setattr(ingest, "SUBSTITUTIONS_SQL", substitution_sql)
+    # This fixture deliberately has no application schema; archiving belongs to
+    # the full-schema integration tests, while this test isolates rollback.
+    monkeypatch.setattr(ingest, "_snapshot_active_uploads", lambda _cur, _pi, _sprint: None)
     monkeypatch.setattr(ingest, "run_plan", lambda _sprint: (_ for _ in ()).throw(
         RuntimeError("планирование упало")
     ))

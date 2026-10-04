@@ -121,6 +121,7 @@ def authenticate(header: str | None) -> Principal | None:
 PUBLIC_GET = ("/api/livez", "/api/health", "/api/version")
 ADMIN_POST = ("/api/dataset", "/api/pi-contexts")
 PLANNER_POST = ("/api/actuals", "/api/actuals/role-review", "/api/tasks/goal-confirmation",
+                "/api/tasks/skill-review", "/api/engineers/availability", "/api/engineers/qualifications",
                 "/api/initiatives/priority", "/api/dq-issues/review")
 
 

@@ -312,10 +312,8 @@ def build_plan(
         propagate_deferrals()
 
         # ---- проход 4: повторная упаковка (ADR-020) ------------------------
-        # Переносы проходов 2–3 возвращают часы и SP в фонд. Без этого прохода
-        # освободившийся ресурс пропадал, а причина «не хватило ресурсов» у
-        # перенесённой задачи была бы неправдой. Атомарный режим не трогаем:
-        # там упаковка — по инициативам целиком.
+        # Переносы проходов 2–3 возвращают часы и SP в фонд. В atomic повторно
+        # пробуем всю инициативу, чтобы освободившийся ресурс тоже учитывался.
         if initiative_mode == INITIATIVE_MODE_GREEDY:
             for _ in range(len(ordered) + 1):
                 placed_now = False
@@ -326,6 +324,30 @@ def build_plan(
                         continue
                     if place(task, lower_bound(task)):
                         placed_now = True
+                if not placed_now:
+                    break
+                fix_gaps()
+                propagate_deferrals()
+        else:
+            for _ in range(len(ordered) + 1):
+                placed_now = False
+                for prodf_id, members in groups.items():
+                    if not all(task.task_id in deferred for task in members):
+                        continue
+                    if any(missing_roles(task) or any(
+                        blocker in deferred for blocker, _ in deps_by_blocked.get(task.task_id, ())
+                    ) for task in members):
+                        continue
+                    for task in members:
+                        if not place(task, lower_bound(task)):
+                            break
+                    else:
+                        placed_now = True
+                        continue
+                    release_initiative(prodf_id)
+                    for task in members:
+                        deferred[task.task_id] = blocked_reason(task)
+                        atomic_deferred.add(task.task_id)
                 if not placed_now:
                     break
                 fix_gaps()
@@ -766,7 +788,7 @@ def build_plan(
             "business_priorities": sorted({item.prodf_id for item in inputs.tasks if item.business_priority is not None}),
             "replan_floor": replan_floor,
             "sp_model": "joint",
-            "repack": initiative_mode == INITIATIVE_MODE_GREEDY,
+            "repack": True,
             "next_pi_check": next_pi_check,
             "pi_closed": pi_closed,
             "dependency_fact_issues": dependency_fact_issues,

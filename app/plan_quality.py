@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from collections import defaultdict
+from dataclasses import replace
+from itertools import permutations
 from typing import Any
 
-from app import db
+from app import db, planner
 
 
 class QualityUnavailable(ValueError):
@@ -13,7 +16,7 @@ class QualityUnavailable(ValueError):
 
 def evaluate(run_id: int) -> dict[str, Any]:
     run = db.query_one(
-        "SELECT run_id, pi_id, as_of_sprint, created_at FROM plan_runs "
+        "SELECT run_id, pi_id, as_of_sprint, created_at, params FROM plan_runs "
         "WHERE status IN ('ok', 'infeasible') ORDER BY run_id DESC LIMIT 1"
     )
     if run is None or run["run_id"] != run_id:
@@ -106,6 +109,7 @@ def evaluate(run_id: int) -> dict[str, Any]:
             if new_people is not None and new_people != people:
                 switches.append({"task_id": task_id, "role_id": role_id,
                                  "before": sorted(people), "after": sorted(new_people)})
+    comparison = compare_modes(int(run["as_of_sprint"]), run["params"] or {})
     return {
         "run_id": run_id,
         "completed_value": {"tasks": completed["tasks"], "sp": str(completed["sp"])},
@@ -115,8 +119,85 @@ def evaluate(run_id: int) -> dict[str, Any]:
         "unplanned_completed_sp": str(unplanned_sp or Decimal(0)),
         "scarce_unused_roles": scarce,
         "people_switches": switches,
+        "mode_comparison": comparison,
         "method": (
             "Текущий вход; бизнес ценность — только подтверждённая цель. "
             "Дефицит и свободный фонд роли сопоставлены для оставшихся спринтов."
         ),
     }
+
+
+def compare_modes(as_of_sprint: int, params: dict[str, Any]) -> dict[str, Any]:
+    """Price of both published heuristics on the same current input.
+
+    Complete initiative SP is a technical proxy, never labelled business value.
+    The total live SP is a valid but loose upper bound; no optimality claim.
+    """
+    inputs = planner.load_inputs()
+    groups: dict[str, list[Any]] = defaultdict(list)
+    for task in inputs.tasks:
+        groups[task.prodf_id].append(task)
+    modes: dict[str, dict[str, Any]] = {}
+    for mode in (planner.INITIATIVE_MODE_GREEDY, planner.INITIATIVE_MODE_ATOMIC):
+        plan = planner.build_plan(
+            inputs, as_of_sprint=as_of_sprint, initiative_mode=mode,
+            dependency_mode=str(params.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE)),
+            priority_strategy=str(params.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY)),
+            simulate_next_pi=False,
+        )
+        placed = {row.task_id for row in plan.in_quarter}
+        complete = [prodf_id for prodf_id, tasks in groups.items()
+                    if all(task.task_id in placed for task in tasks)]
+        partial = [prodf_id for prodf_id, tasks in groups.items()
+                   if any(task.task_id in placed for task in tasks) and prodf_id not in complete]
+        complete_sp = sum((task.sp_to_plan for prodf_id in complete
+                           for task in groups[prodf_id]), Decimal(0))
+        modes[mode] = {
+            "complete_initiatives": len(complete),
+            "complete_initiative_sp": str(complete_sp),
+            "partial_initiatives": len(partial),
+            "planned_tasks": len(placed),
+        }
+    upper = sum((task.sp_to_plan for task in inputs.tasks), Decimal(0))
+    order_search = reference_order_search(inputs, as_of_sprint, params)
+    return {"modes": modes, "upper_bound_sp": str(upper), "order_search": order_search,
+            "method": "Один текущий вход и правила ограничений; SP завершённых инициатив — техническая мера. "
+                      "Верхняя граница — все живые SP, оптимум не доказан."}
+
+
+def reference_order_search(inputs: planner.Inputs, as_of_sprint: int,
+                           params: dict[str, Any]) -> dict[str, Any]:
+    """Exhaust all initiative orders on small inputs, keeping every feasibility rule.
+
+    The result is exact among these orders and this placement algorithm; it is
+    not a proof of optimality over arbitrary schedules.
+    """
+    groups: dict[str, list[Any]] = defaultdict(list)
+    for task in inputs.tasks:
+        groups[task.prodf_id].append(task)
+    if len(groups) > 5 or len(inputs.tasks) > 10:
+        return {"status": "skipped", "reason": "перебор ограничен 5 инициативами и 10 задачами"}
+    best: dict[str, dict[str, Any]] = {}
+    for order in permutations(sorted(groups)):
+        rank = {prodf_id: len(order) - index for index, prodf_id in enumerate(order)}
+        ordered_input = replace(inputs, tasks=tuple(
+            replace(task, business_priority=rank[task.prodf_id]) for task in inputs.tasks
+        ))
+        for mode in (planner.INITIATIVE_MODE_GREEDY, planner.INITIATIVE_MODE_ATOMIC):
+            plan = planner.build_plan(
+                ordered_input, as_of_sprint=as_of_sprint, initiative_mode=mode,
+                dependency_mode=str(params.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE)),
+                priority_strategy=str(params.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY)),
+                simulate_next_pi=False,
+            )
+            placed = {row.task_id for row in plan.in_quarter}
+            complete = [prodf_id for prodf_id, tasks in groups.items()
+                        if all(task.task_id in placed for task in tasks)]
+            score = sum((task.sp_to_plan for prodf_id in complete
+                         for task in groups[prodf_id]), Decimal(0))
+            if mode not in best or score > Decimal(best[mode]["complete_initiative_sp"]):
+                best[mode] = {"complete_initiative_sp": str(score), "order": list(order)}
+    return {"status": "computed", "permutations": len(list(permutations(groups))),
+            "best_by_mode": best,
+            "method": "Полный перебор порядка инициатив при том же алгоритме размещения; "
+                      "другие расписания могут быть лучше."}

@@ -17,6 +17,7 @@ import {
 import type { RoleDeficitEffectiveRow, RoleDeficitRow } from '../../types/views'
 import { DataQualityWorkbench } from './DataQualityWorkbench'
 import { WorkforceScenarios } from './WorkforceScenarios'
+import { SkillReview } from './SkillReview'
 
 export function RolesScreen() {
   const [problemsOnly, setProblemsOnly] = useState(true)
@@ -161,6 +162,9 @@ export function RolesScreen() {
           ))}
         </Stack>
         <DataQualityWorkbench issues={dqIssuesQ.data?.items ?? []} reviews={dqReviewsQ.data?.items ?? []} />
+      </Section>
+      <Section title="Разметка технологий" note="Подтвердите требования задачи к стеку перед проверкой назначения инженера.">
+        <SkillReview />
       </Section>
     </Stack>
   )

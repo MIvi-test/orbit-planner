@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import re
 import tempfile
 import threading
@@ -138,7 +139,50 @@ def _has_baseline() -> bool:
 # ---------------------------------------------------------------------------
 #  датасет
 # ---------------------------------------------------------------------------
-def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None) -> dict[str, Any]:
+def _snapshot_active_uploads(cur: Any, pi_id: str, from_sprint: int) -> None:
+    """Freeze the KPI and schedule attached to reports before their runs are removed."""
+    cur.execute(
+        """UPDATE upload_revisions rev SET plan_snapshot = jsonb_build_object(
+               'upload', to_jsonb(u),
+               'runs', COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM plan_runs r
+                   WHERE r.actuals_upload_id = u.upload_id), '[]'::jsonb),
+               'kpis', COALESCE((SELECT jsonb_agg(to_jsonb(k)) FROM kpi_snapshots k
+                   JOIN plan_runs r ON r.run_id = k.run_id
+                   WHERE r.actuals_upload_id = u.upload_id), '[]'::jsonb),
+               'schedule', COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM plan_task_schedule s
+                   JOIN plan_runs r ON r.run_id = s.run_id
+                   WHERE r.actuals_upload_id = u.upload_id), '[]'::jsonb)
+           )
+           FROM actual_uploads u
+           WHERE u.pi_id = %s AND u.sprint_no >= %s
+             AND rev.kind = 'actuals' AND rev.pi_id = u.pi_id
+             AND rev.sprint_no = u.sprint_no AND rev.source_sha256 = u.source_sha256
+             AND rev.superseded_by IS NULL""",
+        (pi_id, from_sprint),
+    )
+
+
+def _replay_revision(kind: str, key: str | None, sha: str, pi_id: str,
+                     sprint_no: int | None = None) -> dict[str, Any] | None:
+    if not key:
+        return None
+    if len(key) > 120 or not key.isascii() or not key.isprintable():
+        raise UploadError("Idempotency-Key должен быть печатной ASCII-строкой до 120 символов")
+    row = db.query_one(
+        "SELECT pi_id, sprint_no, source_sha256, response FROM upload_revisions "
+        "WHERE kind = %s AND idempotency_key = %s", (kind, key),
+    )
+    if row is None:
+        return None
+    if row["pi_id"] != pi_id or row["sprint_no"] != sprint_no or row["source_sha256"] != sha:
+        raise UploadError("Idempotency-Key уже использован для другого файла или периода")
+    if row["response"] is None:
+        raise UploadError("операция с этим Idempotency-Key ещё не завершена")
+    return {**row["response"], "replayed": True}
+
+
+def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None,
+                 idempotency_key: str | None = None) -> dict[str, Any]:
     """xlsx датасета → база с нуля → базовый план. Старые прогоны и факт стираются."""
     if not data:
         raise UploadError("пустой файл")
@@ -155,8 +199,12 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None)
         current_pi = db.query_one(
             "SELECT pi_id, start_date FROM pi_periods ORDER BY pi_id LIMIT 1"
         ) or current_pi
+    sha = hashlib.sha256(data).hexdigest()
 
     with WRITE_LOCK, tempfile.TemporaryDirectory() as tmp:
+        replay = _replay_revision("dataset", idempotency_key, sha, current_pi["pi_id"])
+        if replay is not None:
+            return replay
         path = Path(tmp) / name
         path.write_bytes(data)
         try:
@@ -176,7 +224,11 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None)
             raise UploadError("файл не прочитан как датасет", [f"{type(exc).__name__}: {exc}"]) from None
 
         with db.atomic_transaction():
+            replay = _replay_revision("dataset", idempotency_key, sha, current_pi["pi_id"])
+            if replay is not None:
+                return replay
             with db.transaction() as cur:
+                _snapshot_active_uploads(cur, current_pi["pi_id"], 1)
                 cur.execute(_strip_transaction(seed_sql))
                 cur.execute(_strip_transaction(SUBSTITUTIONS_SQL.read_text(encoding="utf-8")))
                 cur.execute(
@@ -185,19 +237,31 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None)
                 )
 
             plan = run_plan(0)
+            result = {"dataset": name, "sha256": sha, "rows": counts,
+                      "data_quality": dq, "plan": plan}
             with db.transaction() as cur:
+                cur.execute(
+                    """INSERT INTO upload_revisions
+                           (kind, pi_id, source_file, source_sha256, content, idempotency_key, response)
+                       VALUES ('dataset', %s, %s, %s, %s, %s, %s::jsonb) RETURNING revision_id""",
+                    (current_pi["pi_id"], name, sha, data, idempotency_key,
+                     json.dumps(result, ensure_ascii=False, default=str)),
+                )
+                revision_id = cur.fetchone()["revision_id"]
+                result["revision_id"] = revision_id
+                cur.execute("UPDATE upload_revisions SET response = %s::jsonb WHERE revision_id = %s",
+                            (json.dumps(result, ensure_ascii=False, default=str), revision_id))
+                cur.execute(
+                    "UPDATE upload_revisions SET superseded_by = %s "
+                    "WHERE revision_id <> %s AND superseded_by IS NULL",
+                    (revision_id, revision_id),
+                )
                 cur.execute(
                     "UPDATE public.pi_contexts SET dataset_version = %s "
                     "WHERE schema_name = current_schema()",
-                    (hashlib.sha256(data).hexdigest(),),
+                    (sha,),
                 )
-    return {
-        "dataset": name,
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "rows": counts,
-        "data_quality": dq,
-        "plan": plan,
-    }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -543,17 +607,22 @@ def analyze_actual_rows(
 
 
 def load_actuals(data: bytes, filename: str | None, sprint_no: int,
-                 *, confirm_complete: bool = False, actor: str | None = None) -> dict[str, Any]:
+                 *, confirm_complete: bool = False, actor: str | None = None,
+                 idempotency_key: str | None = None, confirm_duplicate: bool = False) -> dict[str, Any]:
     """Save a report; only confirmed, fully covered reports close the sprint."""
     if not data:
         raise UploadError("пустой файл")
     if len(data) > MAX_UPLOAD_BYTES:
         raise UploadError(f"файл больше {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ")
     name = _safe_name(filename, f"actuals_sprint_{sprint_no}.csv")
+    sha = hashlib.sha256(data).hexdigest()
 
     with WRITE_LOCK, db.atomic_transaction():
         pi = _pi()
         pi_id, sprint_count = pi["pi_id"], int(pi["sprint_count"])
+        replay = _replay_revision("actuals", idempotency_key, sha, pi_id, sprint_no)
+        if replay is not None:
+            return replay
         last = _last_sprint(pi_id)
         if not 1 <= sprint_no <= sprint_count:
             raise UploadError(f"спринт {sprint_no} вне квартала: допустимо 1..{sprint_count}")
@@ -652,6 +721,17 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
                 f"{len(missing_roles)} ячеек часов по ролям; пустая ячейка не равна 0"
             )
 
+        duplicate = db.query_one(
+            """SELECT sprint_no FROM actual_uploads WHERE pi_id = %s
+                 AND sprint_no <> %s AND source_sha256 = %s ORDER BY sprint_no DESC LIMIT 1""",
+            (pi_id, sprint_no, sha),
+        )
+        if duplicate is not None and not confirm_duplicate:
+            raise UploadError(
+                f"тот же файл уже загружен за спринт {duplicate['sprint_no']}; "
+                "подтвердите, что это отдельный отчёт за новый период"
+            )
+
         # Факт планом до загрузки нужен как база сравнения: если базового
         # прогона ещё нет (база залита из CLI), строим его ДО изменения состояния.
         baseline_created = None
@@ -683,9 +763,21 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
             "SELECT sprint_no FROM actual_uploads WHERE pi_id = %s AND sprint_no >= %s ORDER BY 1",
             (pi_id, sprint_no),
         )
-        import json
-
         with db.transaction() as cur:
+            cur.execute(
+                """INSERT INTO upload_revisions
+                       (kind, pi_id, sprint_no, source_file, source_sha256, content, idempotency_key)
+                   VALUES ('actuals', %s, %s, %s, %s, %s, %s) RETURNING revision_id""",
+                (pi_id, sprint_no, name, sha, data, idempotency_key),
+            )
+            revision_id = cur.fetchone()["revision_id"]
+            _snapshot_active_uploads(cur, pi_id, sprint_no)
+            cur.execute(
+                """UPDATE upload_revisions SET superseded_by = %s
+                   WHERE revision_id <> %s AND kind = 'actuals' AND pi_id = %s
+                     AND sprint_no >= %s AND superseded_by IS NULL""",
+                (revision_id, revision_id, pi_id, sprint_no),
+            )
             # Факт спринта N заменяет прежний факт N и все более поздние, а
             # прогоны, построенные на них, теряют смысл — удаляем вместе с ними.
             cur.execute(
@@ -701,7 +793,7 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
                        (pi_id, sprint_no, plan_run_id, source_file, source_sha256, summary, coverage_status,
                         uploaded_by)
                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s) RETURNING upload_id""",
-                (pi_id, sprint_no, plan_run_id, name, hashlib.sha256(data).hexdigest(),
+                (pi_id, sprint_no, plan_run_id, name, sha,
                  json.dumps(summary, ensure_ascii=False), coverage_status, actor),
             )
             upload_id = cur.fetchone()["upload_id"]
@@ -729,15 +821,20 @@ def load_actuals(data: bytes, filename: str | None, sprint_no: int,
             cur.execute("SELECT apply_actuals()")
 
         plan = run_plan(sprint_no + 1) if coverage_status == "complete" else None
-    return {
-        "upload_id": upload_id,
-        "sprint_no": sprint_no,
-        "file": name,
-        "replaced_sprints": [row["sprint_no"] for row in replaced],
-        "baseline_created_run_id": baseline_created,
-        "summary": summary,
-        "plan": plan,
-    }
+        result = {
+            "upload_id": upload_id,
+            "sprint_no": sprint_no,
+            "file": name,
+            "replaced_sprints": [row["sprint_no"] for row in replaced],
+            "baseline_created_run_id": baseline_created,
+            "summary": summary,
+            "plan": plan,
+            "revision_id": revision_id,
+        }
+        with db.transaction() as cur:
+            cur.execute("UPDATE upload_revisions SET response = %s::jsonb WHERE revision_id = %s",
+                        (json.dumps(result, ensure_ascii=False, default=str), revision_id))
+    return result
 
 
 def confirm_role_etc(task_id: str, role_id: int, remaining_hours: Decimal,

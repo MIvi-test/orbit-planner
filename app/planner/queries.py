@@ -79,6 +79,12 @@ JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
 ORDER BY e.engineer_id, o.team_id
 """
 
+SPRINT_ORBIT_RATES_SQL = """
+SELECT engineer_id, team_id, sprint_no, capacity_rate
+FROM v_satellite_capacity WHERE pi_id = %s
+ORDER BY engineer_id, team_id, sprint_no
+"""
+
 
 TASK_SKILL_REVIEWS_SQL = """
 SELECT r.task_id, r.role_id, r.status, q.skill_id, s.name AS skill_name

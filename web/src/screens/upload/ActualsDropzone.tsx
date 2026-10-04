@@ -18,6 +18,7 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
   const [busy, setBusy] = useState(false)
   const [selectedSprint, setSelectedSprint] = useState<number | null>(null)
   const [confirmComplete, setConfirmComplete] = useState(false)
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false)
   const [reviewTarget, setReviewTarget] = useState<string | null>(null)
   const [reviewHours, setReviewHours] = useState('0')
   const [reviewReason, setReviewReason] = useState('')
@@ -66,7 +67,7 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
     setProblems([])
     setErrorMessage(null)
     try {
-      const result = await uploadActuals(file, reportSprint, confirmComplete)
+      const result = await uploadActuals(file, reportSprint, confirmComplete, confirmDuplicate)
       await queryClient.invalidateQueries()
       notifications.show({
         color: result.plan?.status !== 'ok' || result.summary.warnings.length ? 'yellow' : 'teal',
@@ -130,7 +131,7 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
             <Select
               label="Отчётный спринт"
               description={replacing
-                ? 'Исправление удалит отчёты и прогоны этого и более поздних спринтов.'
+                ? 'Исправление заменит активные отчёты и прогоны этого и более поздних спринтов; исходные файлы сохраняются в истории редакций.'
                 : 'Следующий спринт для нового отчёта; прошлые спринты доступны для исправления.'}
               data={Array.from({ length: nextSprint }, (_, index) => ({
                 value: String(index + 1), label: `Спринт ${index + 1}`,
@@ -171,6 +172,9 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
               label="Подтверждаю полноту отчёта и закрытие спринта"
               description="Для каждой активной задачи укажите статус, а для каждой требуемой роли — часы или явный 0. Без подтверждения файл сохраняется как черновик."
             />
+            <Checkbox checked={confirmDuplicate} onChange={(event) => setConfirmDuplicate(event.currentTarget.checked)}
+              label="Это отдельный отчёт, даже если файл совпадает с другим спринтом"
+              description="Отметьте только после предупреждения о повторе: одинаковые файлы за разные периоды иногда допустимы." />
             <Dropzone
               onDrop={(files) => files[0] && handleFile(files[0])}
               accept={['text/csv', '.csv', '.xlsx']}

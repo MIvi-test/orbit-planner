@@ -11,9 +11,9 @@ export function uploadDataset(file: File): Promise<DatasetUploadResult> {
 }
 
 /** POST /api/actuals?sprint=N — факт спринта N. Заменяет факт N и все более поздние. */
-export function uploadActuals(file: File, sprintNo: number, confirmComplete: boolean): Promise<ActualsUploadResult> {
+export function uploadActuals(file: File, sprintNo: number, confirmComplete: boolean, confirmDuplicate = false): Promise<ActualsUploadResult> {
   return postFile<ActualsUploadResult>('/actuals', file, {
-    sprint: String(sprintNo), confirm_complete: String(confirmComplete),
+    sprint: String(sprintNo), confirm_complete: String(confirmComplete), confirm_duplicate: String(confirmDuplicate),
   })
 }
 

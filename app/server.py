@@ -53,7 +53,7 @@ import sys
 import threading
 import time
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,7 +61,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app import __version__ as APP_VERSION
-from app import absence, auth, contexts, data_quality, db, ingest, plan_quality, sensitivity, trace, views, workforce
+from app import absence, auth, availability, contexts, data_quality, db, ingest, plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -101,7 +101,10 @@ KNOWN_API = (
     "/api/health", "/api/livez", "/api/version", "/api/views",
     "/api/me", "/api/dataset", "/api/actuals", "/api/actuals/template", "/api/actuals/role-review",
     "/api/scenarios/absence", "/api/scenarios/sensitivity", "/api/scenarios/workforce",
-    "/api/tasks/goal-confirmation", "/api/initiatives/priority",
+    "/api/tasks/goal-confirmation", "/api/tasks/skill-review", "/api/initiatives/priority",
+    "/api/engineers/availability",
+    "/api/engineers/qualifications",
+    "/api/upload-revisions", "/api/upload-revisions/file", "/api/upload-revisions/snapshot",
     "/api/dq-issues/review", "/api/plan-quality", "/api/tasks/trace",
     "/api/pi-contexts", "/metrics",
 )
@@ -418,7 +421,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/dataset":
                 body = self._read_body()
                 result = ingest.load_dataset(
-                    body, self._query_param(query, "filename"), actor=self._principal.name
+                    body, self._query_param(query, "filename"), actor=self._principal.name,
+                    idempotency_key=self.headers.get("Idempotency-Key"),
                 )
             elif path == "/api/actuals":
                 raw_sprint = self._query_param(query, "sprint")
@@ -429,6 +433,8 @@ class Handler(BaseHTTPRequestHandler):
                     body, self._query_param(query, "filename"), int(raw_sprint),
                     confirm_complete=self._query_param(query, "confirm_complete") == "true",
                     actor=self._principal.name,
+                    idempotency_key=self.headers.get("Idempotency-Key"),
+                    confirm_duplicate=self._query_param(query, "confirm_duplicate") == "true",
                 )
             elif path == "/api/actuals/role-review":
                 try:
@@ -464,6 +470,43 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
                     raise ingest.UploadError("некорректные поля подтверждения результата", [str(exc)]) from None
+            elif path == "/api/tasks/skill-review":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = skill_review.save_review(
+                        str(payload["task_id"]), int(payload["role_id"]),
+                        [int(value) for value in payload["skill_ids"]],
+                        str(payload["source_text"]), confirmed=payload["confirmed"] is True,
+                        actor=self._principal.name if auth.mode() == "required"
+                        else str(payload["reviewed_by"]),
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля разметки стека", [str(exc)]) from None
+            elif path == "/api/engineers/availability":
+                try:
+                    payload = json.loads(self._read_body())
+                    raw_rate = payload.get("available_rate")
+                    result = availability.set_rate(
+                        str(payload["engineer_id"]), str(payload["team_id"]),
+                        int(payload["sprint_no"]),
+                        None if raw_rate in (None, "") else Decimal(str(raw_rate)),
+                        str(payload.get("source_text") or ""),
+                    )
+                except (ValueError, TypeError, KeyError, InvalidOperation, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля доступности", [str(exc)]) from None
+            elif path == "/api/engineers/qualifications":
+                try:
+                    payload = json.loads(self._read_body())
+                    result = qualifications.confirm(
+                        str(payload["engineer_id"]), int(payload["role_id"]),
+                        date.fromisoformat(str(payload["valid_from"])),
+                        date.fromisoformat(str(payload["valid_until"])) if payload.get("valid_until") else None,
+                        str(payload["source_text"]),
+                        self._principal.name if auth.mode() == "required"
+                        else str(payload["confirmed_by"]),
+                    )
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                    raise ingest.UploadError("некорректные поля квалификации", [str(exc)]) from None
             elif path == "/api/dq-issues/review":
                 try:
                     payload = json.loads(self._read_body())
@@ -585,6 +628,70 @@ class Handler(BaseHTTPRequestHandler):
             # Справочник витрин: фронт получает контракт (имена, колонки сортировки,
             # экран) не из переписки, а из живого сервера.
             self._send_json(HTTPStatus.OK, views.catalog())
+            return
+
+        if path == "/api/tasks/skill-review":
+            try:
+                self._send_json(HTTPStatus.OK, skill_review.list_reviews())
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+            return
+
+        if path == "/api/engineers/qualifications":
+            engineer_id = self._query_param(parse_qs(urlparse(self.path).query), "engineer_id")
+            if not engineer_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "message": "укажите engineer_id"})
+                return
+            try:
+                self._send_json(HTTPStatus.OK, qualifications.list_for_engineer(engineer_id))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+            return
+
+        if path == "/api/upload-revisions":
+            try:
+                rows = db.query_dicts(
+                    """SELECT revision_id, kind, pi_id, sprint_no, source_file, source_sha256,
+                              idempotency_key, superseded_by, recorded_at,
+                              plan_snapshot IS NOT NULL AS snapshot_available
+                       FROM upload_revisions ORDER BY revision_id DESC LIMIT 500"""
+                )
+                self._send_json(HTTPStatus.OK, {"items": rows})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+            return
+        if path == "/api/upload-revisions/file":
+            raw_id = self._query_param(parse_qs(urlparse(self.path).query), "id")
+            if not raw_id or not raw_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "message": "укажите id редакции"})
+                return
+            try:
+                row = db.query_one("SELECT source_file, content FROM upload_revisions WHERE revision_id = %s",
+                                   (int(raw_id),))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            if row is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": "редакция не найдена"})
+                return
+            self._respond(HTTPStatus.OK, "application/octet-stream", bytes(row["content"]),
+                          extra_headers={"Content-Disposition": f'attachment; filename="{row["source_file"]}"'})
+            return
+        if path == "/api/upload-revisions/snapshot":
+            raw_id = self._query_param(parse_qs(urlparse(self.path).query), "id")
+            if not raw_id or not raw_id.isdigit():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad_request", "message": "укажите id редакции"})
+                return
+            try:
+                row = db.query_one("SELECT plan_snapshot FROM upload_revisions WHERE revision_id = %s",
+                                   (int(raw_id),))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, unavailable_payload(exc))
+                return
+            if row is None or row["plan_snapshot"] is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": "снимок не найден"})
+                return
+            self._send_json(HTTPStatus.OK, row["plan_snapshot"])
             return
 
         if path == "/api/pi-contexts":

@@ -13,6 +13,7 @@ import {
   useBusFactorSkill,
   useEngineerAbsenceRisk,
   useOrbitMap,
+  usePlanAssignments,
   useRoleCoverageOrg,
   useSatelliteCapacity,
 } from '../../hooks/useViews'
@@ -32,6 +33,7 @@ export function StarMapScreen() {
   const absenceQ = useEngineerAbsenceRisk(runId)
   const skillQ = useBusFactorSkill()
   const capacityQ = useSatelliteCapacity()
+  const assignmentsQ = usePlanAssignments(runId)
   const coverageQ = useRoleCoverageOrg()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -42,7 +44,7 @@ export function StarMapScreen() {
     [absenceQ.data],
   )
 
-  const queries = [orbitQ, absenceQ, skillQ, capacityQ, coverageQ]
+  const queries = [orbitQ, absenceQ, skillQ, capacityQ, assignmentsQ, coverageQ]
   const error = firstError(queries)
 
   const frame = (children: React.ReactNode) => (
@@ -166,6 +168,7 @@ export function StarMapScreen() {
         orbit={selectedOrbit}
         absence={selectedId ? absenceById.get(selectedId) : undefined}
         capacity={(capacityQ.data?.items ?? []).filter((c) => c.engineer_id === selectedId)}
+        assignments={(assignmentsQ.data?.items ?? []).filter((a) => a.engineer_id === selectedId)}
         onClose={() => setSelectedId(null)}
       />
     </>,

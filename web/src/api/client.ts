@@ -46,6 +46,57 @@ export function fetchPiContexts(): Promise<{ contexts: PiContext[] }> {
   return request('/pi-contexts')
 }
 
+export function fetchSkillReviews<T>(): Promise<T> {
+  return request<T>('/tasks/skill-review')
+}
+
+export interface UploadRevision {
+  revision_id: number; kind: 'dataset' | 'actuals'; pi_id: string; sprint_no: number | null
+  source_file: string; source_sha256: string; superseded_by: number | null; recorded_at: string
+  snapshot_available: boolean
+}
+
+export function fetchUploadRevisions(): Promise<{ items: UploadRevision[] }> {
+  return request('/upload-revisions')
+}
+
+export async function downloadUploadRevision(id: number): Promise<void> {
+  const headers = contextHeaders()
+  new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+  const response = await fetch(`${BASE}/upload-revisions/file?id=${id}`, { headers })
+  if (!response.ok) {
+    failOnUnauthorized(response)
+    const body = await parseErrorBody(response)
+    throw new ApiError(response.status, messageFrom(body, response.statusText), body)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `revision-${id}`
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function downloadPlanSnapshot(id: number): Promise<void> {
+  const headers = contextHeaders()
+  new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+  const response = await fetch(`${BASE}/upload-revisions/snapshot?id=${id}`, { headers })
+  if (!response.ok) {
+    failOnUnauthorized(response)
+    const body = await parseErrorBody(response)
+    throw new ApiError(response.status, messageFrom(body, response.statusText), body)
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = url; link.download = `plan-snapshot-${id}.json`; document.body.appendChild(link); link.click(); link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export function fetchQualifications<T>(engineerId: string): Promise<T> {
+  return request<T>(`/engineers/qualifications?engineer_id=${encodeURIComponent(engineerId)}`)
+}
+
 export function createPiContext(file: File, piId: string, scenarioId: string, startDate: string): Promise<PiContext & { plan: { run_id: number } }> {
   return postFile('/pi-contexts', file, { pi_id: piId, scenario_id: scenarioId, start_date: startDate })
 }
@@ -219,6 +270,15 @@ export interface PlanQualityResult {
   unplanned_completed_sp: string
   scarce_unused_roles: Array<{ role: string; demand_hh: string; supply_hh: string; unused_hh: string }>
   people_switches: Array<{ task_id: string; role_id: number; before: string[]; after: string[] }>
+  mode_comparison: {
+    modes: Record<string, { complete_initiatives: number; complete_initiative_sp: string; partial_initiatives: number; planned_tasks: number }>
+    upper_bound_sp: string
+    method: string
+    order_search: {
+      status: string; reason?: string; permutations?: number; method?: string
+      best_by_mode?: Record<string, { complete_initiative_sp: string; order: string[] }>
+    }
+  }
   method: string
 }
 
@@ -347,9 +407,18 @@ export function fetchHealth(): Promise<HealthResponse> {
 async function postFile<T>(path: string, file: File, extraQuery: Record<string, string> = {}): Promise<T> {
   const q = new URLSearchParams({ filename: file.name, ...extraQuery })
   let res: Response
+  let pendingKey: string | null = null
   try {
     const headers = contextHeaders()
     new Headers(authHeaders()).forEach((value, key) => headers.set(key, value))
+    if (path === '/dataset' || path === '/actuals') {
+      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+      const sha = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+      pendingKey = `upload:${headers.get('X-PI-ID') ?? 'default'}:${headers.get('X-Scenario-ID') ?? 'main'}:${path}:${q.toString()}:${sha}`
+      const key = sessionStorage.getItem(pendingKey) ?? crypto.randomUUID()
+      sessionStorage.setItem(pendingKey, key)
+      headers.set('Idempotency-Key', key)
+    }
     res = await fetch(`${BASE}${path}?${q.toString()}`, { method: 'POST', body: file, headers })
   } catch (err) {
     throw new ServiceUnavailableError(0, 'сеть недоступна или сервер не отвечает', {
@@ -358,6 +427,7 @@ async function postFile<T>(path: string, file: File, extraQuery: Record<string, 
     })
   }
   const body = (await res.text().then((t) => (t ? JSON.parse(t) : null))) as T
+  if (pendingKey && res.status < 500) sessionStorage.removeItem(pendingKey)
   if (!res.ok) {
     failOnUnauthorized(res)
     const message = messageFrom(body, res.statusText)

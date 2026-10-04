@@ -113,6 +113,19 @@ export function KpiScreen() {
                 <QualityNumber label="Смены исполнителей" value={qualityQ.data.people_switches.length} detail={qualityQ.data.people_switches.map((item) => item.task_id).join(', ') || 'нет'} />
               </SimpleGrid>
               {qualityQ.data.scarce_unused_roles.length > 0 && <Text size="sm">Незадействованный фонд дефицитных ролей: {qualityQ.data.scarce_unused_roles.map((item) => `${item.role} ${item.unused_hh} ЧЧ`).join('; ')}.</Text>}
+              <Text size="sm" fw={600}>Сравнение режимов на одном входе</Text>
+              <Text size="xs" c="dimmed">{qualityQ.data.mode_comparison.method}</Text>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {Object.entries(qualityQ.data.mode_comparison.modes).map(([mode, result]) => <Text key={mode} size="sm">
+                  {mode}: завершено инициатив {result.complete_initiatives} ({result.complete_initiative_sp} SP),
+                  частичных {result.partial_initiatives}, задач в плане {result.planned_tasks}.
+                </Text>)}
+              </SimpleGrid>
+              {qualityQ.data.mode_comparison.order_search.status === 'computed' ? <Text size="xs" c="dimmed">
+                Перебрано порядков инициатив: {qualityQ.data.mode_comparison.order_search.permutations}. Лучший результат среди этих порядков:{' '}
+                {Object.entries(qualityQ.data.mode_comparison.order_search.best_by_mode ?? {}).map(([mode, result]) =>
+                  `${mode} ${result.complete_initiative_sp} SP`).join('; ')}. {qualityQ.data.mode_comparison.order_search.method}
+              </Text> : <Text size="xs" c="dimmed">Эталонный перебор: {qualityQ.data.mode_comparison.order_search.reason}.</Text>}
             </>}
         </Stack>
       </Paper>}
