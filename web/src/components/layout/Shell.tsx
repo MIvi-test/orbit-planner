@@ -48,7 +48,7 @@ export function Shell({
   children,
 }: {
   screen: ScreenId
-  onNavigate: (id: ScreenId) => void
+  onNavigate: (id: ScreenId, query?: Record<string, string>) => void
   children: ReactNode
 }) {
   const { me, logout } = useAuth()

@@ -26,12 +26,14 @@ export function StarMapSvg({
   highlight,
   selectedId,
   onSelect,
+  onSelectTeam,
 }: {
   rows: OrbitMapRow[]
   absenceById: Map<string, EngineerAbsenceRiskRow>
   highlight: Set<string> | null
   selectedId: string | null
   onSelect: (id: string) => void
+  onSelectTeam: (teamId: string) => void
 }) {
   const { cores, nodes } = useMemo(() => computeLayout(rows), [rows])
   const coreById = new Map(cores.map((c) => [c.team_id, c]))
@@ -46,6 +48,8 @@ export function StarMapSvg({
   const bw = wide ? VIEW_H * aspect : VIEW_W
   const bx = (VIEW_W - bw) / 2
   const by = (VIEW_H - bh) / 2
+
+  const openTeam = onSelectTeam
 
   const dim = (id: string) => highlight !== null && !highlight.has(id)
 
@@ -221,7 +225,22 @@ export function StarMapSvg({
 
       {/* ядра-команды */}
       {cores.map((c) => (
-        <g key={`core-${c.team_id}`}>
+        <g
+          key={`core-${c.team_id}`}
+          role="link"
+          tabIndex={0}
+          aria-label={`Показать команду ${c.team_id}`}
+          onClick={() => openTeam(c.team_id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              openTeam(c.team_id)
+            }
+          }}
+          style={{ cursor: 'pointer', outline: 'none' }}
+          className="core-link"
+        >
+          <title>{`Команда ${c.team_id}: показать состав`}</title>
           <circle cx={c.x} cy={c.y} r={CORE_R + 8} fill="var(--orbit)" opacity={0.08} />
           <circle cx={c.x} cy={c.y} r={CORE_R} fill="url(#sm-core)" stroke="var(--star)" strokeWidth={1.5} filter="url(#sm-glow)" />
           <text x={c.x} y={c.y - 2} textAnchor="middle" fontSize={13} fontWeight={700} fill="var(--star)" fontFamily="var(--font-heading)">

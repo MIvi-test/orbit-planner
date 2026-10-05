@@ -1,19 +1,31 @@
-import { Accordion, Badge, Group, Paper, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core'
+import { useEffect } from 'react'
+import { Accordion, Anchor, Badge, Group, Paper, Popover, SimpleGrid, Skeleton, Stack, Table, Text, Title, UnstyledButton } from '@mantine/core'
+import { IconChevronDown } from '@tabler/icons-react'
+import { useHashQuery } from '../../hooks/useHashRoute'
 import { fmtHours, fmtSp } from '../../api/wire'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { QueryError } from '../../components/common/QueryError'
-import { usePlanTeamCapacity, useTeamCapacitySp, useTeamProfile } from '../../hooks/useViews'
+import { useOrbitMap, usePlanTeamCapacity, useTeamCapacitySp, useTeamProfile } from '../../hooks/useViews'
 import { useRun } from '../../hooks/useRun'
 import { num } from '../../api/wire'
-import type { PlanTeamCapacityRow, TeamCapacitySpRow, TeamProfileRow } from '../../types/views'
+import type { OrbitMapRow, PlanTeamCapacityRow, TeamCapacitySpRow, TeamProfileRow } from '../../types/views'
 
 export function ProfilesScreen() {
   const query = useTeamProfile()
+  const orbitQ = useOrbitMap()
+  const focusTeam = useHashQuery().get('team')
   const { runId } = useRun()
   const capacity = usePlanTeamCapacity(runId)
   const basis = useTeamCapacitySp()
   const capacityByTeam = new Map((capacity.data?.items ?? []).map((item) => [item.team_id, item]))
   const basisByTeam = new Map((basis.data?.items ?? []).map((item) => [item.team_id, item]))
+
+  // Переход со звёздной карты: прокручиваем к нужной команде.
+  const loaded = !query.isPending
+  useEffect(() => {
+    if (!focusTeam || !loaded) return
+    document.getElementById(`team-${focusTeam}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [focusTeam, loaded])
 
   if (query.isPending) {
     return (
@@ -37,6 +49,7 @@ export function ProfilesScreen() {
   }
 
   const rows = query.data?.items ?? []
+  const engineers = orbitQ.data?.items ?? []
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
@@ -56,7 +69,7 @@ export function ProfilesScreen() {
       ) : (
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="lg">
           {rows.map((row) => (
-            <TeamProfile key={row.team_id} row={row} capacity={capacityByTeam.get(row.team_id)} basis={basisByTeam.get(row.team_id)} />
+            <TeamProfile key={row.team_id} row={row} capacity={capacityByTeam.get(row.team_id)} basis={basisByTeam.get(row.team_id)} focused={focusTeam === row.team_id} engineers={engineers} />
           ))}
         </SimpleGrid>
       )}
@@ -64,9 +77,10 @@ export function ProfilesScreen() {
   )
 }
 
-function TeamProfile({ row, capacity, basis }: { row: TeamProfileRow; capacity?: PlanTeamCapacityRow; basis?: TeamCapacitySpRow }) {
+function TeamProfile({ row, capacity, basis, focused, engineers }: { row: TeamProfileRow; capacity?: PlanTeamCapacityRow; basis?: TeamCapacitySpRow; focused: boolean; engineers: OrbitMapRow[] }) {
+  const partTimers = engineers.filter((e) => e.teams.includes(row.team_id) && (num(e.total_capacity_rate) < 1 || e.teams.length > 1))
   return (
-    <Paper withBorder p="lg">
+    <Paper withBorder p="lg" id={`team-${row.team_id}`} style={focused ? { outline: '3px solid var(--mantine-primary-color-filled)', outlineOffset: 2 } : undefined}>
       <Stack gap="lg">
         <Group justify="space-between" align="flex-start">
           <div>
@@ -74,9 +88,40 @@ function TeamProfile({ row, capacity, basis }: { row: TeamProfileRow; capacity?:
             <Text size="sm" c="dimmed">
               {row.members} человек, {fmtSp(row.fte)} FTE
             </Text>
+            <Anchor size="sm" href="#/starmap">Показать на звёздной карте</Anchor>
           </div>
           {row.part_time_members > 0 && (
-            <Badge variant="outline" color="gray">Совместители: {row.part_time_members}</Badge>
+            <Popover position="bottom-end" shadow="md" withArrow>
+              <Popover.Target>
+                <UnstyledButton aria-label="Показать совместителей команды">
+                  <Badge variant="outline" color="gray" size="lg" style={{ cursor: 'pointer', textTransform: 'none' }} rightSection={<IconChevronDown size={14} />}>
+                    Совместители: {row.part_time_members}
+                  </Badge>
+                </UnstyledButton>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Text size="sm" c="dimmed" mb={6}>Работают в команде не на полную ставку или сразу в двух командах</Text>
+                {partTimers.length === 0 ? (
+                  <Text size="sm">Список недоступен: нет данных об орбитах.</Text>
+                ) : (
+                  <Table verticalSpacing={4} fz="sm">
+                    <Table.Thead>
+                      <Table.Tr><Table.Th>Инженер</Table.Th><Table.Th>Роль</Table.Th><Table.Th ta="right">Ставка</Table.Th><Table.Th>Команды</Table.Th></Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {partTimers.map((e) => (
+                        <Table.Tr key={e.engineer_id}>
+                          <Table.Td className="mono">{e.engineer_id}</Table.Td>
+                          <Table.Td>{e.role_name}, {e.grade}</Table.Td>
+                          <Table.Td ta="right" className="mono">{fmtSp(e.total_capacity_rate)}</Table.Td>
+                          <Table.Td>{e.teams.join(', ')}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                )}
+              </Popover.Dropdown>
+            </Popover>
           )}
         </Group>
 

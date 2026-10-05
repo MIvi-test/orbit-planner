@@ -75,6 +75,8 @@ export function PlanScreen() {
         </Text>)}
       </Alert>}
 
+      <Legend hasBaseline={data.hasBaseline} />
+
       <Paper withBorder p={0} style={{ overflow: 'auto' }}>
         <GanttGrid
           sprints={data.sprints}
@@ -87,8 +89,6 @@ export function PlanScreen() {
           onSelect={setSelected}
         />
       </Paper>
-
-      <Legend hasBaseline={data.hasBaseline} />
 
       <TaskDetailDrawer
         task={selected}
@@ -107,10 +107,16 @@ export function PlanScreen() {
 
 function Legend({ hasBaseline }: { hasBaseline: boolean }) {
   return (
-    <Group gap="lg" wrap="wrap">
+    <Group
+      gap="lg"
+      wrap="wrap"
+      px="md"
+      py={8}
+      style={{ border: '1px dashed var(--mantine-color-default-border)', borderRadius: 8 }}
+    >
+      <Text size="sm" fw={700} style={{ fontFamily: 'var(--font-heading)' }}>Как читать таблицу</Text>
       <LegendItem swatch={{ background: 'var(--ink)' }} label="Назначена работа" />
       <LegendItem swatch={{ background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} label="Ожидание в окне задачи" />
-      <Text size="xs" c="dimmed">✓ — завершена по факту</Text>
       <LegendItem
         swatch={{
           background:
@@ -122,6 +128,7 @@ function Legend({ hasBaseline }: { hasBaseline: boolean }) {
       {hasBaseline && (
         <LegendItem swatch={{ background: 'var(--muted)', height: 2, alignSelf: 'flex-end' }} label="Базовая линия Недели 0" />
       )}
+      <Text size="sm" c="dimmed">✓ завершена по факту</Text>
     </Group>
   )
 }
@@ -130,7 +137,7 @@ function LegendItem({ swatch, label }: { swatch: React.CSSProperties; label: str
   return (
     <Group gap={6} wrap="nowrap">
       <div style={{ width: 20, height: 12, borderRadius: 1, ...swatch }} />
-      <Text size="xs" c="dimmed">
+      <Text size="sm" c="dimmed">
         {label}
       </Text>
     </Group>

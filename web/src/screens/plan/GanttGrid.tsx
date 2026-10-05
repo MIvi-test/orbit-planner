@@ -99,9 +99,9 @@ export function GanttGrid({
               <Text fw={500} truncate>
                 {group.title}
               </Text>
-              <Badge variant="light" color="gray" ml="auto" style={{ textTransform: 'none', flexShrink: 0 }}>
+              <span className="team-chip" style={{ marginLeft: 'auto', flexShrink: 0 }}>
                 {group.team_id}
-              </Badge>
+              </span>
             </div>
           </div>
 

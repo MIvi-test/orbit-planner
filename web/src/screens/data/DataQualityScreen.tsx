@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Badge, Group, Paper, SegmentedControl, Select, Skeleton, Stack, Table, Text, TextInput, Title } from '@mantine/core'
+import { Badge, Button, Group, Menu, Paper, SegmentedControl, Select, Skeleton, Stack, Table, Text, TextInput, Title } from '@mantine/core'
+import { IconDownload } from '@tabler/icons-react'
+import { exportRows, type ExportColumn, type ExportFormat } from '../../utils/exportData'
+import type { DqIssueRow } from '../../types/views'
 import { useDqIssues } from '../../hooks/useViews'
 import { QueryError } from '../../components/common/QueryError'
 
@@ -7,6 +10,20 @@ const COLOR = { error: 'red', warning: 'orange', info: 'gray' } as const
 const WORD = { error: 'Блокирует', warning: 'Предупреждение', info: 'Информация' } as const
 
 /** Качество исходных данных (NEW-06): весь журнал находок с фильтрами, а не один пример на правило. */
+const REVIEW_WORD: Record<string, string> = { open: 'Открыта', acknowledged: 'Принята', resolved: 'Решена', reopened: 'Открыта снова' }
+
+const EXPORT_COLUMNS: ExportColumn<DqIssueRow>[] = [
+  { header: 'Серьёзность', value: (r) => WORD[r.severity] },
+  { header: 'Блокирует план', value: (r) => (r.is_blocking ? 'Да' : 'Нет') },
+  { header: 'Правило', value: (r) => r.rule_code },
+  { header: 'Сущность', value: (r) => r.entity },
+  { header: 'Идентификатор', value: (r) => r.entity_id },
+  { header: 'Что найдено', value: (r) => r.detail },
+  { header: 'Статус разбора', value: (r) => REVIEW_WORD[r.review_status] ?? r.review_status },
+  { header: 'Кто разобрал', value: (r) => r.reviewer },
+  { header: 'Комментарий', value: (r) => r.review_note },
+]
+
 export function DataQualityScreen() {
   const query = useDqIssues()
   const [severity, setSeverity] = useState('all')
@@ -43,6 +60,21 @@ export function DataQualityScreen() {
         ]} />
         <Select placeholder="Правило" data={rules} value={rule} onChange={setRule} clearable searchable w={260} />
         <TextInput placeholder="Поиск по сущности и тексту" value={search} onChange={(e) => setSearch(e.currentTarget.value)} w={280} />
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <Button variant="light" leftSection={<IconDownload size={18} />} ml="auto" disabled={shown.length === 0}>
+              Выгрузить ({shown.length})
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>Выгружается то, что видно по фильтрам</Menu.Label>
+            {(['csv', 'xlsx', 'json'] as ExportFormat[]).map((f) => (
+              <Menu.Item key={f} onClick={() => void exportRows(shown, EXPORT_COLUMNS, f, 'качество-данных')}>
+                {f === 'csv' ? 'CSV (таблица, открывается в Excel)' : f === 'xlsx' ? 'XLSX (Excel)' : 'JSON'}
+              </Menu.Item>
+            ))}
+          </Menu.Dropdown>
+        </Menu>
       </Group>
       <Paper withBorder p={0} style={{ overflow: 'auto' }}>
         <Table striped verticalSpacing={6}>

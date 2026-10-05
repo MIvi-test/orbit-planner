@@ -16,7 +16,8 @@
     "@tabler/icons-react": "^3.49.0",
     "@tanstack/react-query": "^5.103.2",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

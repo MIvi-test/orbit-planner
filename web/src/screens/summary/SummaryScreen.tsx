@@ -75,12 +75,15 @@ function Legend() {
 function Tile({
   label,
   value,
+  unit,
   hint,
   color,
   onClick,
 }: {
   label: string
   value: ReactNode
+  /** Мелкая приписка рядом с числом («из 37», «%»): размер числа от неё не меняется. */
+  unit?: ReactNode
   hint?: ReactNode
   color?: string
   onClick?: () => void
@@ -95,18 +98,23 @@ function Tile({
         background: color ? `color-mix(in srgb, var(--mantine-color-${color}-6) 9%, var(--mantine-color-body))` : undefined,
       }}
     >
-      <Stack gap={4}>
-        <Text size="sm" c="dimmed">
+      <Stack gap={6} justify="space-between" h="100%">
+        <Text size="sm" c="dimmed" style={{ minHeight: '2.6em', lineHeight: 1.3 }}>
           {label}
         </Text>
-        <Text fw={600} className="mono" style={{ fontSize: '2.2rem', lineHeight: 1.05 }}>
-          {value}
-        </Text>
-        {hint && (
-          <Text size="sm" c="dimmed">
-            {hint}
+        <Group gap={6} align="baseline" wrap="nowrap" style={{ height: '2.8rem' }}>
+          <Text fw={700} className="mono tabular" style={{ fontSize: '2.3rem', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+            {value}
           </Text>
-        )}
+          {unit && (
+            <Text size="md" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+              {unit}
+            </Text>
+          )}
+        </Group>
+        <Text size="sm" c="dimmed" style={{ minHeight: '1.3em' }}>
+          {hint ?? '\u00a0'}
+        </Text>
       </Stack>
     </Paper>
   )
@@ -174,8 +182,9 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
       <SimpleGrid cols={{ base: 2, md: 3, xl: 6 }} spacing="md">
         <Tile
           label="Задач в квартале"
-          value={schedule.length ? `${inQuarter} из ${schedule.length}` : '—'}
-          hint={schedule.length ? `${Math.round((inQuarter / schedule.length) * 100)}% задач вошло в план` : 'нет расписания'}
+          value={schedule.length ? inQuarter : '—'}
+          unit={schedule.length ? `из ${schedule.length}` : undefined}
+          hint={schedule.length ? `Вошло в план: ${Math.round((inQuarter / schedule.length) * 100)}%` : 'Нет расписания'}
           color="post"
           onClick={() => onNavigate('plan')}
         />
@@ -183,8 +192,9 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
           <Tile
             key={code}
             label={KPI_TITLE[code]}
-            value={row ? (code === 'bus_factor' ? num(row.value) : `${Math.round(num(row.value))}%`) : 'н/д'}
-            hint={row ? (row.kind === 'actual' ? 'факт' : 'прогноз') : 'нет данных'}
+            value={row ? (code === 'bus_factor' ? num(row.value) : Math.round(num(row.value))) : 'Н/д'}
+            unit={row ? (code === 'bus_factor' ? 'чел.' : '%') : undefined}
+            hint={row ? (row.kind === 'actual' ? 'Факт' : 'Прогноз') : 'Нет данных'}
             color={row ? kpiTone(row) : 'gray'}
             onClick={() => onNavigate('kpi')}
           />
@@ -192,14 +202,14 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
         <Tile
           label="Рисков в прогоне"
           value={alerts.length}
-          hint={`${red} критичных`}
+          hint={`Критичных: ${red}`}
           color={red > 0 ? 'red' : alerts.length > 0 ? 'yellow' : 'green'}
           onClick={() => onNavigate('risks')}
         />
         <Tile
           label="Вопросов к данным"
           value={dqOpen.length}
-          hint={dqBlocking > 0 ? `${dqBlocking} блокируют план` : 'блокирующих нет'}
+          hint={dqBlocking > 0 ? `Блокируют план: ${dqBlocking}` : 'Блокирующих нет'}
           color={dqBlocking > 0 ? 'red' : dqOpen.length > 0 ? 'yellow' : 'green'}
           onClick={() => onNavigate('data')}
         />

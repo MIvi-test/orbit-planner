@@ -1,18 +1,18 @@
 import { ActionIcon, Group, Menu, Tooltip, UnstyledButton, useComputedColorScheme, useMantineColorScheme } from '@mantine/core'
 import { IconChevronDown } from '@tabler/icons-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { THEMES, applyAppTheme, storedTheme, type AppTheme } from '../../theme/appTheme'
 
-/** Кружок темы: два цвета — фон и акцент. */
-const SWATCH: Record<AppTheme, [string, string]> = {
-  light: ['#ffffff', '#14213d'],
-  dark: ['#141b2e', '#7fa6d9'],
-  pinkie: ['#ffd6e8', '#ec2494'],
-  dracula: ['#1c0910', '#c1121f'],
+/** Кружок темы: половина — фон, половина — акцент; цвета зависят от режима. */
+const SWATCH: Record<AppTheme, { light: [string, string]; dark: [string, string] }> = {
+  default: { light: ['#ffffff', '#14213d'], dark: ['#141b2e', '#7fa6d9'] },
+  pinkie: { light: ['#ffd6e8', '#ec2494'], dark: ['#4d2438', '#f783ac'] },
+  dracula: { light: ['#fbeaec', '#b3121c'], dark: ['#1c0910', '#c1121f'] },
+  violet: { light: ['#f7f4ff', '#4c1d95'], dark: ['#1e1038', '#a78bfa'] },
 }
 
-function Dot({ theme, active }: { theme: AppTheme; active?: boolean }) {
-  const [bg, accent] = SWATCH[theme]
+function Dot({ theme, mode, active }: { theme: AppTheme; mode: 'light' | 'dark'; active?: boolean }) {
+  const [bg, accent] = SWATCH[theme][mode]
   return (
     <span
       aria-hidden="true"
@@ -28,34 +28,26 @@ function Dot({ theme, active }: { theme: AppTheme; active?: boolean }) {
   )
 }
 
-/** Кнопка «светлая/тёмная» и рядом стрелка вниз со списком тем в виде цветных кружков. */
+/** Кнопка ☀/☾ меняет светлый и тёмный режим; стрелка вниз открывает цветные кружки семейств тем. */
 export function ThemeToggle() {
-  const computed = useComputedColorScheme('light', { getInitialValueInEffect: false })
+  const mode = useComputedColorScheme('dark', { getInitialValueInEffect: false })
   const { setColorScheme } = useMantineColorScheme()
-  const [theme, setTheme] = useState<AppTheme>(() => storedTheme() ?? computed)
+  const [theme, setTheme] = useState<AppTheme>(storedTheme)
 
   const choose = (value: AppTheme) => {
-    const entry = THEMES.find((t) => t.value === value)
-    if (!entry) return
     setTheme(value)
     applyAppTheme(value)
-    setColorScheme(entry.scheme)
   }
 
-  useEffect(() => {
-    const saved = storedTheme()
-    if (saved) applyAppTheme(saved)
-  }, [])
-
-  const next: AppTheme = computed === 'dark' ? 'light' : 'dark'
-  const label = next === 'dark' ? 'Включить тёмную тему' : 'Включить светлую тему'
+  const next = mode === 'dark' ? 'light' : 'dark'
+  const label = next === 'dark' ? 'Включить тёмный режим' : 'Включить светлый режим'
 
   return (
     <Group gap={0} wrap="nowrap">
       <Tooltip label={label}>
-        <ActionIcon variant="subtle" color="post" size="lg" aria-label={label} onClick={() => choose(next)}>
+        <ActionIcon variant="subtle" color="post" size="lg" aria-label={label} onClick={() => setColorScheme(next)}>
           <span aria-hidden="true" style={{ fontSize: 20, lineHeight: 1 }}>
-            {computed === 'dark' ? '☀' : '☾'}
+            {mode === 'dark' ? '☀' : '☾'}
           </span>
         </ActionIcon>
       </Tooltip>
@@ -72,7 +64,7 @@ export function ThemeToggle() {
             {THEMES.map((t) => (
               <Tooltip key={t.value} label={t.label}>
                 <UnstyledButton aria-label={t.label} onClick={() => choose(t.value)} style={{ lineHeight: 0 }}>
-                  <Dot theme={t.value} active={theme === t.value} />
+                  <Dot theme={t.value} mode={mode} active={theme === t.value} />
                 </UnstyledButton>
               </Tooltip>
             ))}

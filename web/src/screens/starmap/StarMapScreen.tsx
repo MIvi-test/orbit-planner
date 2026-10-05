@@ -24,6 +24,7 @@ import { StarMapSvg } from './StarMapSvg'
 import { EngineerDrawer } from './EngineerDrawer'
 import { SkillBusFactor } from './SkillBusFactor'
 import { HiringGap } from './HiringGap'
+import { TeamDrawer } from './TeamDrawer'
 import { LEVEL_COLOR, LEVEL_WORD, starLevel, type StarLevel } from './risk'
 import { muted, panel } from './darkStyles'
 
@@ -37,6 +38,7 @@ export function StarMapScreen() {
   const coverageQ = useRoleCoverageOrg()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [teamId, setTeamId] = useState<string | null>(null)
   const [skill, setSkill] = useState<BusFactorSkillRow | null>(null)
 
   const absenceById = useMemo(
@@ -137,6 +139,7 @@ export function StarMapScreen() {
             highlight={highlight}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            onSelectTeam={setTeamId}
           />
           <Legend levels={levels} skillName={skill?.skill_name ?? null} onClearSkill={() => setSkill(null)} />
         </div>
@@ -163,6 +166,16 @@ export function StarMapScreen() {
         </Text>
         <HiringGap rows={coverageQ.data?.items ?? []} />
       </div>
+
+      <TeamDrawer
+        teamId={teamId}
+        orbits={orbits}
+        onClose={() => setTeamId(null)}
+        onSelectEngineer={(id) => {
+          setTeamId(null)
+          setSelectedId(id)
+        }}
+      />
 
       <EngineerDrawer
         orbit={selectedOrbit}

@@ -14,8 +14,7 @@ import { RunProvider } from './hooks/useRun'
 import { AuthProvider } from './hooks/useAuth'
 import App from './App'
 
-const savedTheme = storedTheme()
-if (savedTheme) applyAppTheme(savedTheme)
+applyAppTheme(storedTheme())
 
 const container = document.getElementById('root')
 if (!container) throw new Error('в index.html нет #root')
@@ -23,7 +22,7 @@ const colorSchemeManager = localStorageColorSchemeManager({ key: 'pi-planner-col
 
 createRoot(container).render(
   <StrictMode>
-    <MantineProvider theme={theme} defaultColorScheme="auto" colorSchemeManager={colorSchemeManager}>
+    <MantineProvider theme={theme} defaultColorScheme="dark" colorSchemeManager={colorSchemeManager}>
       <Notifications position="top-right" />
       <QueryClientProvider client={queryClient}>
         <AuthProvider>

@@ -1,33 +1,35 @@
 /**
- * Темы интерфейса. Mantine знает только светлую и тёмную схему, поэтому
- * «Розовая» (светлая) и «Кровавая» (тёмная) — это схема + атрибут
- * `data-app-theme` на <html>, под который в tokens.css переопределены цвета.
+ * Темы интерфейса = семейство палитры × режим (светлый или тёмный).
+ * Режим — это цветовая схема Mantine, её переключает кнопка ☀/☾. Семейство —
+ * атрибут `data-app-theme` на <html>, под него в tokens.css переопределены
+ * цвета для обоих режимов. «Стандартная» атрибута не имеет.
  */
-export type AppTheme = 'light' | 'dark' | 'pinkie' | 'dracula'
+export type AppTheme = 'default' | 'pinkie' | 'dracula' | 'violet'
 
-export const THEMES: { value: AppTheme; label: string; scheme: 'light' | 'dark' }[] = [
-  { value: 'light', label: 'Светлая', scheme: 'light' },
-  { value: 'dark', label: 'Тёмная', scheme: 'dark' },
-  { value: 'pinkie', label: 'Розовая', scheme: 'light' },
-  { value: 'dracula', label: 'Кровавая', scheme: 'dark' },
+export const THEMES: { value: AppTheme; label: string }[] = [
+  { value: 'default', label: 'Стандартный' },
+  { value: 'pinkie', label: 'Розовый' },
+  { value: 'dracula', label: 'Кровавый' },
+  { value: 'violet', label: 'Фиолетовый' },
 ]
 
 const KEY = 'pi-planner-app-theme'
 
-export function storedTheme(): AppTheme | null {
+export function storedTheme(): AppTheme {
   try {
     const v = window.localStorage.getItem(KEY)
-    return THEMES.some((t) => t.value === v) ? (v as AppTheme) : null
+    if (THEMES.some((t) => t.value === v)) return v as AppTheme
   } catch {
-    return null
+    /* хранилище недоступно */
   }
+  return 'default'
 }
 
-/** Ставит атрибут и запоминает выбор; цветовую схему Mantine переключает вызывающий. */
+/** Ставит атрибут и запоминает выбор; режим (светлый/тёмный) не трогает. */
 export function applyAppTheme(theme: AppTheme) {
   const root = document.documentElement
-  if (theme === 'pinkie' || theme === 'dracula') root.setAttribute('data-app-theme', theme)
-  else root.removeAttribute('data-app-theme')
+  if (theme === 'default') root.removeAttribute('data-app-theme')
+  else root.setAttribute('data-app-theme', theme)
   try {
     window.localStorage.setItem(KEY, theme)
   } catch {

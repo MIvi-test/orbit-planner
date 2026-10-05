@@ -316,3 +316,331 @@ body {
   --sm-core0: #4a1019; --sm-core1: #1a070c; --sm-dot: #ffd6d6;
   --sm-muted: #c9a0a7; --sm-border: rgba(255,107,107,0.35);
 }
+
+.core-link:hover circle:nth-of-type(2),
+.core-link:focus-visible circle:nth-of-type(2) {
+  stroke-width: 3;
+}
+.core-link:hover text {
+  text-decoration: underline;
+}
+
+/* ===== Тема «Фиолетовый»: тёмная схема, тёмно-фиолетовый фон, белый и лиловый текст ===== */
+:root[data-app-theme='violet'] {
+  --ink: #f1eaff;
+  --paper: #140a26;
+  --surface: #1e1038;
+  --line: #44306f;
+  --muted: #bba9e6;
+  --stamp: #ff7aa8;
+  --wax: #ffc857;
+  --wax-text: #ffd983;
+  --route: #6ccfa6;
+  --route-text: #8fe3c0;
+  --bar-text: #140a26;
+  --mantine-color-post-0: #f3ecff;
+  --mantine-color-post-1: #e3d4ff;
+  --mantine-color-post-2: #cbb0fb;
+  --mantine-color-post-3: #b18bf6;
+  --mantine-color-post-4: #9a6cf0;
+  --mantine-color-post-5: #8450e6;
+  --mantine-color-post-6: #7138d6;
+  --mantine-color-post-7: #5f2bbb;
+  --mantine-color-post-8: #4c1d95;
+  --mantine-color-post-9: #2e1065;
+  --mantine-color-body: #140a26;
+  --mantine-color-text: #f1eaff;
+  --mantine-color-dimmed: #bba9e6;
+  --mantine-color-default: #1e1038;
+  --mantine-color-default-border: #44306f;
+  --mantine-color-default-hover: #2c1852;
+  --mantine-primary-color-filled: #7138d6;
+  --mantine-primary-color-filled-hover: #5f2bbb;
+  --mantine-primary-color-light: rgba(154, 108, 240, 0.22);
+  --mantine-primary-color-light-color: #cbb0fb;
+}
+:root[data-app-theme='violet'] .mantine-Paper-root,
+:root[data-app-theme='violet'] .mantine-AppShell-header,
+:root[data-app-theme='violet'] .mantine-AppShell-navbar {
+  background-color: #1a0d33;
+}
+:root[data-app-theme='violet'] .mantine-AppShell-header,
+:root[data-app-theme='violet'] .mantine-AppShell-navbar {
+  border-color: #44306f;
+}
+:root[data-app-theme='violet'] {
+  --void: #120822; --field: #1e1038; --star: #f1eaff; --orbit: #b794f6;
+  --flare: #ff6b8b; --ember: #ffc857; --bloom: #6ccfa6;
+  --sm-bg0: #2c1659; --sm-bg1: #1a0d33; --sm-bg2: #0e0720;
+  --sm-core0: #3d2278; --sm-core1: #1a0d33; --sm-dot: #e9ddff;
+  --sm-muted: #bba9e6; --sm-border: rgba(183, 148, 246, 0.35);
+}
+
+/* Второй цвет темы: плашки команд и похожие вторичные пометки. */
+:root { --accent2: #1e7268; --accent2-bg: #d3efe9; }
+:root[data-mantine-color-scheme='dark'] { --accent2: #a9c7f0; --accent2-bg: #243a5e; }
+:root[data-app-theme='pinkie'] { --accent2: #6d28d9; --accent2-bg: #e9dcff; }
+:root[data-app-theme='dracula'] { --accent2: #ffc978; --accent2-bg: #4a2a12; }
+:root[data-app-theme='violet'] { --accent2: #d6c4ff; --accent2-bg: #3d2478; }
+.team-chip {
+  display: inline-block;
+  padding: 2px 12px;
+  border-radius: 10px;
+  background: var(--accent2-bg);
+  color: var(--accent2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ===== Темы: семейство × режим. Селектор [схема] даёт приоритет над старыми блоками выше ===== */
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] {
+  --ink: #4a1633; --paper: #ffd6e8; --surface: #fff0f7; --line: #f59ac4; --muted: #8a2a5b;
+  --stamp: #e8338a; --wax: #f59f00; --wax-text: #a15c00; --route: #12b886; --route-text: #0b7a5a;
+  --bar-text: #ffffff;
+  --mantine-color-post-0: #fff0f8;
+  --mantine-color-post-1: #ffd9ee;
+  --mantine-color-post-2: #ffb3dc;
+  --mantine-color-post-3: #ff8cca;
+  --mantine-color-post-4: #ff66b8;
+  --mantine-color-post-5: #ff3fa6;
+  --mantine-color-post-6: #ec2494;
+  --mantine-color-post-7: #d11a82;
+  --mantine-color-post-8: #b01270;
+  --mantine-color-post-9: #8c0c58;
+  --mantine-color-body: #ffd6e8;
+  --mantine-color-text: #4a1633;
+  --mantine-color-dimmed: #8a2a5b;
+  --mantine-color-default: #fff0f7;
+  --mantine-color-default-border: #f59ac4;
+  --mantine-color-default-hover: #ffc2de;
+  --mantine-primary-color-filled: #e8338a;
+  --mantine-primary-color-filled-hover: #d1247a;
+  --mantine-primary-color-light: rgba(232,51,138,0.14);
+  --mantine-primary-color-light-color: #a61e4d;
+  --void: #ffd1e6; --field: #fff0f7; --star: #4a1633; --orbit: #c2255c;
+  --flare: #e0245e; --ember: #f08c00; --bloom: #0fa37f;
+  --sm-bg0: #fff5fa; --sm-bg1: #ffd9ec; --sm-bg2: #ffb8d8;
+  --sm-core0: #ffffff; --sm-core1: #ffd0e5; --sm-dot: #e64980;
+  --sm-muted: #8a2a5b; --sm-border: rgba(194,37,92,0.35);
+  --accent2: #6d28d9; --accent2-bg: #e9dcff;
+  color-scheme: light;
+}
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] .mantine-Paper-root,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  background-color: #fff0f7;
+}
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  border-color: #f59ac4;
+}
+
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] {
+  --ink: #fff0f6; --paper: #3d1c2d; --surface: #4d2438; --line: #8a4a6c; --muted: #f9bdd6;
+  --stamp: #ff8fc0; --wax: #ffc857; --wax-text: #ffd983; --route: #6ccfa6; --route-text: #8fe3c0;
+  --bar-text: #3d1c2d;
+  --mantine-color-post-0: #fff0f6;
+  --mantine-color-post-1: #ffdeeb;
+  --mantine-color-post-2: #fcc2d7;
+  --mantine-color-post-3: #faa2c1;
+  --mantine-color-post-4: #f783ac;
+  --mantine-color-post-5: #f06595;
+  --mantine-color-post-6: #e64980;
+  --mantine-color-post-7: #d6336c;
+  --mantine-color-post-8: #c2255c;
+  --mantine-color-post-9: #a61e4d;
+  --mantine-color-body: #3d1c2d;
+  --mantine-color-text: #fff0f6;
+  --mantine-color-dimmed: #f9bdd6;
+  --mantine-color-default: #4d2438;
+  --mantine-color-default-border: #8a4a6c;
+  --mantine-color-default-hover: #5c2b46;
+  --mantine-primary-color-filled: #e64980;
+  --mantine-primary-color-filled-hover: #d6336c;
+  --mantine-primary-color-light: rgba(240,101,149,0.24);
+  --mantine-primary-color-light-color: #ffb3d1;
+  --void: #331726; --field: #4d2438; --star: #fff0f6; --orbit: #ffa6cf;
+  --flare: #ff6b8b; --ember: #ffc857; --bloom: #6ccfa6;
+  --sm-bg0: #6e2f50; --sm-bg1: #45212f; --sm-bg2: #271019;
+  --sm-core0: #8f3f68; --sm-core1: #3d1c2d; --sm-dot: #ffdcec;
+  --sm-muted: #f9bdd6; --sm-border: rgba(255,166,207,0.4);
+  --accent2: #d9b8ff; --accent2-bg: #4a2a7a;
+  color-scheme: dark;
+}
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] .mantine-Paper-root,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  background-color: #341226;
+}
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='pinkie'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  border-color: #6b2a4d;
+}
+
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] {
+  --ink: #f6e7e9; --paper: #120508; --surface: #1f0a10; --line: #4f1a24; --muted: #c9a0a7;
+  --stamp: #ff5c5c; --wax: #ffb347; --wax-text: #ffc978; --route: #7ad6b0; --route-text: #8fe3c0;
+  --bar-text: #120508;
+  --mantine-color-post-0: #ffe3e3;
+  --mantine-color-post-1: #ffc9c9;
+  --mantine-color-post-2: #ffa8a8;
+  --mantine-color-post-3: #ff8787;
+  --mantine-color-post-4: #ff6b6b;
+  --mantine-color-post-5: #fa5252;
+  --mantine-color-post-6: #e03131;
+  --mantine-color-post-7: #c92a2a;
+  --mantine-color-post-8: #9b1c1c;
+  --mantine-color-post-9: #5c0f0f;
+  --mantine-color-body: #120508;
+  --mantine-color-text: #f6e7e9;
+  --mantine-color-dimmed: #c9a0a7;
+  --mantine-color-default: #1f0a10;
+  --mantine-color-default-border: #4f1a24;
+  --mantine-color-default-hover: #2c0f17;
+  --mantine-primary-color-filled: #c1121f;
+  --mantine-primary-color-filled-hover: #9b0e18;
+  --mantine-primary-color-light: rgba(224,49,49,0.2);
+  --mantine-primary-color-light-color: #ff8787;
+  --void: #0e0407; --field: #1c0910; --star: #f6e7e9; --orbit: #ff6b6b;
+  --flare: #ff3b3b; --ember: #ffb347; --bloom: #7ad6b0;
+  --sm-bg0: #3a0a14; --sm-bg1: #1d070d; --sm-bg2: #0b0306;
+  --sm-core0: #4a1019; --sm-core1: #1a070c; --sm-dot: #ffd6d6;
+  --sm-muted: #c9a0a7; --sm-border: rgba(255,107,107,0.35);
+  --accent2: #ffc978; --accent2-bg: #4a2a12;
+  color-scheme: dark;
+}
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] .mantine-Paper-root,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  background-color: #1a070c;
+}
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  border-color: #4f1a24;
+}
+
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] {
+  --ink: #3b0a10; --paper: #fbe4e6; --surface: #fff4f4; --line: #eba7ae; --muted: #8a2a35;
+  --stamp: #c1121f; --wax: #f59f00; --wax-text: #8a5300; --route: #12b886; --route-text: #0b7a5a;
+  --bar-text: #ffffff;
+  --mantine-color-post-0: #ffe3e3;
+  --mantine-color-post-1: #ffc9c9;
+  --mantine-color-post-2: #ffa8a8;
+  --mantine-color-post-3: #ff8787;
+  --mantine-color-post-4: #ff6b6b;
+  --mantine-color-post-5: #fa5252;
+  --mantine-color-post-6: #e03131;
+  --mantine-color-post-7: #c92a2a;
+  --mantine-color-post-8: #9b1c1c;
+  --mantine-color-post-9: #5c0f0f;
+  --mantine-color-body: #fbe4e6;
+  --mantine-color-text: #3b0a10;
+  --mantine-color-dimmed: #8a2a35;
+  --mantine-color-default: #fff4f4;
+  --mantine-color-default-border: #eba7ae;
+  --mantine-color-default-hover: #f9d0d4;
+  --mantine-primary-color-filled: #b3121c;
+  --mantine-primary-color-filled-hover: #8f0e16;
+  --mantine-primary-color-light: rgba(179,18,28,0.12);
+  --mantine-primary-color-light-color: #8f0e16;
+  --void: #fde4e6; --field: #fff4f4; --star: #3b0a10; --orbit: #b3121c;
+  --flare: #c1121f; --ember: #c77700; --bloom: #12906a;
+  --sm-bg0: #ffffff; --sm-bg1: #fde4e6; --sm-bg2: #f6bcc2;
+  --sm-core0: #ffffff; --sm-core1: #f6bcc2; --sm-dot: #b3121c;
+  --sm-muted: #8a2a35; --sm-border: rgba(179,18,28,0.35);
+  --accent2: #8a4b00; --accent2-bg: #ffe3b8;
+  color-scheme: light;
+}
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] .mantine-Paper-root,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  background-color: #fff4f4;
+}
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  border-color: #eba7ae;
+}
+
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] {
+  --ink: #f1eaff; --paper: #140a26; --surface: #1e1038; --line: #44306f; --muted: #bba9e6;
+  --stamp: #ff7aa8; --wax: #ffc857; --wax-text: #ffd983; --route: #6ccfa6; --route-text: #8fe3c0;
+  --bar-text: #140a26;
+  --mantine-color-post-0: #f3ecff;
+  --mantine-color-post-1: #e3d4ff;
+  --mantine-color-post-2: #cbb0fb;
+  --mantine-color-post-3: #b18bf6;
+  --mantine-color-post-4: #9a6cf0;
+  --mantine-color-post-5: #8450e6;
+  --mantine-color-post-6: #7138d6;
+  --mantine-color-post-7: #5f2bbb;
+  --mantine-color-post-8: #4c1d95;
+  --mantine-color-post-9: #2e1065;
+  --mantine-color-body: #140a26;
+  --mantine-color-text: #f1eaff;
+  --mantine-color-dimmed: #bba9e6;
+  --mantine-color-default: #1e1038;
+  --mantine-color-default-border: #44306f;
+  --mantine-color-default-hover: #2c1852;
+  --mantine-primary-color-filled: #7138d6;
+  --mantine-primary-color-filled-hover: #5f2bbb;
+  --mantine-primary-color-light: rgba(154,108,240,0.22);
+  --mantine-primary-color-light-color: #cbb0fb;
+  --void: #120822; --field: #1e1038; --star: #f1eaff; --orbit: #b794f6;
+  --flare: #ff6b8b; --ember: #ffc857; --bloom: #6ccfa6;
+  --sm-bg0: #2c1659; --sm-bg1: #1a0d33; --sm-bg2: #0e0720;
+  --sm-core0: #3d2278; --sm-core1: #1a0d33; --sm-dot: #e9ddff;
+  --sm-muted: #bba9e6; --sm-border: rgba(183,148,246,0.35);
+  --accent2: #d6c4ff; --accent2-bg: #3d2478;
+  color-scheme: dark;
+}
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] .mantine-Paper-root,
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  background-color: #1a0d33;
+}
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='violet'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  border-color: #44306f;
+}
+
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] {
+  --ink: #2e1065; --paper: #f7f4ff; --surface: #ffffff; --line: #d8cdf3; --muted: #5b4a8a;
+  --stamp: #c026d3; --wax: #f59f00; --wax-text: #8a5300; --route: #12b886; --route-text: #0b7a5a;
+  --bar-text: #ffffff;
+  --mantine-color-post-0: #f3ecff;
+  --mantine-color-post-1: #e3d4ff;
+  --mantine-color-post-2: #cbb0fb;
+  --mantine-color-post-3: #b18bf6;
+  --mantine-color-post-4: #9a6cf0;
+  --mantine-color-post-5: #8450e6;
+  --mantine-color-post-6: #7138d6;
+  --mantine-color-post-7: #5f2bbb;
+  --mantine-color-post-8: #4c1d95;
+  --mantine-color-post-9: #2e1065;
+  --mantine-color-body: #f7f4ff;
+  --mantine-color-text: #2e1065;
+  --mantine-color-dimmed: #5b4a8a;
+  --mantine-color-default: #ffffff;
+  --mantine-color-default-border: #d8cdf3;
+  --mantine-color-default-hover: #ede6ff;
+  --mantine-primary-color-filled: #4c1d95;
+  --mantine-primary-color-filled-hover: #3b1578;
+  --mantine-primary-color-light: rgba(76,29,149,0.1);
+  --mantine-primary-color-light-color: #4c1d95;
+  --void: #f1ebff; --field: #ffffff; --star: #2e1065; --orbit: #5b21b6;
+  --flare: #d6246e; --ember: #d98200; --bloom: #12906a;
+  --sm-bg0: #ffffff; --sm-bg1: #f1ebff; --sm-bg2: #dccdff;
+  --sm-core0: #ffffff; --sm-core1: #dccdff; --sm-dot: #5b21b6;
+  --sm-muted: #5b4a8a; --sm-border: rgba(76,29,149,0.3);
+  --accent2: #0f766e; --accent2-bg: #d1f2ec;
+  color-scheme: light;
+}
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-Paper-root,
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  background-color: #ffffff;
+}
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  border-color: #d8cdf3;
+}
