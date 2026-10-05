@@ -88,6 +88,16 @@ def test_kb_management_requires_admin(secured, monkeypatch) -> None:
     assert status == 202 and json.loads(body)["job_id"] == "env:admin"
 
 
+def test_evidence_route_uses_verified_owner(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.evidence, "get", lambda principal, eid: {
+        "owner": principal.owner_key, "evidence_id": eid})
+    status, _, body = call(port, "GET", "/api/assistant/evidence/record-1",
+                           "viewer-token-0123456789")
+    assert status == 200
+    assert json.loads(body) == {"owner": "db:1", "evidence_id": "record-1"}
+
+
 # ------------------------------------------------------------------ S-1
 @pytest.mark.parametrize("path", [
     "/%2e%2e/%2e%2e/app/db.py",

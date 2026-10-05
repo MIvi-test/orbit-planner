@@ -141,8 +141,6 @@ def parse_answer(raw: str, revision: int, newer_run_available: bool | None,
     if value["status"] == "needs_clarification" and not value["clarification"]:
         raise ValueError("missing_clarification")
     limitations = ([] if snapshot_id is not None else ["Разговор не привязан к прогону."])
-    if snapshot_id is not None:
-        limitations.append("Для ответа доступна ограниченная выборка снимка; проверьте детали в плане.")
     refs = ([{"type": selected_focus[0], "id": selected_focus[1], "context_revision": revision}]
             if selected_focus else [])
     return {**value, "recommendations": [], "evidence_ids": [], "entity_refs": refs,

@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import conversations, knowledge, prompts, providers
+from app.assistant import conversations, evidence, knowledge, prompts, providers
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -710,6 +710,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = conversations.list_messages(self._principal, parts[1], cursor)
             elif len(parts) == 2 and parts[0] == "jobs":
                 result = conversations.get_job(self._principal, parts[1])
+            elif len(parts) == 2 and parts[0] == "evidence":
+                result = evidence.get(self._principal, parts[1])
             else:
                 raise conversations.ChatError("route_not_found", 404)
             self._send_json(HTTPStatus.OK, result)
@@ -743,7 +745,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
                                 {"error": "knowledge_unavailable", "message": "Knowledge status unavailable"})
             return
-        if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
+        if (path.startswith("/api/assistant/conversations")
+                or path.startswith("/api/assistant/jobs/")
+                or path.startswith("/api/assistant/evidence/")):
             self._assistant_read(path)
             return
         if path in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
