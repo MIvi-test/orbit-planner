@@ -45,7 +45,7 @@ export function WorkforceScenarios({ roles, teams }: { roles: BusFactorRow[]; te
       <Table striped><Table.Thead><Table.Tr><Table.Th>Мера</Table.Th><Table.Th>Доступна с</Table.Th><Table.Th>Инициативы</Table.Th><Table.Th>SP</Table.Th><Table.Th>Срок</Table.Th></Table.Tr></Table.Thead>
         <Table.Tbody>{result.ranked_measures.map((item, index) => <Table.Tr key={`${item.kind}-${index}`}>
           <Table.Td><Text size="sm" fw={500}>{item.label}</Text><Text size="xs" c="dimmed">{item.resource_cost}</Text></Table.Td>
-          <Table.Td>{item.effective_sprint <= count ? `спринт ${item.effective_sprint}` : 'после PI'}</Table.Td>
+          <Table.Td>{item.effective_sprint <= count ? `Спринт ${item.effective_sprint}` : 'После PI'}</Table.Td>
           <Table.Td>{item.restored_initiatives.join(', ') || '—'}</Table.Td>
           <Table.Td>{item.net_sp_gain}</Table.Td>
           <Table.Td>{item.earlier_task_sprints} задачо-спринтов</Table.Td>

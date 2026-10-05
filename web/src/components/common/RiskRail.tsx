@@ -2,7 +2,7 @@
  * Вертикальная линейка риска (docs/UI_DESIGN.md §4): цвет не единственный
  * носитель смысла — слово печатается рядом, а не подразумевается цветом.
  */
-import { Group, Text } from '@mantine/core'
+import { Badge, Group } from '@mantine/core'
 import type { ReactNode } from 'react'
 
 export type RiskLevel = 'critical' | 'warning' | 'ok'
@@ -29,25 +29,20 @@ export function RiskRail({
   children: ReactNode
 }) {
   return (
-    <Group gap="sm" wrap="nowrap" align="stretch">
-      <div
-        style={{
-          width: 4,
-          borderRadius: 2,
-          background: RISK_COLOR[level],
-          flexShrink: 0,
-          alignSelf: 'stretch',
-        }}
-        aria-hidden
-      />
+    <Group gap="md" wrap="nowrap" align="flex-start">
       <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-      <Text
-        size="xs"
-        fw={500}
-        style={{ color: RISK_COLOR[level], flexShrink: 0, whiteSpace: 'nowrap' }}
+      <Badge
+        variant="light"
+        size="lg"
+        style={{
+          color: RISK_COLOR[level],
+          background: `color-mix(in srgb, ${RISK_COLOR[level]} 14%, transparent)`,
+          textTransform: 'none',
+          flexShrink: 0,
+        }}
       >
         {label}
-      </Text>
+      </Badge>
     </Group>
   )
 }

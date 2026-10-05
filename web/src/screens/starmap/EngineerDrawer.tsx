@@ -95,7 +95,7 @@ export function EngineerDrawer({
       title={orbit && <span className="mono" style={{ fontWeight: 600 }}>{orbit.engineer_id}</span>}
       styles={{
         content: { background: 'var(--field)', color: 'var(--star)' },
-        header: { background: 'var(--field)', color: 'var(--star)', borderBottom: '1px solid rgba(127,166,217,0.2)' },
+        header: { background: 'var(--field)', color: 'var(--star)', borderBottom: '1px solid var(--sm-border)' },
         close: { color: 'var(--star)' },
       }}
     >
@@ -256,8 +256,8 @@ export function EngineerDrawer({
   )
 }
 
-const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '4px 6px', borderBottom: '1px solid rgba(127,166,217,0.25)' }
-const td: React.CSSProperties = { padding: '4px 6px', borderBottom: '1px solid rgba(127,166,217,0.12)' }
+const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '4px 6px', borderBottom: '1px solid var(--sm-border)' }
+const td: React.CSSProperties = { padding: '4px 6px', borderBottom: '1px solid var(--sm-border)' }
 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (

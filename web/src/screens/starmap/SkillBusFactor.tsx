@@ -11,12 +11,12 @@ import { chip, muted } from './darkStyles'
 import { shortTeam } from './risk'
 
 const GRADES = [
-  { key: 'нет носителей требуемого навыка', label: 'нет носителей', color: 'var(--flare)' },
-  { key: 'критично: требуемый навык у одного', label: 'критично', color: 'var(--flare)' },
-  { key: 'предварительно: один носитель роли', label: 'оценка по роли', color: 'var(--ember)' },
-  { key: 'единственный носитель', label: 'единственный носитель', color: 'var(--ember)' },
-  { key: 'два носителя', label: 'два носителя', color: 'var(--orbit)' },
-  { key: 'ок', label: 'три и больше', color: 'var(--bloom)' },
+  { key: 'нет носителей требуемого навыка', label: 'Нет носителей', color: 'var(--flare)' },
+  { key: 'критично: требуемый навык у одного', label: 'Критично', color: 'var(--flare)' },
+  { key: 'предварительно: один носитель роли', label: 'Оценка по роли', color: 'var(--ember)' },
+  { key: 'единственный носитель', label: 'Единственный носитель', color: 'var(--ember)' },
+  { key: 'два носителя', label: 'Два носителя', color: 'var(--orbit)' },
+  { key: 'ок', label: 'Три и больше', color: 'var(--bloom)' },
 ]
 
 export function SkillBusFactor({
@@ -81,7 +81,7 @@ export function SkillBusFactor({
                       onSelectSkill(selected ? null : r)
                     }
                   }}
-                  style={{ cursor: 'pointer', background: selected ? 'rgba(232,236,245,0.10)' : undefined }}
+                  style={{ cursor: 'pointer', background: selected ? 'color-mix(in srgb, var(--star) 10%, transparent)' : undefined }}
                 >
                   <td style={{ ...td, borderLeft: `3px solid ${grade?.color ?? 'transparent'}` }}>{r.skill_name}</td>
                   <td style={{ ...td, textAlign: 'right' }} className="mono">
@@ -108,5 +108,5 @@ export function SkillBusFactor({
   )
 }
 
-const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '6px 8px', borderBottom: '1px solid rgba(127,166,217,0.3)' }
-const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid rgba(127,166,217,0.12)', verticalAlign: 'top' }
+const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '6px 8px', borderBottom: '1px solid var(--sm-border)' }
+const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid var(--sm-border)', verticalAlign: 'top' }

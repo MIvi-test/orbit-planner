@@ -4,7 +4,7 @@ import { useDqIssues } from '../../hooks/useViews'
 import { QueryError } from '../../components/common/QueryError'
 
 const COLOR = { error: 'red', warning: 'orange', info: 'gray' } as const
-const WORD = { error: 'блокирует', warning: 'предупреждение', info: 'информация' } as const
+const WORD = { error: 'Блокирует', warning: 'Предупреждение', info: 'Информация' } as const
 
 /** Качество исходных данных (NEW-06): весь журнал находок с фильтрами, а не один пример на правило. */
 export function DataQualityScreen() {
@@ -22,11 +22,11 @@ export function DataQualityScreen() {
   )
   const count = (s: string) => rows.filter((r) => r.severity === s).length
 
-  if (query.isPending) return <Stack maw={1200}><Title order={2}>Данные</Title><Skeleton height={300} /></Stack>
-  if (query.error) return <Stack maw={1200}><Title order={2}>Данные</Title><QueryError error={query.error} title="Не удалось загрузить журнал качества данных" /></Stack>
+  if (query.isPending) return <Stack><Title order={2}>Данные</Title><Skeleton height={300} /></Stack>
+  if (query.error) return <Stack><Title order={2}>Данные</Title><QueryError error={query.error} title="Не удалось загрузить журнал качества данных" /></Stack>
 
   return (
-    <Stack gap="md" maw={1200}>
+    <Stack gap="md">
       <div>
         <Title order={2}>Качество данных</Title>
         <Text c="dimmed" size="sm" mt={2}>

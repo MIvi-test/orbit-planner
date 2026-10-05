@@ -3,6 +3,7 @@ import { Shell } from './components/layout/Shell'
 import { LoginScreen } from './components/auth/LoginScreen'
 import { useAuth } from './hooks/useAuth'
 import { useHashRoute } from './hooks/useHashRoute'
+import { SummaryScreen } from './screens/summary/SummaryScreen'
 import { UploadScreen } from './screens/upload/UploadScreen'
 import { PlanScreen } from './screens/plan/PlanScreen'
 import { RisksScreen } from './screens/risks/RisksScreen'
@@ -27,6 +28,7 @@ export default function App() {
 
   return (
     <Shell screen={screen} onNavigate={go}>
+      {screen === 'summary' && <SummaryScreen onNavigate={go} />}
       {screen === 'upload' && <UploadScreen onOpenPlan={() => go('plan')} />}
       {screen === 'plan' && <PlanScreen />}
       {screen === 'risks' && <RisksScreen />}

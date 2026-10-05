@@ -51,7 +51,7 @@ export function SkillReview() {
     {query.isError && <Alert color="red">{query.error instanceof Error ? query.error.message : 'Ошибка загрузки'}</Alert>}
     <Select label="Задача и роль" searchable data={rows.map((item) => ({
       value: `${item.task_id}:${item.role_id}`,
-      label: `${item.task_id} · ${item.role_name} · ${item.status === 'confirmed' ? 'подтверждено' : item.status === 'proposed' ? 'черновик' : 'неизвестно'}`,
+      label: `${item.task_id} · ${item.role_name} · ${item.status === 'confirmed' ? 'Подтверждено' : item.status === 'proposed' ? 'Черновик' : 'неизвестно'}`,
     }))} value={selected} onChange={setSelected} />
     {row && <>
       <MultiSelect label="Нужные технологии" searchable data={(query.data?.skills ?? []).map((item) => ({ value: String(item.skill_id), label: item.skill_name }))}

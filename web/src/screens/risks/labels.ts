@@ -16,17 +16,17 @@ import type {
 
 /** Статусы задачи приходят из базы английскими — показываем по-русски. */
 export const STATUS_WORD: Record<TaskStateStatus, string> = {
-  ToDo: 'не начата',
-  InProgress: 'в работе',
-  Done: 'выполнена',
-  Deferred: 'отложена',
-  Cancelled: 'отменена',
+  ToDo: 'Не начата',
+  InProgress: 'В работе',
+  Done: 'Выполнена',
+  Deferred: 'Отложена',
+  Cancelled: 'Отменена',
 }
 
 export const ALERT_WORD: Record<AlertType, string> = {
-  deadline_miss: 'срыв квартала',
-  cascade_shift: 'сдвиг цепочки',
-  role_deficit: 'нехватка роли',
+  deadline_miss: 'Срыв квартала',
+  cascade_shift: 'Сдвиг цепочки',
+  role_deficit: 'Нехватка роли',
 }
 
 export const LEVEL_COLOR: Record<AlertLevel, string> = {
@@ -36,26 +36,26 @@ export const LEVEL_COLOR: Record<AlertLevel, string> = {
 }
 
 export const CHANGE_WORD: Record<DiffChangeType, string> = {
-  unchanged: 'без изменений',
-  newly_planned: 'вошла в квартал',
-  newly_deferred: 'перенесена впервые',
-  newly_cancelled: 'отменена',
-  decision_changed: 'изменено решение',
-  shifted_later: 'сдвинута позже',
-  shifted_earlier: 'сдвинута раньше',
-  start_changed: 'изменён старт',
-  assignment_changed: 'изменены назначения',
-  sp_changed: 'изменены доли SP',
-  reason_changed: 'изменена причина решения',
-  completed: 'выполнена',
+  unchanged: 'Без изменений',
+  newly_planned: 'Вошла в квартал',
+  newly_deferred: 'Перенесена впервые',
+  newly_cancelled: 'Отменена',
+  decision_changed: 'Изменено решение',
+  shifted_later: 'Сдвинута позже',
+  shifted_earlier: 'Сдвинута раньше',
+  start_changed: 'Изменён старт',
+  assignment_changed: 'Изменены назначения',
+  sp_changed: 'Изменены доли SP',
+  reason_changed: 'Изменена причина решения',
+  completed: 'Выполнена',
 }
 
 export const CAUSE_WORD: Record<Exclude<DiffCause, null>, string> = {
-  own_slip: 'сама не закрылась в срок',
-  carry_over: 'работа продолжается в прежний срок',
-  dependency: 'сдвинулась блокирующая',
-  unknown: 'причина не установлена',
-  completed: 'выполнена по факту',
+  own_slip: 'Сама не закрылась в срок',
+  carry_over: 'Работа продолжается в прежний срок',
+  dependency: 'Сдвинулась блокирующая',
+  unknown: 'Причина не установлена',
+  completed: 'Выполнена по факту',
 }
 
 /** `deviation` приходит готовой строкой из `v_sprint_deviation` — здесь только тон. */

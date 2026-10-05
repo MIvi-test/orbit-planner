@@ -14,8 +14,8 @@ export function PiContextSelect() {
     <Select
       aria-label="PI и сценарий"
       placeholder="Выберите PI"
-      w={220}
-      size="xs"
+      w={200}
+      size="sm"
       data={contexts.map((row) => ({
         value: `${row.pi_id}|${row.scenario_id}`,
         label: `${row.pi_id} / ${row.scenario_id}`,

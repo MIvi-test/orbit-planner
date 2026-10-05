@@ -90,7 +90,7 @@ export function TaskDetailDrawer({
       opened={task !== null}
       onClose={onClose}
       position="right"
-      size="md"
+      size="lg"
       title={
         task && (
           <Group gap="xs">
@@ -110,12 +110,14 @@ export function TaskDetailDrawer({
       }
     >
       {task && (
-        <Stack gap="md">
-          <div>
-            <Text fw={500}>{task.summary}</Text>
-            <Text size="sm" c="dimmed">
-              {task.prodf_id} · {task.team_id} · {fmtSp(task.estimation_sp)} SP
-            </Text>
+        <Stack gap="md" className="drawer-sections">
+          <div className="drawer-head">
+            <Text fw={600} size="lg" style={{ lineHeight: 1.3 }}>{task.summary}</Text>
+            <Group gap="xs" mt={8}>
+              <Badge variant="light" color="gray" size="lg" style={{ textTransform: 'none' }}>Инициатива {task.prodf_id}</Badge>
+              <Badge variant="light" color="gray" size="lg" style={{ textTransform: 'none' }}>Команда {task.team_id}</Badge>
+              <Badge variant="light" color="post" size="lg" style={{ textTransform: 'none' }}>{fmtSp(task.estimation_sp)} SP</Badge>
+            </Group>
           </div>
 
           {schedule?.reason_text && (
@@ -143,7 +145,7 @@ export function TaskDetailDrawer({
               </Stack>)}
 
           {dependencyBound && dependencyBound.earliest_start_sprint > 1 && (
-            <Text size="sm" c="dimmed">
+            <Text size="sm" c="dimmed" className="drawer-note">
               По зависимостям этого прогона старт возможен не раньше спринта {dependencyBound.earliest_start_sprint}.
             </Text>
           )}
@@ -151,14 +153,20 @@ export function TaskDetailDrawer({
           {goalOutcome && (
             <Stack gap={4}>
               <Text size="sm" fw={500}>Цель и результат</Text>
-              <Text size="sm">Исходная цель исполнителя: {goalOutcome.result_executor ?? 'не указана'}
-                {goalOutcome.requested_goal_label ? ` · ${goalOutcome.requested_goal_label}` : ''}</Text>
-              <Text size="sm">Цель заказчика: {goalOutcome.result_customer ?? 'не указана'}</Text>
-              <Text size="sm">Предложение плана: {goalOutcome.proposal_action === 'recommend_cancel'
-                ? 'рекомендовать отмену, без согласия заказчика'
-                : goalOutcome.proposed_goal_label ?? 'решение не требуется'}</Text>
-              <Text size="sm">Подтверждённый результат: {goalOutcome.confirmed_closure_label ?? 'не подтверждён'}
-                {goalOutcome.confirmed_goal_label ? ` · ${goalOutcome.confirmed_goal_label}` : ''}</Text>
+              <GoalRow label="Цель исполнителя">
+                {goalOutcome.result_executor ?? 'Не указана'}
+                {goalOutcome.requested_goal_label ? `, ${goalOutcome.requested_goal_label}` : ''}
+              </GoalRow>
+              <GoalRow label="Цель заказчика">{goalOutcome.result_customer ?? 'Не указана'}</GoalRow>
+              <GoalRow label="Предложение плана">
+                {goalOutcome.proposal_action === 'recommend_cancel'
+                  ? 'Рекомендовать отмену, без согласия заказчика'
+                  : goalOutcome.proposed_goal_label ?? 'Решение не требуется'}
+              </GoalRow>
+              <GoalRow label="Подтверждённый результат">
+                {goalOutcome.confirmed_closure_label ?? 'Не подтверждён'}
+                {goalOutcome.confirmed_goal_label ? `, ${goalOutcome.confirmed_goal_label}` : ''}
+              </GoalRow>
               {isDefault && can('planner') && goalOutcome.status === 'Done' && (
                 <>
                   <Button size="xs" variant="subtle" onClick={() => setConfirmOpen(!confirmOpen)}>
@@ -187,29 +195,33 @@ export function TaskDetailDrawer({
           )}
 
           {state && (
-            <Stack gap={4}>
+            <Stack gap={6}>
               <Text size="sm" fw={500}>
                 Состояние на момент прогона
               </Text>
-              <Text size="sm" c="dimmed">
-                {state.status} · остаток: {fmtHours(state.remaining_hh)} и {fmtSp(state.remaining_sp)} SP
-                {task.estimated_hh_declared !== null && task.estimated_hh_matrix_total !== null && task.estimated_hh_declared !== task.estimated_hh_matrix_total && (
-                  <>
-                    {' '}
-                    · оценка спорная: столбец матрицы {task.estimated_hh_effective} ЧЧ, в
-                    исходнике {task.estimated_hh_declared} ЧЧ
-                  </>
-                )}
-              </Text>
+              <Group gap="xs">
+                <Badge variant="outline" color="gray" size="lg" style={{ textTransform: 'none' }}>{state.status}</Badge>
+                <Text size="sm">Остаток: {fmtHours(state.remaining_hh)} и {fmtSp(state.remaining_sp)} SP</Text>
+              </Group>
+              {task.estimated_hh_declared !== null && task.estimated_hh_matrix_total !== null && task.estimated_hh_declared !== task.estimated_hh_matrix_total && (
+                <Text size="sm" c="dimmed">
+                  Оценка спорная: в столбце матрицы {task.estimated_hh_effective} ЧЧ, в исходнике {task.estimated_hh_declared} ЧЧ.
+                </Text>
+              )}
             </Stack>
           )}
 
           {roleDemand.length > 0 && (
-            <Stack gap={4}>
+            <Stack gap={6}>
               <Text size="sm" fw={500}>Остаток по ролям на момент прогона</Text>
-              {roleDemand.map((row) => (
-                <Text key={row.role_id} size="sm">{row.role_name}: {fmtHours(row.needed_hours)}</Text>
-              ))}
+              <Table verticalSpacing={4} fz="sm">
+                <Table.Thead><Table.Tr><Table.Th>Роль</Table.Th><Table.Th ta="right">Осталось</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {roleDemand.map((row) => (
+                    <Table.Tr key={row.role_id}><Table.Td>{row.role_name}</Table.Td><Table.Td ta="right" className="tabular">{fmtHours(row.needed_hours)}</Table.Td></Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
             </Stack>
           )}
 
@@ -217,13 +229,21 @@ export function TaskDetailDrawer({
             <Stack gap={4}>
               <Text size="sm" fw={500}>Работа по спринтам</Text>
               <Text size="xs" c="dimmed">Часы и SP идут вместе: за спринт задача выполняет не больше доли работы, на которую хватает свободной ёмкости команды, а доля SP пропорциональна выполненным часам. Перевода SP в часы нет.</Text>
-              {progress.map((row) => (
-                <Text key={row.sprint_no} size="sm">
-                  Спринт {row.sprint_no}: {fmtHours(row.assigned_hours)}, {fmtSp(row.sp)} SP
-                  {row.progress_basis === 'team_sp_only' ? ' · только бюджет SP команды' : ''}
-                  {row.progress_basis === 'engineer_hours_only' ? ' · только работа инженеров' : ''}
-                </Text>
-              ))}
+              <Table verticalSpacing={4} fz="sm">
+                <Table.Thead><Table.Tr><Table.Th>Спринт</Table.Th><Table.Th ta="right">Часы</Table.Th><Table.Th ta="right">SP</Table.Th><Table.Th>Основа</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {progress.map((row) => (
+                    <Table.Tr key={row.sprint_no}>
+                      <Table.Td className="mono">{row.sprint_no}</Table.Td>
+                      <Table.Td ta="right" className="tabular">{fmtHours(row.assigned_hours)}</Table.Td>
+                      <Table.Td ta="right" className="tabular">{fmtSp(row.sp)}</Table.Td>
+                      <Table.Td>
+                        {row.progress_basis === 'team_sp_only' ? 'Только бюджет SP команды' : row.progress_basis === 'engineer_hours_only' ? 'Только работа инженеров' : 'Часы и SP'}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
             </Stack>
           )}
 
@@ -279,6 +299,15 @@ export function TaskDetailDrawer({
   )
 }
 
+function GoalRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 12, padding: '4px 0', borderTop: '1px dashed var(--line)' }}>
+      <Text size="sm" c="dimmed">{label}</Text>
+      <Text size="sm" component="div">{children}</Text>
+    </div>
+  )
+}
+
 interface Competitor {
   task_id: string
   hours?: string
@@ -330,7 +359,7 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
                 {s.role}: нужно {fmtHours(s.need_hh)}
                 {s.unplaced_hh ? `, не удалось разместить ${fmtHours(s.unplaced_hh)}` : ''}, свободно {fmtHours(s.free_hh)}
                 {s.competitors && s.competitors.length > 0 && (
-                  <Text size="xs" c="dimmed">часы заняты: {competitorsLabel(s.competitors, 'ЧЧ')}</Text>
+                  <Text size="xs" c="dimmed">Часы заняты: {competitorsLabel(s.competitors, 'ЧЧ')}</Text>
                 )}
               </List.Item>
             ))}
@@ -341,10 +370,10 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
         <Stack gap={2}>
           <Text size="sm" fw={500}>Свободная ёмкость команды в SP</Text>
           <Text size="sm" className="tabular">
-            {Object.entries(freeSpBySprint).map(([sprint, sp]) => `спринт ${sprint}: ${sp}`).join(' · ')}
+            {Object.entries(freeSpBySprint).map(([sprint, sp]) => `Спринт ${sprint}: ${sp}`).join('; ')}
           </Text>
           {spCompetitors.length > 0 && (
-            <Text size="xs" c="dimmed">ёмкость заняли: {competitorsLabel(spCompetitors, 'SP')}</Text>
+            <Text size="xs" c="dimmed">Ёмкость заняли: {competitorsLabel(spCompetitors, 'SP')}</Text>
           )}
         </Stack>
       )}
@@ -364,8 +393,8 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
           </Text>
           <Text size="sm" className="tabular">
             {Object.entries(spBySprint)
-              .map(([sprint, sp]) => `спринт ${sprint}: ${isNegative(sp) ? sp : sp} SP`)
-              .join(' · ')}
+              .map(([sprint, sp]) => `Спринт ${sprint}: ${isNegative(sp) ? sp : sp} SP`)
+              .join('; ')}
           </Text>
         </Stack>
       )}

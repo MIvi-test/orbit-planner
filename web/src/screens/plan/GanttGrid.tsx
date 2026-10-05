@@ -59,16 +59,16 @@ export function GanttGrid({
     >
       {/* --- заголовок: номера и даты спринтов --------------------------- */}
       <div style={{ display: 'contents' }}>
-        <HeaderCell>Инициатива / задача</HeaderCell>
+        <HeaderCell>Задача</HeaderCell>
         {sprints.map((s) => (
           <HeaderCell key={s.sprint_no} center>
-            <div>{s.sprint_no}</div>
-            <Text size="10px" c="dimmed">
-              {fmtDateShort(s.start_date)}–{fmtDateShort(s.end_date)}
+            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>Спринт {s.sprint_no}</div>
+            <Text size="xs" c="dimmed" className="mono">
+              {fmtDateShort(s.start_date)} – {fmtDateShort(s.end_date)}
             </Text>
           </HeaderCell>
         ))}
-        <HeaderCell />
+        <HeaderCell center>Итог</HeaderCell>
       </div>
 
       {groups.map((group) => (
@@ -87,21 +87,21 @@ export function GanttGrid({
               }}
             >
               <Badge variant="outline" color={group.business_priority !== null ? 'orange' : 'post'} size="sm" className="mono"
-                title={group.business_priority !== null ? `задан бизнесом (датасет: ${group.priority_rung ?? '—'})` : 'приоритет из датасета'}>
+                title={group.business_priority !== null ? `Задан бизнесом (датасет: ${group.priority_rung ?? '—'})` : 'Приоритет из датасета'}>
                 {group.business_priority ?? group.priority_rung ?? '—'}
               </Badge>
               {can('planner') && (
                 <InitiativePriority prodfId={group.prodf_id} datasetRung={group.priority_rung} business={group.business_priority} />
               )}
-              <Text size="sm" fw={500} className="mono">
+              <Text fw={700} className="mono">
                 {group.prodf_id}
               </Text>
-              <Text size="sm" c="dimmed" truncate>
+              <Text fw={500} truncate>
                 {group.title}
               </Text>
-              <Text size="xs" c="dimmed" ml="auto">
+              <Badge variant="light" color="gray" ml="auto" style={{ textTransform: 'none', flexShrink: 0 }}>
                 {group.team_id}
-              </Text>
+              </Badge>
             </div>
           </div>
 
@@ -115,10 +115,10 @@ export function GanttGrid({
             return (
               <div style={{ display: 'contents' }} key={task.task_id}>
                 <RowCell onClick={() => onSelect(task)}>
-                  <Text size="sm" fw={500} className="mono">
+                  <Text size="sm" fw={700} className="mono">
                     {task.task_id}
                   </Text>
-                  <Text size="xs" c="dimmed" truncate>
+                  <Text size="sm" c="dimmed" lineClamp={2} title={task.summary ?? undefined} style={{ lineHeight: 1.3 }}>
                     {task.summary}
                   </Text>
                 </RowCell>
@@ -162,7 +162,7 @@ export function GanttGrid({
 
                 <RowCell onClick={() => onSelect(task)} center>
                   {flag && (
-                    <span title={flag.title} style={{ color: flag.color, fontSize: 13 }}>
+                    <span title={flag.title} style={{ color: flag.color, fontSize: 18 }}>
                       {flag.glyph}
                     </span>
                   )}
@@ -180,12 +180,17 @@ function HeaderCell({ children, center }: { children?: React.ReactNode; center?:
   return (
     <div
       style={{
-        padding: '8px 10px',
+        padding: '10px 12px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: center ? 'center' : 'flex-start',
+        gap: 2,
         borderBottom: '2px solid var(--ink)',
         borderRight: '1px solid var(--line)',
         textAlign: center ? 'center' : 'left',
-        fontSize: 12,
-        fontWeight: 500,
+        fontSize: 13,
+        fontWeight: 600,
         color: 'var(--muted)',
         background: 'var(--surface)',
       }}
@@ -210,8 +215,12 @@ function RowCell({
       style={{
         all: 'unset',
         cursor: 'pointer',
-        display: 'block',
-        padding: '5px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: center ? 'center' : 'stretch',
+        gap: 1,
+        padding: '8px 12px',
         borderBottom: '1px solid var(--line)',
         borderRight: '1px solid var(--line)',
         background: 'var(--surface)',
@@ -253,7 +262,8 @@ function BarCell({
         display: 'flex',
         alignItems: 'flex-end',
         justifyContent: 'center',
-        height: 34,
+        height: '100%',
+        minHeight: 52,
         borderBottom: '1px solid var(--line)',
         borderRight: '1px solid var(--line)',
         background: 'var(--surface)',

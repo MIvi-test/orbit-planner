@@ -12,11 +12,12 @@ export const theme = createTheme({
   fontFamily: 'var(--font-text)',
   fontFamilyMonospace: 'var(--font-mono)',
   headings: {
-    fontFamily: 'var(--font-text)',
+    fontFamily: 'var(--font-heading)',
     sizes: {
-      h1: { fontSize: rem(38), lineHeight: '1.15', fontWeight: '600' },
-      h2: { fontSize: rem(22), lineHeight: '1.3', fontWeight: '500' },
-      h3: { fontSize: rem(18), lineHeight: '1.4', fontWeight: '500' },
+      h1: { fontSize: rem(38), lineHeight: '1.15', fontWeight: '800' },
+      h2: { fontSize: rem(30), lineHeight: '1.2', fontWeight: '800' },
+      h3: { fontSize: rem(21), lineHeight: '1.3', fontWeight: '700' },
+      h4: { fontSize: rem(17), lineHeight: '1.35', fontWeight: '700' },
     },
   },
   colors: {

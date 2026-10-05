@@ -14,7 +14,7 @@ export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
     onOpenPlan()
   }
   return (
-    <Stack gap="xl" maw={1100}>
+    <Stack gap="xl">
       <div>
         <Title order={2}>Загрузка данных</Title>
         <Text c="dimmed" mt={4}>

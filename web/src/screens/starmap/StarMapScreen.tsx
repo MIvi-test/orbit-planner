@@ -48,8 +48,8 @@ export function StarMapScreen() {
   const error = firstError(queries)
 
   const frame = (children: React.ReactNode) => (
-    <div className="starmap-scope" style={{ padding: 20, margin: -16, minHeight: 'calc(100vh - 106px)' }}>
-      <Stack gap="lg" maw={1280} mx="auto">
+    <div className="starmap-scope" style={{ padding: 20, margin: -16, minHeight: 'calc(100vh - 60px)' }}>
+      <Stack gap="lg">
         {children}
       </Stack>
     </div>

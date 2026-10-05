@@ -35,7 +35,7 @@ export function RolesScreen() {
 
   if (anyPending(queries)) {
     return (
-      <Stack gap="md" maw={1400}>
+      <Stack gap="md">
         <Title order={2}>Роли и ёмкость</Title>
         <Skeleton height={360} />
         <Skeleton height={260} />
@@ -45,7 +45,7 @@ export function RolesScreen() {
 
   if (error) {
     return (
-      <Stack gap="md" maw={1400}>
+      <Stack gap="md">
         <Title order={2}>Роли и ёмкость</Title>
         <QueryError error={error} title="Не удалось загрузить роли и ёмкость" />
       </Stack>
@@ -60,7 +60,7 @@ export function RolesScreen() {
   const teamFocus = new Map((teamsQ.data?.items ?? []).map((row) => [row.team_id, row.focus_factor]))
 
   return (
-    <Stack gap="lg" maw={1400}>
+    <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
           <Title order={2}>Роли и ёмкость</Title>
@@ -202,7 +202,7 @@ function DeficitFrame({ title, rows }: { title: string; rows: Array<{ team_id: s
   )
 }
 
-const SEVERITY_WORD: Record<string, string> = { error: 'ошибка', warning: 'предупреждение', info: 'справка' }
+const SEVERITY_WORD: Record<string, string> = { error: 'Ошибка', warning: 'Предупреждение', info: 'Справка' }
 
 // Вердикты длинные («НЕ ЗАКРЫТЬ НИКЕМ…»): в Badge они обрезаются, поэтому — текст с переносом.
 function Verdict({ text, problem }: { text: string; problem: boolean }) {

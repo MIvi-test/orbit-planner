@@ -8,10 +8,14 @@ import '@mantine/notifications/styles.css'
 import '@mantine/dropzone/styles.css'
 import './theme/tokens.css'
 import { theme } from './theme/mantineTheme'
+import { applyAppTheme, storedTheme } from './theme/appTheme'
 import { queryClient } from './api/queryClient'
 import { RunProvider } from './hooks/useRun'
 import { AuthProvider } from './hooks/useAuth'
 import App from './App'
+
+const savedTheme = storedTheme()
+if (savedTheme) applyAppTheme(savedTheme)
 
 const container = document.getElementById('root')
 if (!container) throw new Error('в index.html нет #root')

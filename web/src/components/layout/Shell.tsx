@@ -1,4 +1,20 @@
-import { AppShell, Badge, Button, Group, ScrollArea, Tabs, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, AppShell, Badge, Group, ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core'
+import { useLocalStorage } from '@mantine/hooks'
+import {
+  IconChartDots3,
+  IconChevronsLeft,
+  IconCircleX,
+  IconChevronsRight,
+  IconCloudUpload,
+  IconDatabaseSearch,
+  IconGauge,
+  IconLayoutDashboard,
+  IconTimeline,
+  IconUserCircle,
+  IconUsersGroup,
+  IconAlertTriangle,
+  type Icon,
+} from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import { HealthBadge } from './HealthBadge'
 import { PiBadge } from './PiBadge'
@@ -9,16 +25,22 @@ import { useAuth } from '../../hooks/useAuth'
 import { ROLE_LABEL } from '../../api/auth'
 import { ThemeToggle } from '../common/ThemeToggle'
 
-const NAV: { id: ScreenId; label: string }[] = [
-  { id: 'upload', label: 'Загрузка' },
-  { id: 'plan', label: 'План квартала' },
-  { id: 'risks', label: 'Риски' },
-  { id: 'starmap', label: 'Звёздная карта' },
-  { id: 'kpi', label: 'KPI' },
-  { id: 'roles', label: 'Роли и ёмкость' },
-  { id: 'profiles', label: 'Профили' },
-  { id: 'data', label: 'Данные' },
+const NAV: { id: ScreenId; label: string; icon: Icon }[] = [
+  { id: 'summary', label: 'Сводка', icon: IconLayoutDashboard },
+  { id: 'upload', label: 'Загрузка', icon: IconCloudUpload },
+  { id: 'plan', label: 'План квартала', icon: IconTimeline },
+  { id: 'risks', label: 'Риски', icon: IconAlertTriangle },
+  { id: 'starmap', label: 'Звёздная карта', icon: IconChartDots3 },
+  { id: 'kpi', label: 'KPI', icon: IconGauge },
+  { id: 'roles', label: 'Роли и ёмкость', icon: IconUsersGroup },
+  { id: 'profiles', label: 'Профили', icon: IconUserCircle },
+  { id: 'data', label: 'Данные', icon: IconDatabaseSearch },
 ]
+
+const ROLE_COLOR = { viewer: 'gray', planner: 'blue', admin: 'grape' } as const
+
+const NAV_OPEN = 250
+const NAV_COLLAPSED = 64
 
 export function Shell({
   screen,
@@ -30,54 +52,100 @@ export function Shell({
   children: ReactNode
 }) {
   const { me, logout } = useAuth()
+  const [collapsed, setCollapsed] = useLocalStorage({ key: 'pi-planner-nav-collapsed', defaultValue: false })
   return (
-    <AppShell header={{ height: 106 }} padding="md">
+    <AppShell
+      header={{ height: 60 }}
+      navbar={{ width: collapsed ? NAV_COLLAPSED : NAV_OPEN, breakpoint: 0 }}
+      padding="md"
+      styles={{ navbar: { transition: 'width 150ms ease' } }}
+    >
       <AppShell.Header>
-        <Group justify="space-between" px="md" pt={10} wrap="nowrap">
-          <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-            <Text fw={600} size="lg" style={{ whiteSpace: 'nowrap' }}>
-              PI-Planner
-            </Text>
+        <Group justify="space-between" px="md" h="100%" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+            <div style={{ lineHeight: 1.15 }}>
+              <Text fw={700} size="lg" style={{ whiteSpace: 'nowrap', fontFamily: 'var(--font-heading)' }}>
+                PI-Planner
+              </Text>
+              <Text size="xs" c="dimmed">
+                ПочтаТех
+              </Text>
+            </div>
             <ThemeToggle />
-            <Text size="sm" c="dimmed">
-              ПочтаТех
-            </Text>
           </Group>
-          <Group gap="md" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap">
             <PiContextSelect />
-            <PiBadge />
             <RunSelect />
+            <Group visibleFrom="xl">
+              <PiBadge />
+            </Group>
             <HealthBadge />
             {me && me.auth === 'required' && (
-              <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-                <Tooltip label={`${me.name} · роль: ${ROLE_LABEL[me.role]}`}>
-                  <Badge variant="light" color="gray" size="sm" maw={110} style={{ flexShrink: 0 }}>
-                    {me.name}
-                  </Badge>
+              <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+                <Text size="sm" fw={600} style={{ whiteSpace: 'nowrap' }} maw={140} truncate>
+                  {me.name}
+                </Text>
+                <Badge variant="light" color={ROLE_COLOR[me.role]} size="lg" style={{ textTransform: 'none', flexShrink: 0 }}>
+                  {ROLE_LABEL[me.role]}
+                </Badge>
+                <Tooltip label="Выйти из системы">
+                  <ActionIcon variant="subtle" color="gray" size="lg" radius="xl" onClick={logout} aria-label="Выйти" className="logout-btn">
+                    <IconCircleX size={24} stroke={1.7} />
+                  </ActionIcon>
                 </Tooltip>
-                <Button variant="subtle" size="compact-xs" onClick={logout} style={{ flexShrink: 0 }}>
-                  Выйти
-                </Button>
               </Group>
             )}
           </Group>
         </Group>
-        <ScrollArea scrollbarSize={4} type="auto" px="md">
-          <Tabs
-            value={screen}
-            onChange={(v) => v && onNavigate(v as ScreenId)}
-            variant="outline"
-          >
-            <Tabs.List style={{ flexWrap: 'nowrap' }}>
-              {NAV.map((item) => (
-                <Tabs.Tab key={item.id} value={item.id} style={{ whiteSpace: 'nowrap' }}>
-                  {item.label}
-                </Tabs.Tab>
-              ))}
-            </Tabs.List>
-          </Tabs>
-        </ScrollArea>
       </AppShell.Header>
+      <AppShell.Navbar p={0}>
+        <ScrollArea style={{ flex: 1 }} scrollbarSize={4} px={8} pt="sm">
+          {NAV.map((item) => {
+            const Ico = item.icon
+            const active = screen === item.id
+            const link = (
+              <UnstyledButton
+                key={item.id}
+                onClick={() => onNavigate(item.id)}
+                aria-label={item.label}
+                aria-current={active ? 'page' : undefined}
+                className="nav-item"
+                data-active={active || undefined}
+              >
+                <Ico size={24} stroke={1.7} className="nav-icon" />
+                <span className="nav-label" data-collapsed={collapsed || undefined}>
+                  {item.label}
+                </span>
+              </UnstyledButton>
+            )
+            return collapsed ? (
+              <Tooltip key={item.id} label={item.label} position="right" withArrow>
+                {link}
+              </Tooltip>
+            ) : (
+              link
+            )
+          })}
+        </ScrollArea>
+        <div style={{ padding: '8px' }}>
+          <Tooltip label={collapsed ? 'Развернуть меню' : 'Свернуть меню'} position="right">
+            <UnstyledButton
+              onClick={() => setCollapsed((v) => !v)}
+              aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
+              className="nav-item"
+            >
+              {collapsed ? (
+                <IconChevronsRight size={24} stroke={1.7} className="nav-icon" />
+              ) : (
+                <IconChevronsLeft size={24} stroke={1.7} className="nav-icon" />
+              )}
+              <span className="nav-label" data-collapsed={collapsed || undefined}>
+                Свернуть меню
+              </span>
+            </UnstyledButton>
+          </Tooltip>
+        </div>
+      </AppShell.Navbar>
       <AppShell.Main>{children}</AppShell.Main>
     </AppShell>
   )

@@ -29,6 +29,7 @@
 
   /* --- шрифты ------------------------------------------------------ */
   --font-text: 'Golos Text', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Manrope', 'Golos Text', system-ui, sans-serif;
   --font-mono: 'PT Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   color-scheme: light;
@@ -59,10 +60,10 @@ body {
   padding: 0;
 }
 
-/* Весь интерфейс крупнее на 12.5%: размеры Mantine заданы в rem и растут
-   вместе с корнем. Процент, а не px — чтобы уважать настройку браузера. */
+/* Размер текста растёт с шириной экрана (18px на ноутбуке, ~21px на 1920, до 26px): размеры Mantine заданы в rem и растут
+   вместе с корнем. Масштаб приходит из clamp по ширине окна. */
 html {
-  font-size: 112.5%;
+  font-size: clamp(18px, 0.6vw + 9.5px, 26px);
 }
 
 body {
@@ -105,10 +106,213 @@ body {
   --scope-fg: var(--star);
   background: var(--void);
   color: var(--star);
-  color-scheme: dark;
   border-radius: 2px;
 }
 
 .starmap-scope .muted {
-  color: #97a3c4;
+  color: var(--sm-muted);
+}
+
+/* Боковое меню: иконка всегда на одном месте (x = 20…44 px от края панели),
+   при сворачивании исчезает только подпись, поэтому иконки не прыгают. */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 46px;
+  padding: 0 12px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: var(--mantine-color-text);
+}
+.nav-item:hover {
+  background: var(--mantine-color-default-hover);
+}
+.nav-item[data-active] {
+  background: var(--mantine-color-post-light);
+  color: var(--mantine-color-post-light-color);
+  font-weight: 600;
+}
+.nav-icon {
+  flex: 0 0 24px;
+}
+.nav-label {
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+.nav-label[data-collapsed] {
+  opacity: 0;
+}
+
+/* Кликабельные плитки и ссылки-кнопки: видно, что на них можно нажать. */
+.tile-link {
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.tile-link:hover,
+.tile-link:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.tile-link:hover > .mantine-Paper-root,
+.tile-link:focus-visible > .mantine-Paper-root {
+  border-color: var(--mantine-color-post-5);
+  background: var(--mantine-color-default-hover);
+}
+.text-link {
+  color: var(--mantine-color-post-light-color);
+  border-bottom: 1px solid transparent;
+}
+.text-link:hover,
+.text-link:focus-visible {
+  border-bottom-color: currentColor;
+  filter: brightness(1.25);
+}
+
+.logout-btn:hover,
+.logout-btn:focus-visible {
+  background: var(--mantine-color-red-light);
+  color: var(--mantine-color-red-6);
+}
+
+.health-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* ===== Тема «Розовая»: светлая схема, розовый акцент ===== */
+:root[data-app-theme='pinkie'] {
+  --ink: #4a1633;
+  --paper: #ffd6e8;
+  --surface: #fff0f7;
+  --line: #f59ac4;
+  --muted: #8a2a5b;
+  --stamp: #e8338a;
+  --wax: #f59f00;
+  --wax-text: #a15c00;
+  --route: #12b886;
+  --route-text: #0b7a5a;
+  --mantine-color-post-0: #fff0f8;
+  --mantine-color-post-1: #ffd9ee;
+  --mantine-color-post-2: #ffb3dc;
+  --mantine-color-post-3: #ff8cca;
+  --mantine-color-post-4: #ff66b8;
+  --mantine-color-post-5: #ff3fa6;
+  --mantine-color-post-6: #ec2494;
+  --mantine-color-post-7: #d11a82;
+  --mantine-color-post-8: #b01270;
+  --mantine-color-post-9: #8c0c58;
+  --mantine-color-body: #ffd6e8;
+  --mantine-color-text: #4a1633;
+  --mantine-color-dimmed: #8a2a5b;
+  --mantine-color-default: #fff0f7;
+  --mantine-color-default-border: #f59ac4;
+  --mantine-color-default-hover: #ffc2de;
+  --mantine-primary-color-filled: #e8338a;
+  --mantine-primary-color-filled-hover: #d1247a;
+  --mantine-primary-color-light: rgba(214, 51, 108, 0.14);
+  --mantine-primary-color-light-color: #a61e4d;
+}
+
+/* ===== Тема «Кровавая»: тёмная схема, кроваво-красный акцент ===== */
+:root[data-app-theme='dracula'] {
+  --ink: #f6e7e9;
+  --paper: #120508;
+  --surface: #1f0a10;
+  --line: #4f1a24;
+  --muted: #c9a0a7;
+  --stamp: #ff5c5c;
+  --wax: #ffb347;
+  --wax-text: #ffc978;
+  --route: #7ad6b0;
+  --route-text: #8fe3c0;
+  --bar-text: #120508;
+  --mantine-color-post-0: #ffe3e3;
+  --mantine-color-post-1: #ffc9c9;
+  --mantine-color-post-2: #ffa8a8;
+  --mantine-color-post-3: #ff8787;
+  --mantine-color-post-4: #ff6b6b;
+  --mantine-color-post-5: #fa5252;
+  --mantine-color-post-6: #e03131;
+  --mantine-color-post-7: #c92a2a;
+  --mantine-color-post-8: #9b1c1c;
+  --mantine-color-post-9: #5c0f0f;
+  --mantine-color-body: #120508;
+  --mantine-color-text: #f6e7e9;
+  --mantine-color-dimmed: #c9a0a7;
+  --mantine-color-default: #1f0a10;
+  --mantine-color-default-border: #4f1a24;
+  --mantine-color-default-hover: #2c0f17;
+  --mantine-primary-color-filled: #c1121f;
+  --mantine-primary-color-filled-hover: #9b0e18;
+  --mantine-primary-color-light: rgba(224, 49, 49, 0.2);
+  --mantine-primary-color-light-color: #ff8787;
+}
+:root[data-app-theme='dracula'] .mantine-Paper-root,
+:root[data-app-theme='dracula'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'] .mantine-AppShell-navbar {
+  background-color: #1a070c;
+}
+:root[data-app-theme='dracula'] .mantine-AppShell-header,
+:root[data-app-theme='dracula'] .mantine-AppShell-navbar {
+  border-color: #4f1a24;
+}
+:root[data-app-theme='pinkie'] .mantine-Paper-root,
+:root[data-app-theme='pinkie'] .mantine-AppShell-header,
+:root[data-app-theme='pinkie'] .mantine-AppShell-navbar {
+  background-color: #fff0f7;
+}
+
+/* Карточка задачи: каждый смысловой блок — своя рамка, заголовок блока выделен. */
+.drawer-sections > .mantine-Stack-root,
+.drawer-sections > .drawer-note {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.drawer-sections > .mantine-Stack-root > .mantine-Text-root:first-child {
+  font-family: var(--font-heading);
+  font-weight: 700 !important;
+  font-size: 1.05rem !important;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.drawer-head {
+  padding-bottom: 4px;
+}
+
+/* ===== Звёздная карта: палитра следует теме ===== */
+:root {
+  --void: #eef3fb; --field: #ffffff; --star: #14213d; --orbit: #3f5885;
+  --flare: #d92d20; --ember: #d98200; --bloom: #12906a;
+  --sm-bg0: #ffffff; --sm-bg1: #eef3fb; --sm-bg2: #dde6f4;
+  --sm-core0: #ffffff; --sm-core1: #dde6f4; --sm-dot: #3f5885;
+  --sm-muted: #5a6472; --sm-border: rgba(63,88,133,0.3);
+}
+:root[data-mantine-color-scheme='dark'] {
+  --void: #0b1020; --field: #141b2e; --star: #e8ecf5; --orbit: #7fa6d9;
+  --flare: #ff6b5a; --ember: #ffc857; --bloom: #6ccfa6;
+  --sm-bg0: #1b2750; --sm-bg1: #0f1730; --sm-bg2: #070b18;
+  --sm-core0: #2a3a6e; --sm-core1: #101830; --sm-dot: #dfe8ff;
+  --sm-muted: #a3aecb; --sm-border: rgba(127,166,217,0.3);
+}
+:root[data-app-theme='pinkie'] {
+  --void: #ffd1e6; --field: #fff0f7; --star: #4a1633; --orbit: #c2255c;
+  --flare: #e0245e; --ember: #f08c00; --bloom: #0fa37f;
+  --sm-bg0: #fff5fa; --sm-bg1: #ffd9ec; --sm-bg2: #ffb8d8;
+  --sm-core0: #ffffff; --sm-core1: #ffd0e5; --sm-dot: #e64980;
+  --sm-muted: #8f4a69; --sm-border: rgba(194,37,92,0.35);
+}
+:root[data-app-theme='dracula'] {
+  --void: #0e0407; --field: #1c0910; --star: #f6e7e9; --orbit: #ff6b6b;
+  --flare: #ff3b3b; --ember: #ffb347; --bloom: #7ad6b0;
+  --sm-bg0: #3a0a14; --sm-bg1: #1d070d; --sm-bg2: #0b0306;
+  --sm-core0: #4a1019; --sm-core1: #1a070c; --sm-dot: #ffd6d6;
+  --sm-muted: #c9a0a7; --sm-border: rgba(255,107,107,0.35);
 }

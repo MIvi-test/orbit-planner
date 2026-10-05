@@ -11,7 +11,7 @@
  */
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Group, Paper, Skeleton, Stack, Table, Text, Title } from '@mantine/core'
+import { Group, Paper, SegmentedControl, Select, Skeleton, Stack, Table, Text, TextInput, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import {
   useAlerts,
@@ -32,11 +32,15 @@ import { PlanChanges } from './PlanChanges'
 import { SprintDeviation } from './SprintDeviation'
 import { ViolationsPanel } from './ViolationsPanel'
 import { ALERT_WORD } from './labels'
+import { RISK_COLOR, levelFromAlert } from '../../components/common/RiskRail'
 import type { AlertRow, AlertType } from '../../types/views'
 
 export function RisksScreen() {
   const { runId, runs } = useRun()
   const [sprint, setSprint] = useState<number | null>(null)
+  const [level, setLevel] = useState('all')
+  const [type, setType] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const alertsQ = useAlerts(runId)
   const diffQ = usePlanDiff(runId)
@@ -58,7 +62,7 @@ export function RisksScreen() {
 
   if (anyPending(queries)) {
     return (
-      <Stack gap="md" maw={1200}>
+      <Stack gap="md">
         <Title order={2}>Риски</Title>
         <Skeleton height={96} />
         <Skeleton height={320} />
@@ -68,7 +72,7 @@ export function RisksScreen() {
 
   if (error) {
     return (
-      <Stack gap="md" maw={1200}>
+      <Stack gap="md">
         <Title order={2}>Риски</Title>
         <QueryError error={error} title="Не удалось загрузить риски" />
       </Stack>
@@ -85,11 +89,19 @@ export function RisksScreen() {
   const deviations = (deviationQ.data?.items ?? []).filter((row) => visibleUploads.has(row.upload_id))
   const sprints = sprintsQ.data?.items ?? []
   const reasonLabels = new Map((reasonsQ.data?.items ?? []).map((r) => [r.code, r.label]))
-  const shown = sprint === null ? alerts : alerts.filter((a) => a.sprint_no === sprint)
+  const needle = search.trim().toLowerCase()
+  const shown = alerts.filter(
+    (a) =>
+      (sprint === null || a.sprint_no === sprint) &&
+      (level === 'all' || a.level === level) &&
+      (type === null || a.alert_type === type) &&
+      (!needle || `${a.entity_id} ${a.message}`.toLowerCase().includes(needle)),
+  )
+  const levelCount = (l: string) => alerts.filter((a) => a.level === l).length
 
   const tally = new Map<AlertType, number>()
   for (const a of alerts) tally.set(a.alert_type, (tally.get(a.alert_type) ?? 0) + 1)
-  const summary = [...tally.entries()].map(([type, n]) => `${n} — ${ALERT_WORD[type]}`).join(', ')
+  const summary = [...tally.entries()].map(([type, n]) => `${n} — ${ALERT_WORD[type].toLowerCase()}`).join(', ')
 
   const known = new Set(sprints.map((s) => s.sprint_no))
   const groups = sprints
@@ -98,7 +110,7 @@ export function RisksScreen() {
   const outside = shown.filter((a) => !known.has(a.sprint_no))
 
   return (
-    <Stack gap="lg" maw={1200}>
+    <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
           <Title order={2}>Риски</Title>
@@ -134,14 +146,48 @@ export function RisksScreen() {
             : `Отобран спринт ${sprint}: показано ${shown.length} из ${alerts.length}.`
         }
       >
+        <Group gap="sm" wrap="wrap">
+          <SegmentedControl
+            value={level}
+            onChange={setLevel}
+            data={[
+              { value: 'all', label: `Все ${alerts.length}` },
+              { value: 'red', label: `Критичные ${levelCount('red')}` },
+              { value: 'orange', label: `Важные ${levelCount('orange')}` },
+              { value: 'yellow', label: `Внимание ${levelCount('yellow')}` },
+            ]}
+          />
+          <Select
+            placeholder="Тип риска"
+            clearable
+            w={240}
+            value={type}
+            onChange={setType}
+            data={(Object.keys(ALERT_WORD) as AlertType[]).map((t) => ({ value: t, label: ALERT_WORD[t] }))}
+          />
+          <Select
+            placeholder="Спринт"
+            clearable
+            w={160}
+            value={sprint === null ? null : String(sprint)}
+            onChange={(v) => setSprint(v === null ? null : Number(v))}
+            data={sprints.map((x) => ({ value: String(x.sprint_no), label: `Спринт ${x.sprint_no}` }))}
+          />
+          <TextInput
+            placeholder="Поиск по задаче и тексту"
+            w={280}
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+          />
+        </Group>
         {shown.length === 0 ? (
           <Text size="sm" c="dimmed">
             В этом отборе рисков нет.
           </Text>
         ) : (
-          <Stack gap="md">
+          <Stack gap="lg">
             {groups.map((group) => (
-              <Stack key={group.sprint.sprint_no} gap={6}>
+              <Stack key={group.sprint.sprint_no} gap="sm">
                 <Group gap="xs" wrap="nowrap">
                   <Text size="sm" fw={500}>
                     Спринт {group.sprint.sprint_no}
@@ -215,16 +261,16 @@ export function RisksScreen() {
 }
 
 function AlertFrame({ alert, reasonLabels }: { alert: AlertRow; reasonLabels: Map<string, string> }) {
+  const color = RISK_COLOR[levelFromAlert(alert.level)]
   return (
-    <div
-      style={{
-        border: '1px solid var(--line)',
-        background: 'var(--surface)',
-        padding: '8px 10px',
-      }}
+    <Paper
+      withBorder
+      p="md"
+      radius="md"
+      style={{ borderLeft: `5px solid ${color}`, background: 'var(--mantine-color-body)' }}
     >
       <AlertCard alert={alert} reasonLabels={reasonLabels} />
-    </div>
+    </Paper>
   )
 }
 

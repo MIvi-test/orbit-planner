@@ -16,7 +16,7 @@ export function PlanScreen() {
 
   if (data.isPending) {
     return (
-      <Stack gap="md" maw={1200}>
+      <Stack gap="md">
         <Title order={2}>План квартала</Title>
         <Skeleton height={320} />
       </Stack>
@@ -49,7 +49,7 @@ export function PlanScreen() {
   } | undefined
 
   return (
-    <Stack gap="md" maw={1200}>
+    <Stack gap="md">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
           <Title order={2}>План квартала</Title>
@@ -108,19 +108,19 @@ export function PlanScreen() {
 function Legend({ hasBaseline }: { hasBaseline: boolean }) {
   return (
     <Group gap="lg" wrap="wrap">
-      <LegendItem swatch={{ background: 'var(--ink)' }} label="назначена работа" />
-      <LegendItem swatch={{ background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} label="ожидание в окне задачи" />
+      <LegendItem swatch={{ background: 'var(--ink)' }} label="Назначена работа" />
+      <LegendItem swatch={{ background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} label="Ожидание в окне задачи" />
       <Text size="xs" c="dimmed">✓ — завершена по факту</Text>
       <LegendItem
         swatch={{
           background:
             'repeating-linear-gradient(45deg, var(--ink) 0, var(--ink) 3px, transparent 3px, transparent 6px)',
         }}
-        label="есть заём у другой команды"
+        label="Есть заём у другой команды"
       />
-      <LegendItem swatch={{ borderTop: '1px dashed var(--muted)', background: 'transparent' }} label="перенесена / отменена" />
+      <LegendItem swatch={{ borderTop: '1px dashed var(--muted)', background: 'transparent' }} label="Перенесена / отменена" />
       {hasBaseline && (
-        <LegendItem swatch={{ background: 'var(--muted)', height: 2, alignSelf: 'flex-end' }} label="базовая линия Недели 0" />
+        <LegendItem swatch={{ background: 'var(--muted)', height: 2, alignSelf: 'flex-end' }} label="Базовая линия Недели 0" />
       )}
     </Group>
   )

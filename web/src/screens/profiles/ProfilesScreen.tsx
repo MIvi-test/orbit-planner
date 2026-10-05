@@ -17,7 +17,7 @@ export function ProfilesScreen() {
 
   if (query.isPending) {
     return (
-      <Stack gap="md" maw={1200}>
+      <Stack gap="md">
         <Title order={2}>Профили</Title>
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <Skeleton height={360} />
@@ -29,7 +29,7 @@ export function ProfilesScreen() {
 
   if (query.error) {
     return (
-      <Stack gap="md" maw={1200}>
+      <Stack gap="md">
         <Title order={2}>Профили</Title>
         <QueryError error={query.error} title="Не удалось загрузить профили команд" />
       </Stack>
@@ -38,7 +38,7 @@ export function ProfilesScreen() {
 
   const rows = query.data?.items ?? []
   return (
-    <Stack gap="lg" maw={1200}>
+    <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
           <Title order={2}>Профили команд</Title>
@@ -76,7 +76,7 @@ function TeamProfile({ row, capacity, basis }: { row: TeamProfileRow; capacity?:
             </Text>
           </div>
           {row.part_time_members > 0 && (
-            <Badge variant="outline" color="gray">совместители: {row.part_time_members}</Badge>
+            <Badge variant="outline" color="gray">Совместители: {row.part_time_members}</Badge>
           )}
         </Group>
 
