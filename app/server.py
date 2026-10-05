@@ -65,6 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
+from app.assistant import providers
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -429,6 +430,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _upload(self, path: str) -> None:
+        if path.startswith("/api/assistant/profiles"):
+            self._assistant_profile_write(path)
+            return
         query = parse_qs(urlparse(self.path).query)
         try:
             if path == "/api/dataset":
@@ -576,8 +580,56 @@ class Handler(BaseHTTPRequestHandler):
         self._audited(f"POST {path}", "ok", run_id=(result.get("plan") or {}).get("run_id"))
         self._send_json(HTTPStatus.OK, result)
 
+    def _assistant_profile_write(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/profiles").strip("/").split("/")
+        try:
+            if path == "/api/assistant/profiles" and self.command == "POST":
+                profile_id = None
+            elif len(parts) == 1 and parts[0].isdigit() and self.command == "PUT":
+                profile_id = int(parts[0])
+            elif len(parts) == 2 and parts[0].isdigit() and parts[1] == "check" and self.command == "POST":
+                profile = providers.get(int(parts[0]))
+                if profile is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                    return
+                result = providers.check(profile)
+                providers.record_check(int(parts[0]), result)
+                self._audited("assistant_profile_check", "ok" if result["reachable"] else "failed",
+                              profile_id=int(parts[0]))
+                self._send_json(HTTPStatus.OK, result)
+                return
+            else:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise providers.ProfileError("profile body must be 1–16384 bytes")
+            raw = json.loads(self.rfile.read(length))
+            saved = providers.save(raw, profile_id)
+            if saved is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                return
+            self._audited("assistant_profile_save", "ok", profile_id=saved["profile_id"])
+            self._send_json(HTTPStatus.CREATED if profile_id is None else HTTPStatus.OK, saved)
+        except (providers.ProfileError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY,
+                            {"error": "invalid_profile", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_profile_failed", level="error", error=type(exc).__name__)
+            self._audited("assistant_profile_save", "failed", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "profile_unavailable", "message": "Profile operation failed"})
+
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
+        if path == "/api/assistant/profiles":
+            try:
+                self._send_json(HTTPStatus.OK, {"profiles": providers.list_profiles(self._principal)})
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_profiles_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "database_unavailable", "message": "Profiles are unavailable"})
+            return
         if path == "/api/health":
             public = self._is_public_caller()
             try:

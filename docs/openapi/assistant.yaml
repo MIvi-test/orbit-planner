@@ -91,7 +91,8 @@ paths:
                 properties:
                   reachable: { type: boolean }
                   structured_output: { type: boolean }
-                  detail: { type: string }
+                  model_digest: { type: string, description: 'Ollama model digest when available.' }
+                  error: { type: string, description: 'Stable error code; no provider body or secret.' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/ProviderUnavailable' }
   /api/assistant/prompts/default:
@@ -519,7 +520,11 @@ components:
         auth_header_name: { type: [string, 'null'] }
         api_key_ref: { type: [string, 'null'], description: 'Environment or mounted secret reference, never the key value.' }
         network_scope: { type: string, enum: [internal, external] }
-        capabilities: { type: object, additionalProperties: true }
+        capabilities:
+          type: object
+          properties:
+            json_mode: { type: boolean }
+          additionalProperties: false
         limits: { type: object, additionalProperties: true }
         min_role: { type: string, enum: [viewer, planner, admin] }
     ProviderProfile:
