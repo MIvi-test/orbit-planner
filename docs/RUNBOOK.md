@@ -235,8 +235,17 @@ git push origin develop --follow-tags
 ```bash
 docker compose up -d db
 docker compose run --rm migrate
-docker compose up -d --build app caddy backup
+docker compose up -d --build app assistant-worker caddy backup
 ```
+
+`assistant-worker` обрабатывает сохранённые задания чата отдельно от HTTP-сервера.
+Для Gemini/Groq/Qwen Cloud задайте нужный `*_API_KEY` в `.env`, затем создайте
+профиль через `POST /api/assistant/profiles` с `api_key_ref=env:ИМЯ_ПЕРЕМЕННОЙ`.
+Собственный OpenAI-совместимый сервер задаётся через `base_url`, `model` и
+`api_key_ref`; для локального Ollama допустим `auth_type=none`. После настройки
+вызовите `POST /api/assistant/profiles/{id}/check`. На локальном запуске `run.sh`
+поднимает worker автоматически; отдельно он запускается командой
+`python -m app.assistant.worker`.
 
 `backup` снимает PostgreSQL custom-format dump сразу после старта и далее раз
 в сутки. После каждого dump он восстанавливает архив во временную базу и
@@ -325,7 +334,7 @@ ticket. Затем примените миграции ровно одним job
 
 ```bash
 docker compose run --rm migrate
-docker compose up -d --build app
+docker compose up -d --build app assistant-worker
 docker compose up -d caddy prometheus grafana backup
 docker compose ps
 ```
@@ -393,7 +402,7 @@ SQL-миграции намеренно не имеют автоматическ
 из защищённого окружения и указывают на точные значения:
 
 ```bash
-docker compose stop app backup
+docker compose stop app assistant-worker backup
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -Fc --no-owner --no-privileges > pre-restore-emergency.dump
 docker compose exec -T db dropdb -U "$POSTGRES_USER" --if-exists "$POSTGRES_DB"
@@ -402,7 +411,7 @@ docker compose exec -T db pg_restore -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" --exit-on-error --no-owner --no-privileges \
   < /absolute/path/to/pi_planner-YYYYMMDDTHHMMSSZ.dump
 docker compose run --rm migrate
-docker compose up -d app backup
+docker compose up -d app assistant-worker backup
 ```
 
 Не используйте неразрешённые переменные или glob вместо конкретного имени dump.

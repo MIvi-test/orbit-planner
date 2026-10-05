@@ -58,6 +58,23 @@ def call(port: int, method: str, path: str, token: str | None = None, body: byte
     return result
 
 
+def test_viewer_chat_routes_receive_verified_principal(secured, monkeypatch) -> None:
+    port, _events = secured
+    seen = []
+    monkeypatch.setattr(server.conversations, "create", lambda principal, body: (
+        seen.append((principal.owner_key, body["scope"])) or {"conversation_id": "chat"}))
+    monkeypatch.setattr(server.conversations, "send_message", lambda principal, cid, body, key: (
+        seen.append((principal.owner_key, cid, key)) or {"job_id": "job", "status": "queued"}))
+    status, _, _ = call(port, "POST", "/api/assistant/conversations", "viewer-token-0123456789",
+                        json.dumps({"scope": "knowledge"}).encode())
+    assert status == 201
+    status, _, _ = call(port, "POST", "/api/assistant/conversations/chat/messages",
+                        "viewer-token-0123456789", json.dumps({"text": "привет"}).encode(),
+                        {"Idempotency-Key": "request-1"})
+    assert status == 202
+    assert seen == [("db:1", "knowledge"), ("db:1", "chat", "request-1")]
+
+
 # ------------------------------------------------------------------ S-1
 @pytest.mark.parametrize("path", [
     "/%2e%2e/%2e%2e/app/db.py",

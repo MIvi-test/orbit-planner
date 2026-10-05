@@ -107,4 +107,7 @@ if [ "${PI_PLANNER_AUTH:-required}" != "off" ] && [ -z "${PI_PLANNER_ADMIN_TOKEN
 fi
 
 echo "[run] сервис: http://127.0.0.1:${PORT}"
-exec $PY -m app.server --port "$PORT"
+$PY -m app.assistant.worker &
+ASSISTANT_WORKER_PID=$!
+trap 'kill "$ASSISTANT_WORKER_PID" 2>/dev/null || true; wait "$ASSISTANT_WORKER_PID" 2>/dev/null || true' EXIT
+$PY -m app.server --port "$PORT"

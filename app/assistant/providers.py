@@ -237,13 +237,18 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
         raise ProfileError("invalid messages")
     protocol = profile["protocol"]
     structured = bool(output_schema and profile.get("capabilities", {}).get("structured_output_verified"))
+    json_mode = bool(output_schema and profile.get("capabilities", {}).get("json_mode"))
     if protocol == "gemini":
         body: dict[str, Any] = {"contents": [{"role": "model" if m["role"] == "assistant" else "user",
                              "parts": [{"text": m["content"]}]} for m in messages],
                                 "systemInstruction": {"parts": [{"text": system}]},
                                 "generationConfig": {"maxOutputTokens": max_output_tokens}}
         if structured:
-            body["generationConfig"].update({"responseMimeType": "application/json", "responseSchema": output_schema})
+            gemini_schema = {key: value for key, value in output_schema.items()
+                             if key != "additionalProperties"}
+            body["generationConfig"].update({"responseMimeType": "application/json", "responseSchema": gemini_schema})
+        elif json_mode:
+            body["generationConfig"]["responseMimeType"] = "application/json"
     else:
         body = {"model": profile["model"], "messages": [{"role": "system", "content": system}, *messages],
                 "stream": False}
@@ -251,10 +256,15 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
             body["options"] = {"num_predict": max_output_tokens}
             if structured:
                 body["format"] = output_schema
+            elif json_mode:
+                body["format"] = "json"
         else:
             body["max_tokens"] = max_output_tokens
             if structured:
-                body["response_format"] = {"type": "json_schema", "json_schema": {"name": "answer", "schema": output_schema}}
+                body["response_format"] = {"type": "json_schema", "json_schema":
+                                           {"name": "answer", "strict": True, "schema": output_schema}}
+            elif json_mode:
+                body["response_format"] = {"type": "json_object"}
     response = _request_with_retry(profile, body, timeout)
     try:
         if protocol == "gemini":

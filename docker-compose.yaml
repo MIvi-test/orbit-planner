@@ -53,6 +53,10 @@ services:
       # обязателен; остальных пользователей создаёт tools/manage_users.py.
       PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
       PI_PLANNER_ADMIN_TOKEN: ${PI_PLANNER_ADMIN_TOKEN:?set PI_PLANNER_ADMIN_TOKEN in .env (openssl rand -hex 32)}
+      PI_PLANNER_INTERNAL_LLM_HOSTS: ${PI_PLANNER_INTERNAL_LLM_HOSTS:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
       PI_PLANNER_DSN: >-
         host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
         user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -74,6 +78,43 @@ services:
       - backend
       - frontend
       - monitoring
+
+  assistant-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.assistant.worker"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 120s
+    cpus: ${ASSISTANT_CPU_LIMIT:-0.5}
+    mem_limit: ${ASSISTANT_MEMORY_LIMIT:-512m}
+    pids_limit: 100
+    environment:
+      PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
+      PI_PLANNER_ADMIN_TOKEN: ${PI_PLANNER_ADMIN_TOKEN:?set PI_PLANNER_ADMIN_TOKEN in .env}
+      PI_PLANNER_INTERNAL_LLM_HOSTS: ${PI_PLANNER_INTERNAL_LLM_HOSTS:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      PI_PLANNER_DSN: >-
+        host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
+        user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      db:
+        condition: service_healthy
+      bootstrap-plan:
+        condition: service_completed_successfully
+    networks:
+      - backend
+      - frontend
 
   # seed.sql содержит исходный датасет, но не результат планировщика. Без этого
   # одноразового шага свежий контейнер показывает задачи и пустой экран KPI.

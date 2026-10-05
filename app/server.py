@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import prompts, providers
+from app.assistant import conversations, prompts, providers
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -430,6 +430,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _upload(self, path: str) -> None:
+        if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
+            self._assistant_write(path)
+            return
         if path.startswith("/api/assistant/profiles"):
             self._assistant_profile_write(path)
             return
@@ -646,8 +649,79 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
                             {"error": "prompt_unavailable", "message": "Prompt operation failed"})
 
+    def _assistant_body(self) -> Any:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise conversations.ChatError("invalid_body_size")
+            return json.loads(self.rfile.read(length))
+        except conversations.ChatError:
+            raise
+        except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            raise conversations.ChatError("invalid_json") from exc
+
+    def _assistant_write(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/").split("/")
+        try:
+            if parts == ["conversations"] and self.command == "POST":
+                result = conversations.create(self._principal, self._assistant_body())
+                status = HTTPStatus.CREATED
+            elif len(parts) == 3 and parts[0] == "conversations":
+                cid, operation = parts[1:]
+                if operation == "settings" and self.command == "PUT":
+                    result = conversations.settings(self._principal, cid, self._assistant_body())
+                    status = HTTPStatus.OK
+                elif operation == "context" and self.command == "POST":
+                    result = conversations.bind_context(self._principal, cid, self._assistant_body())
+                    status = HTTPStatus.OK
+                elif operation == "messages" and self.command == "POST":
+                    result = conversations.send_message(self._principal, cid, self._assistant_body(),
+                                                        self.headers.get("Idempotency-Key"))
+                    status = HTTPStatus.ACCEPTED
+                else:
+                    raise conversations.ChatError("route_not_found", 404)
+            elif len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel" and self.command == "POST":
+                result = conversations.cancel_job(self._principal, parts[1])
+                status = HTTPStatus.OK
+            else:
+                raise conversations.ChatError("route_not_found", 404)
+            self._audited("assistant_" + parts[0], "ok")
+            self._send_json(status, result)
+        except conversations.ChatError as exc:
+            self._send_json(HTTPStatus(exc.status), {"error": exc.code, "message": exc.code})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_write_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "assistant_unavailable", "message": "Assistant operation failed"})
+
+    def _assistant_read(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/").split("/")
+        query = parse_qs(urlparse(self.path).query)
+        cursor = self._query_param(query, "cursor")
+        try:
+            if parts == ["conversations"]:
+                result = conversations.list_conversations(self._principal, cursor)
+            elif len(parts) == 2 and parts[0] == "conversations":
+                result = conversations.get(self._principal, parts[1])
+            elif len(parts) == 3 and parts[0] == "conversations" and parts[2] == "messages":
+                result = conversations.list_messages(self._principal, parts[1], cursor)
+            elif len(parts) == 2 and parts[0] == "jobs":
+                result = conversations.get_job(self._principal, parts[1])
+            else:
+                raise conversations.ChatError("route_not_found", 404)
+            self._send_json(HTTPStatus.OK, result)
+        except conversations.ChatError as exc:
+            self._send_json(HTTPStatus(exc.status), {"error": exc.code, "message": exc.code})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_read_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "assistant_unavailable", "message": "Assistant operation failed"})
+
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
+        if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
+            self._assistant_read(path)
+            return
         if path in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
             try:
                 scope = "default" if path.endswith("/default") else "user"

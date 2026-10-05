@@ -613,7 +613,7 @@ components:
       required: [job_id, status]
       properties:
         job_id: { type: string, format: uuid }
-        status: { const: queued }
+        status: { type: string, enum: [queued, running, completed, failed, cancelled, expired], description: 'An idempotent retry may return the current status.' }
     Job:
       type: object
       required: [job_id, status, error]
