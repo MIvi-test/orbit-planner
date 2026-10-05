@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import providers
+from app.assistant import prompts, providers
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -433,6 +433,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/assistant/profiles"):
             self._assistant_profile_write(path)
             return
+        if path.startswith("/api/assistant/prompts/"):
+            self._assistant_prompt_write(path)
+            return
         query = parse_qs(urlparse(self.path).query)
         try:
             if path == "/api/dataset":
@@ -620,8 +623,40 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
                             {"error": "profile_unavailable", "message": "Profile operation failed"})
 
+    def _assistant_prompt_write(self, path: str) -> None:
+        if self.command != "PUT" or path not in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise prompts.PromptError("prompt body must be 1–16384 bytes")
+            raw = json.loads(self.rfile.read(length))
+            if not isinstance(raw, dict) or set(raw) != {"content"}:
+                raise prompts.PromptError("content is required")
+            scope = "default" if path.endswith("/default") else "user"
+            result = prompts.set_prompt(scope, raw["content"], self._principal)
+            self._audited("assistant_prompt_set", "ok", scope=scope, prompt_id=result["prompt_id"])
+            self._send_json(HTTPStatus.OK, result)
+        except (prompts.PromptError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY,
+                            {"error": "invalid_prompt", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_prompt_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "prompt_unavailable", "message": "Prompt operation failed"})
+
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
+        if path in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
+            try:
+                scope = "default" if path.endswith("/default") else "user"
+                self._send_json(HTTPStatus.OK, prompts.get(scope, self._principal))
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_prompt_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "prompt_unavailable", "message": "Prompt operation failed"})
+            return
         if path == "/api/assistant/profiles":
             try:
                 self._send_json(HTTPStatus.OK, {"profiles": providers.list_profiles(self._principal)})
