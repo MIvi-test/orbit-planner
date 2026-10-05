@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Group, Paper, SimpleGrid, Skeleton, Stack, Table, Text, Title, UnstyledButton } from '@mantine/core'
+import { Group, Paper, SimpleGrid, Skeleton, Stack, Table, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import type { ScreenId } from '../../hooks/useHashRoute'
 import {
@@ -52,14 +52,21 @@ function Legend() {
     ['post', 'Без оценки', 'Просто счётчик, норма не задана'],
   ]
   return (
-    <Group gap="lg" wrap="wrap" align="center">
-      <Text size="sm" fw={600}>Цвет плитки:</Text>
+    <Group gap={6} wrap="wrap" justify="flex-end">
+      <Text size="sm" c="dimmed">Цвета:</Text>
       {items.map(([color, title, hint]) => (
-        <Group key={color} gap={6} wrap="nowrap" title={hint}>
-          <span style={{ width: 14, height: 14, borderRadius: 3, background: `var(--mantine-color-${color}-6)`, display: 'inline-block' }} />
-          <Text size="sm">{title}</Text>
-          <Text size="sm" c="dimmed">{hint}</Text>
-        </Group>
+        <Tooltip key={color} label={hint} withArrow>
+          <Group
+            gap={6}
+            wrap="nowrap"
+            px={10}
+            py={3}
+            style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 999, cursor: 'help' }}
+          >
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: `var(--mantine-color-${color}-6)`, display: 'inline-block' }} />
+            <Text size="sm">{title}</Text>
+          </Group>
+        </Tooltip>
       ))}
     </Group>
   )
@@ -162,6 +169,8 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
         <AsOfLabel iso={alertsQ.data?.as_of ?? null} />
       </Group>
 
+      <Stack gap="xs">
+      <Legend />
       <SimpleGrid cols={{ base: 2, md: 3, xl: 6 }} spacing="md">
         <Tile
           label="Задач в квартале"
@@ -195,8 +204,7 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
           onClick={() => onNavigate('data')}
         />
       </SimpleGrid>
-
-      <Legend />
+      </Stack>
 
       <PlanSummary schedule={schedule} />
 
