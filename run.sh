@@ -50,11 +50,11 @@ if ! $PY tools/apply_sql.py --wait 10 >/dev/null 2>&1; then
     echo "[run] Поднимите базу сами и задайте PI_PLANNER_DSN." >&2
     exit 1
   fi
-  echo "[run] поднимаю PostgreSQL 17 в $RUNTIME (контейнер pi-planner-pg)"
+  echo "[run] поднимаю PostgreSQL 17 с pgvector в $RUNTIME (контейнер pi-planner-pg)"
   $RUNTIME start pi-planner-pg >/dev/null 2>&1 || \
     $RUNTIME run -d --name pi-planner-pg \
       -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pi_planner \
-      -p 5432:5432 postgres:17-alpine >/dev/null
+      -p 5432:5432 pgvector/pgvector:0.8.6-pg17-bookworm >/dev/null
   $PY tools/apply_sql.py --wait 90 || exit 1
 fi
 
@@ -66,6 +66,12 @@ if [ "$RESET" = 1 ] || ! $PY tools/apply_sql.py --check >/dev/null 2>&1; then
     db/01_schema.sql db/02_contract.sql build/seed.sql \
     db/03_substitutions.sql db/04_views.sql db/05_invariants.sql \
     db/06_migration_stamps.sql
+fi
+
+# Существующий том получает новые таблицы/расширения только через миграции.
+if ! $PY tools/migrate.py; then
+  echo "[run] миграция RAG требует pgvector для PostgreSQL 17; проверьте образ/расширение существующей базы." >&2
+  exit 1
 fi
 
 # ------------------------------------------------------------ базовый план
@@ -107,4 +113,7 @@ if [ "${PI_PLANNER_AUTH:-required}" != "off" ] && [ -z "${PI_PLANNER_ADMIN_TOKEN
 fi
 
 echo "[run] сервис: http://127.0.0.1:${PORT}"
-exec $PY -m app.server --port "$PORT"
+$PY -m app.assistant.worker &
+ASSISTANT_WORKER_PID=$!
+trap 'kill "$ASSISTANT_WORKER_PID" 2>/dev/null || true; wait "$ASSISTANT_WORKER_PID" 2>/dev/null || true' EXIT
+$PY -m app.server --port "$PORT"

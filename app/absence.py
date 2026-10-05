@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from app import db, planner
+from app.assistant import snapshots
 
 
 class ScenarioUnavailable(ValueError):
@@ -20,10 +21,12 @@ def evaluate(engineer_id: str, run_id: int) -> dict[str, Any]:
     if active is None or int(active["run_id"]) != run_id:
         raise ScenarioUnavailable("Сценарий доступен только для текущего опубликованного прогона")
 
-    inputs = planner.load_inputs()
+    try:
+        inputs, baseline, baseline_starts, options = snapshots.replay(snapshots.for_current_run(run_id))
+    except snapshots.SnapshotUnavailable as exc:
+        raise ScenarioUnavailable(str(exc)) from exc
     if engineer_id not in {row.engineer_id for row in inputs.engineers}:
         raise ValueError(f"инженер {engineer_id} не найден")
-    modes = active["params"] or {}
     scenario_inputs = replace(
         inputs,
         engineers=tuple(row for row in inputs.engineers if row.engineer_id != engineer_id),
@@ -31,21 +34,15 @@ def evaluate(engineer_id: str, run_id: int) -> dict[str, Any]:
         engineer_skills={key: value for key, value in inputs.engineer_skills.items()
                          if key != engineer_id},
     )
-    proposed = planner.build_plan(
-        scenario_inputs,
-        as_of_sprint=int(active["as_of_sprint"]),
-        baseline_starts=planner.load_baseline_starts(),
-        dependency_mode=modes.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE),
-        initiative_mode=modes.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
-        priority_strategy=modes.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY),
-        simulate_next_pi=False,
-    )
-    previous = db.query_dicts(
-        """SELECT s.task_id, s.decision, s.start_sprint, s.end_sprint, t.prodf_id
-           FROM plan_task_schedule s JOIN tasks t USING (task_id)
-           WHERE s.run_id = %s ORDER BY s.task_id""",
-        [run_id],
-    )
+    proposed = planner.build_plan(scenario_inputs, baseline_starts=baseline_starts, **options)
+    prodf_by_task = {task.task_id: task.prodf_id for task in inputs.tasks}
+    prodf_by_task.update(inputs.task_prodf)
+    previous = [
+        {"task_id": row.task_id, "decision": row.decision,
+         "start_sprint": row.start_sprint, "end_sprint": row.end_sprint,
+         "prodf_id": prodf_by_task.get(row.task_id, "unknown")}
+        for row in baseline.schedule
+    ]
     latest = db.query_one(
         """SELECT MAX(run_id) AS run_id FROM plan_runs
            WHERE status IN ('ok', 'infeasible')"""

@@ -114,6 +114,7 @@ if /i not "%PI_PLANNER_AUTH%"=="off" if not defined PI_PLANNER_ADMIN_TOKEN (
 )
 
 echo [run] стартую сервер на %APP_URL%
+start "PI Planner assistant worker" /min "%UV%" run --frozen --no-sync python -m app.assistant.worker
 rem Сервер поднимается в этом же окне и открыть вкладку сам не может: если
 rem открыть её сразу, браузер попадёт на ещё не слушающий порт. Поэтому
 rem вкладку открывает отдельный процесс через паузу, а мы сразу стартуем.

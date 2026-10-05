@@ -7,7 +7,7 @@ from typing import Any
 
 from app import db
 from app.planner.constants import ALGORITHM
-from app.planner.model import Plan
+from app.planner.model import Inputs, Plan
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,9 @@ class PlanValidationError(RuntimeError):
         super().__init__(f"прогон {run_id} не опубликован: {errors} ошибок приёмки")
 
 
-def write_plan(plan: Plan) -> int:
+def write_plan(plan: Plan, *, inputs: Inputs | None = None,
+               baseline_starts: dict[str, int] | None = None,
+               options: dict[str, Any] | None = None) -> int:
     """Пишет и проверяет контракт в одной транзакции; публикует только без ошибок.
 
     `is_loan` не пишем никогда — это генерируемая колонка (см. RUNBOOK, раздел 6).
@@ -266,6 +268,13 @@ def write_plan(plan: Plan) -> int:
                    WHERE run_id = %s""",
                 (plan.status, run_id),
             )
+            if inputs is not None:
+                from app.assistant import snapshots
+
+                if options is None:
+                    raise ValueError("snapshot options are required for a published plan")
+                snapshots.save(cur, run_id, inputs, plan,
+                               baseline_starts=baseline_starts or {}, options=options)
     if violations:
         raise PlanValidationError(run_id, len(violations), sample)
     return run_id

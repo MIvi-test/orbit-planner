@@ -50,12 +50,22 @@ class Principal:
     name: str
     role: str
     source: str  # env | db | anonymous
+    user_id: int | None = None
 
     def allows(self, required: str) -> bool:
         return RANK[self.role] >= RANK[required]
 
     def as_dict(self) -> dict[str, str]:
         return {"name": self.name, "role": self.role, "source": self.source}
+
+    @property
+    def owner_key(self) -> str:
+        """Stable, namespace-separated owner identity for assistant resources."""
+        if self.source == "db":
+            if self.user_id is None:
+                raise ValueError("database principal has no user_id")
+            return f"db:{self.user_id}"
+        return "env:admin" if self.source == "env" else "anonymous:local"
 
 
 ANONYMOUS = Principal("anonymous", "admin", "anonymous")
@@ -107,13 +117,13 @@ def authenticate(header: str | None) -> Principal | None:
 
     try:
         row = db.query_one(
-            "SELECT name, role FROM app_users WHERE token_sha256 = %s AND active", (digest,)
+            "SELECT user_id, name, role FROM public.app_users WHERE token_sha256 = %s AND active", (digest,)
         )
     except Exception as exc:  # noqa: BLE001 — база недоступна: это не «неверный токен»
         raise AuthUnavailable(str(exc)) from exc
     if row is None:
         return None
-    return Principal(str(row["name"]), str(row["role"]), "db")
+    return Principal(str(row["name"]), str(row["role"]), "db", int(row["user_id"]))
 
 
 # ---------------------------------------------------------------- политика
@@ -125,10 +135,33 @@ PLANNER_POST = ("/api/actuals", "/api/actuals/role-review", "/api/tasks/goal-con
                 "/api/initiatives/priority", "/api/dq-issues/review")
 
 
+def _assistant_required_role(method: str, path: str) -> str:
+    parts = path.removeprefix("/api/assistant/").split("/")
+    if not parts or parts == [""]:
+        return "admin"
+    if parts[0] == "profiles":
+        return "viewer" if method in ("GET", "HEAD") else "admin"
+    if parts[0] == "prompts":
+        if len(parts) == 2 and parts[1] == "me":
+            return "viewer"
+        return "viewer" if method in ("GET", "HEAD") else "admin"
+    if parts[0] == "kb":
+        return "admin"
+    if parts[0] == "conversations":
+        if len(parts) == 4 and parts[3] == "compare" and parts[2] == "scenarios":
+            return "planner"
+        return "viewer"
+    if parts[0] in ("jobs", "evidence"):
+        return "viewer"
+    return "admin"
+
+
 def required_role(method: str, path: str) -> str | None:
     """Какая роль нужна для маршрута. None — доступ без токена."""
     if not path.startswith("/api/"):
         return None  # статика фронта: секретов в ней нет
+    if path.startswith("/api/assistant/"):
+        return _assistant_required_role(method, path)
     if method in ("GET", "HEAD"):
         if path in PUBLIC_GET:
             return None

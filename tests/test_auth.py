@@ -25,7 +25,9 @@ def secured(monkeypatch):
     monkeypatch.setenv("PI_PLANNER_AUTH", "required")
     monkeypatch.setenv("PI_PLANNER_ADMIN_TOKEN", ADMIN_TOKEN)
     monkeypatch.setattr(auth.db, "query_one", lambda sql, params=None: (
-        {"name": USERS[params[0]][0], "role": USERS[params[0]][1]} if params and params[0] in USERS else None
+        {"user_id": {"vera": 1, "pavel": 2, "alla": 3}[USERS[params[0]][0]],
+         "name": USERS[params[0]][0], "role": USERS[params[0]][1]}
+        if params and params[0] in USERS else None
     ))
     events: list[tuple] = []
     monkeypatch.setattr(auth.db, "execute_write", lambda sql, params=None, **kw: events.append(tuple(params or ())) or 1)
@@ -54,6 +56,72 @@ def call(port: int, method: str, path: str, token: str | None = None, body: byte
     result = (response.status, dict(response.getheaders()), data)
     conn.close()
     return result
+
+
+def test_viewer_chat_routes_receive_verified_principal(secured, monkeypatch) -> None:
+    port, _events = secured
+    seen = []
+    monkeypatch.setattr(server.conversations, "create", lambda principal, body: (
+        seen.append((principal.owner_key, body["scope"])) or {"conversation_id": "chat"}))
+    monkeypatch.setattr(server.conversations, "send_message", lambda principal, cid, body, key: (
+        seen.append((principal.owner_key, cid, key)) or {"job_id": "job", "status": "queued"}))
+    status, _, _ = call(port, "POST", "/api/assistant/conversations", "viewer-token-0123456789",
+                        json.dumps({"scope": "knowledge"}).encode())
+    assert status == 201
+    status, _, _ = call(port, "POST", "/api/assistant/conversations/chat/messages",
+                        "viewer-token-0123456789", json.dumps({"text": "привет"}).encode(),
+                        {"Idempotency-Key": "request-1"})
+    assert status == 202
+    assert seen == [("db:1", "knowledge"), ("db:1", "chat", "request-1")]
+
+
+def test_kb_management_requires_admin(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.knowledge, "status", lambda: {"revision": None, "documents": 0})
+    monkeypatch.setattr(server.knowledge, "enqueue", lambda principal: {
+        "job_id": principal.owner_key, "status": "queued"})
+    status, _, _ = call(port, "GET", "/api/assistant/kb/status", "viewer-token-0123456789")
+    assert status == 403
+    status, _, body = call(port, "GET", "/api/assistant/kb/status", ADMIN_TOKEN)
+    assert status == 200 and json.loads(body)["documents"] == 0
+    status, _, body = call(port, "POST", "/api/assistant/kb/reindex", ADMIN_TOKEN)
+    assert status == 202 and json.loads(body)["job_id"] == "env:admin"
+
+
+def test_evidence_route_uses_verified_owner(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.evidence, "get", lambda principal, eid: {
+        "owner": principal.owner_key, "evidence_id": eid})
+    status, _, body = call(port, "GET", "/api/assistant/evidence/record-1",
+                           "viewer-token-0123456789")
+    assert status == 200
+    assert json.loads(body) == {"owner": "db:1", "evidence_id": "record-1"}
+
+
+def test_scenario_route_requires_planner_role(secured, monkeypatch) -> None:
+    port, _events = secured
+    seen = []
+    monkeypatch.setattr(server.scenarios, "enqueue", lambda principal, cid, body, key: (
+        seen.append((principal.owner_key, cid, key)) or {"job_id": "job", "status": "queued"}))
+    body = json.dumps({"expected_context_revision": 1, "alternatives": [{"measures": []}]}).encode()
+    path = "/api/assistant/conversations/chat/scenarios/compare"
+    status, _, _ = call(port, "POST", path, "viewer-token-0123456789", body,
+                        {"Idempotency-Key": "scenario-1"})
+    assert status == 403
+    status, _, _ = call(port, "POST", path, "planner-token-012345678", body,
+                        {"Idempotency-Key": "scenario-1"})
+    assert status == 202
+    assert seen == [("db:2", "chat", "scenario-1")]
+
+
+def test_recommendations_route_is_owned(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.recommendations, "list_for_conversation", lambda principal, cid: {
+        "owner": principal.owner_key, "conversation": cid, "recommendations": []})
+    status, _, body = call(port, "GET", "/api/assistant/conversations/chat/recommendations",
+                           "viewer-token-0123456789")
+    assert status == 200
+    assert json.loads(body)["owner"] == "db:1"
 
 
 # ------------------------------------------------------------------ S-1

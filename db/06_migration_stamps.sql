@@ -42,5 +42,18 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0071_source_trace', 'baseline'),
   ('0072_pi_contexts', 'baseline'),
   ('0073_engineer_calendar_qualifications', 'baseline'),
-  ('0074_upload_revisions', 'baseline')
+  ('0074_upload_revisions', 'baseline'),
+  ('0075_assistant_foundation', 'baseline'),
+  ('0076_assistant_knowledge', 'baseline')
 ON CONFLICT (version) DO NOTHING;
+
+-- The seed is loaded after db/01_schema.sql. Register its first generation now.
+INSERT INTO public.assistant_dataset_generations
+    (generation_id, schema_name, pi_id, scenario_id, source_sha256)
+SELECT gen_random_uuid(), current_schema(), p.pi_id, 'main',
+       COALESCE((SELECT b.source_sha256 FROM load_batches b
+                 ORDER BY b.batch_id DESC LIMIT 1), 'unloaded')
+FROM pi_periods p
+WHERE NOT EXISTS (SELECT 1 FROM public.assistant_dataset_generations g
+                  WHERE g.schema_name = current_schema() AND g.active)
+ORDER BY p.pi_id LIMIT 1;

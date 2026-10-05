@@ -209,7 +209,7 @@ docker compose logs --since=10m backup
 
 ```bash
 docker compose run --rm migrate
-docker compose up -d --build app
+docker compose up -d --build app assistant-worker
 docker compose up -d caddy prometheus grafana backup
 docker compose ps
 ```
@@ -277,7 +277,7 @@ SQL-миграции намеренно не имеют автоматическ
 `POSTGRES_USER` и `POSTGRES_DB` экспортированы из защищённого окружения:
 
 ```bash
-docker compose stop app backup
+docker compose stop app assistant-worker backup
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -Fc --no-owner --no-privileges > pre-restore-emergency.dump
 docker compose exec -T db dropdb -U "$POSTGRES_USER" --if-exists "$POSTGRES_DB"
@@ -286,7 +286,7 @@ docker compose exec -T db pg_restore -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" --exit-on-error --no-owner --no-privileges \
   < /absolute/path/to/pi_planner-YYYYMMDDTHHMMSSZ.dump
 docker compose run --rm migrate
-docker compose up -d app backup
+docker compose up -d app assistant-worker backup
 ```
 
 Подставляйте конкретное имя дампа, не glob. После восстановления повторите
@@ -302,6 +302,36 @@ docker compose up -d app backup
 | еженедельно | место на дисках и томах, сработавшие алерты | запас диска не меньше 30%, critical нет |
 | ежемесячно | ручное восстановление в изолированную базу | схема и ключевые таблицы читаются |
 | перед обновлением образов | примечания к релизу и копия | есть проверенный дамп и план отката |
+
+### 5.9. ИИ-помощник «Омниссия»
+
+`assistant-worker` обрабатывает сохранённые задания чата отдельно от HTTP-сервера.
+Контракт API — [openapi/assistant.yaml](openapi/assistant.yaml), правила ответа —
+[ASSISTANT_RULES.md](ASSISTANT_RULES.md), запуск бэкенда — [ASSISTANT_RUNBOOK.md](ASSISTANT_RUNBOOK.md).
+
+* Для Gemini, Groq и Qwen Cloud задайте нужный `*_API_KEY` в `.env`, затем создайте профиль
+  через `POST /api/assistant/profiles` с `api_key_ref=env:ИМЯ_ПЕРЕМЕННОЙ` (в интерфейсе —
+  «Омниссия» → «Настройки» → «Профили моделей»). Собственный OpenAI-совместимый сервер
+  задаётся через `base_url`, `model` и `api_key_ref`; для локального Ollama допустим
+  `auth_type=none`. После настройки вызовите `POST /api/assistant/profiles/{id}/check`.
+* На локальном запуске `run.sh` поднимает worker автоматически; отдельно он запускается
+  командой `python -m app.assistant.worker`.
+* База знаний использует PostgreSQL 17 на образе `pgvector/pgvector` с тем же томом данных.
+  После обновления образа выполните `docker compose run --rm migrate`: миграция создаёт
+  расширение `vector`, не заменяя существующий volume.
+* Локальные эмбеддинги:
+
+```bash
+docker compose --profile rag-local up -d ollama
+docker compose --profile rag-local exec ollama ollama pull embeddinggemma
+docker compose exec app python tools/index_assistant_kb.py
+```
+
+Последняя команда индексирует только `docs/assistant_kb_manifest.json`; повторная индексация
+неизменённых документов сохраняет их версии и активную ревизию. Администратор также может
+запустить её через `POST /api/assistant/kb/reindex` и проверить `GET /api/assistant/kb/status`.
+Для собственного внутреннего Ollama задайте `PI_PLANNER_KB_EMBED_BASE_URL` и добавьте его хост в
+`PI_PLANNER_INTERNAL_LLM_HOSTS`.
 
 ## 6. Проверка работоспособности
 

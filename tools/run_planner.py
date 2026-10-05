@@ -134,14 +134,14 @@ def _run_locked(args: argparse.Namespace) -> int:
     baseline_starts = planner.load_baseline_starts() if args.as_of_sprint > 0 else {}
     load_baseline_seconds = time.perf_counter() - phase_started
     phase_started = time.perf_counter()
-    plan = planner.build_plan(
-        inputs,
-        as_of_sprint=args.as_of_sprint,
-        baseline_starts=baseline_starts,
-        dependency_mode=args.dependency_mode,
-        priority_strategy=args.priority_strategy,
-        initiative_mode=args.initiative_mode,
-    )
+    options = {
+        "as_of_sprint": args.as_of_sprint,
+        "dependency_mode": args.dependency_mode,
+        "priority_strategy": args.priority_strategy,
+        "initiative_mode": args.initiative_mode,
+        "simulate_next_pi": True,
+    }
+    plan = planner.build_plan(inputs, baseline_starts=baseline_starts, **options)
     build_plan_seconds = time.perf_counter() - phase_started
     plan.params["observability"] = {
         "load_inputs_seconds": round(load_inputs_seconds, 6),
@@ -179,7 +179,7 @@ def _run_locked(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        run_id = planner.write_plan(plan)
+        run_id = planner.write_plan(plan, inputs=inputs, baseline_starts=baseline_starts, options=options)
     except planner.PlanValidationError as exc:
         print(str(exc), file=sys.stderr)
         for row in exc.violations:

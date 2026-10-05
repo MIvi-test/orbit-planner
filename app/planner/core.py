@@ -785,6 +785,7 @@ def build_plan(
             "dependency_mode": dependency_mode,
             "initiative_mode": initiative_mode,
             "priority_strategy": priority_strategy,
+            "simulate_next_pi": simulate_next_pi,
             "business_priorities": sorted({item.prodf_id for item in inputs.tasks if item.business_priority is not None}),
             "replan_floor": replan_floor,
             "sp_model": "joint",
@@ -959,6 +960,7 @@ def _assemble(
         "estimate_validated": inputs.estimate_validated,
         "role_demand_snapshot_version": 1,
         "formula_version": FORMULA_VERSION,
+        "simulate_next_pi": (modes or {}).get("simulate_next_pi", True),
         "baseline_run_id": inputs.baseline_run_id,
         "estimate_conflicts": inputs.estimate_conflicts,
         "estimate_conflicts_note": (

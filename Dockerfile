@@ -37,6 +37,8 @@ RUN --mount=type=cache,target=/home/app/.cache/uv,uid=10001,gid=10001 \
 
 COPY --chown=app:app app/ ./app/
 COPY --chown=app:app db/ ./db/
+COPY --chown=app:app docs/assistant_kb_manifest.json docs/SYSTEM_GUIDE.md \
+    docs/PLANNER_SPEC.md docs/ASSISTANT_RULES.md docs/DECISIONS.md ./docs/
 COPY --chown=app:app etl/ ./etl/
 COPY --chown=app:app tools/ ./tools/
 COPY --chown=app:app dsn.example.json ./

@@ -65,6 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
+from app.assistant import conversations, evidence, knowledge, prompts, providers, recommendations, scenarios
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -245,7 +246,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._gate(path):
                 pass  # ответ 401/403/429 уже отправлен
             elif path.startswith("/api/") or path == "/metrics":
-                if path in ("/api/livez", "/api/version", "/api/me", "/api/pi-contexts", "/metrics"):
+                if (path in ("/api/livez", "/api/version", "/api/me", "/api/pi-contexts", "/metrics")
+                        or path.startswith("/api/assistant/")):
                     self._api(path)
                 else:
                     try:
@@ -299,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
         METRICS.enter()
         try:
             if self._gate(path):
-                if path == "/api/pi-contexts":
+                if path == "/api/pi-contexts" or path.startswith("/api/assistant/"):
                     self._upload(path)
                 else:
                     try:
@@ -332,6 +334,15 @@ class Handler(BaseHTTPRequestHandler):
                 bytes=self._bytes,
                 client=self.address_string(),
             )
+
+    def do_PUT(self) -> None:  # noqa: N802
+        """Assistant settings use PUT; reuse the authenticated write envelope."""
+        path = urlparse(self.path).path
+        if not path.startswith("/api/assistant/"):
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED,
+                            {"error": "method_not_allowed", "message": path})
+            return
+        self.do_POST()
 
     # ------------------------------------------------------------ доступ (S-2)
     _principal: auth.Principal = auth.ANONYMOUS
@@ -419,6 +430,18 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _upload(self, path: str) -> None:
+        if path == "/api/assistant/kb/reindex":
+            self._assistant_kb_reindex()
+            return
+        if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
+            self._assistant_write(path)
+            return
+        if path.startswith("/api/assistant/profiles"):
+            self._assistant_profile_write(path)
+            return
+        if path.startswith("/api/assistant/prompts/"):
+            self._assistant_prompt_write(path)
+            return
         query = parse_qs(urlparse(self.path).query)
         try:
             if path == "/api/dataset":
@@ -566,8 +589,191 @@ class Handler(BaseHTTPRequestHandler):
         self._audited(f"POST {path}", "ok", run_id=(result.get("plan") or {}).get("run_id"))
         self._send_json(HTTPStatus.OK, result)
 
+    def _assistant_profile_write(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/profiles").strip("/").split("/")
+        try:
+            if path == "/api/assistant/profiles" and self.command == "POST":
+                profile_id = None
+            elif len(parts) == 1 and parts[0].isdigit() and self.command == "PUT":
+                profile_id = int(parts[0])
+            elif len(parts) == 2 and parts[0].isdigit() and parts[1] == "check" and self.command == "POST":
+                profile = providers.get(int(parts[0]))
+                if profile is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                    return
+                result = providers.check(profile)
+                providers.record_check(int(parts[0]), result)
+                self._audited("assistant_profile_check", "ok" if result["reachable"] else "failed",
+                              profile_id=int(parts[0]))
+                self._send_json(HTTPStatus.OK, result)
+                return
+            else:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise providers.ProfileError("profile body must be 1–16384 bytes")
+            raw = json.loads(self.rfile.read(length))
+            saved = providers.save(raw, profile_id)
+            if saved is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                return
+            self._audited("assistant_profile_save", "ok", profile_id=saved["profile_id"])
+            self._send_json(HTTPStatus.CREATED if profile_id is None else HTTPStatus.OK, saved)
+        except (providers.ProfileError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY,
+                            {"error": "invalid_profile", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_profile_failed", level="error", error=type(exc).__name__)
+            self._audited("assistant_profile_save", "failed", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "profile_unavailable", "message": "Profile operation failed"})
+
+    def _assistant_prompt_write(self, path: str) -> None:
+        if self.command != "PUT" or path not in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise prompts.PromptError("prompt body must be 1–16384 bytes")
+            raw = json.loads(self.rfile.read(length))
+            if not isinstance(raw, dict) or set(raw) != {"content"}:
+                raise prompts.PromptError("content is required")
+            scope = "default" if path.endswith("/default") else "user"
+            result = prompts.set_prompt(scope, raw["content"], self._principal)
+            self._audited("assistant_prompt_set", "ok", scope=scope, prompt_id=result["prompt_id"])
+            self._send_json(HTTPStatus.OK, result)
+        except (prompts.PromptError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY,
+                            {"error": "invalid_prompt", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_prompt_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "prompt_unavailable", "message": "Prompt operation failed"})
+
+    def _assistant_body(self) -> Any:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 16384:
+                raise conversations.ChatError("invalid_body_size")
+            return json.loads(self.rfile.read(length))
+        except conversations.ChatError:
+            raise
+        except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            raise conversations.ChatError("invalid_json") from exc
+
+    def _assistant_write(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/").split("/")
+        try:
+            if parts == ["conversations"] and self.command == "POST":
+                result = conversations.create(self._principal, self._assistant_body())
+                status = HTTPStatus.CREATED
+            elif (len(parts) == 4 and parts[0] == "conversations"
+                  and parts[2:] == ["scenarios", "compare"] and self.command == "POST"):
+                result = scenarios.enqueue(self._principal, parts[1], self._assistant_body(),
+                                           self.headers.get("Idempotency-Key"))
+                status = HTTPStatus.ACCEPTED
+            elif len(parts) == 3 and parts[0] == "conversations":
+                cid, operation = parts[1:]
+                if operation == "settings" and self.command == "PUT":
+                    result = conversations.settings(self._principal, cid, self._assistant_body())
+                    status = HTTPStatus.OK
+                elif operation == "context" and self.command == "POST":
+                    result = conversations.bind_context(self._principal, cid, self._assistant_body())
+                    status = HTTPStatus.OK
+                elif operation == "messages" and self.command == "POST":
+                    result = conversations.send_message(self._principal, cid, self._assistant_body(),
+                                                        self.headers.get("Idempotency-Key"))
+                    status = HTTPStatus.ACCEPTED
+                else:
+                    raise conversations.ChatError("route_not_found", 404)
+            elif len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel" and self.command == "POST":
+                result = conversations.cancel_job(self._principal, parts[1])
+                status = HTTPStatus.OK
+            else:
+                raise conversations.ChatError("route_not_found", 404)
+            self._audited("assistant_" + parts[0], "ok")
+            self._send_json(status, result)
+        except conversations.ChatError as exc:
+            self._send_json(HTTPStatus(exc.status), {"error": exc.code, "message": exc.code})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_write_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "assistant_unavailable", "message": "Assistant operation failed"})
+
+    def _assistant_read(self, path: str) -> None:
+        parts = path.removeprefix("/api/assistant/").split("/")
+        query = parse_qs(urlparse(self.path).query)
+        cursor = self._query_param(query, "cursor")
+        try:
+            if parts == ["conversations"]:
+                result = conversations.list_conversations(self._principal, cursor)
+            elif len(parts) == 2 and parts[0] == "conversations":
+                result = conversations.get(self._principal, parts[1])
+            elif len(parts) == 3 and parts[0] == "conversations" and parts[2] == "messages":
+                result = conversations.list_messages(self._principal, parts[1], cursor)
+            elif len(parts) == 3 and parts[0] == "conversations" and parts[2] == "recommendations":
+                result = recommendations.list_for_conversation(self._principal, parts[1])
+            elif len(parts) == 2 and parts[0] == "jobs":
+                result = conversations.get_job(self._principal, parts[1])
+            elif len(parts) == 2 and parts[0] == "evidence":
+                result = evidence.get(self._principal, parts[1])
+            else:
+                raise conversations.ChatError("route_not_found", 404)
+            self._send_json(HTTPStatus.OK, result)
+        except conversations.ChatError as exc:
+            self._send_json(HTTPStatus(exc.status), {"error": exc.code, "message": exc.code})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_read_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "assistant_unavailable", "message": "Assistant operation failed"})
+
+    def _assistant_kb_reindex(self) -> None:
+        try:
+            result = knowledge.enqueue(self._principal)
+            self._audited("assistant_kb_reindex", "queued", job_id=result["job_id"])
+            self._send_json(HTTPStatus.ACCEPTED, result)
+        except knowledge.KnowledgeError as exc:
+            status = HTTPStatus.CONFLICT if str(exc) == "knowledge_reindex_busy" else HTTPStatus.UNPROCESSABLE_ENTITY
+            self._send_json(status, {"error": str(exc), "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_kb_reindex_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "knowledge_unavailable", "message": "Knowledge indexing unavailable"})
+
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
+        if path == "/api/assistant/kb/status":
+            try:
+                self._send_json(HTTPStatus.OK, knowledge.status())
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_kb_status_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "knowledge_unavailable", "message": "Knowledge status unavailable"})
+            return
+        if (path.startswith("/api/assistant/conversations")
+                or path.startswith("/api/assistant/jobs/")
+                or path.startswith("/api/assistant/evidence/")):
+            self._assistant_read(path)
+            return
+        if path in ("/api/assistant/prompts/default", "/api/assistant/prompts/me"):
+            try:
+                scope = "default" if path.endswith("/default") else "user"
+                self._send_json(HTTPStatus.OK, prompts.get(scope, self._principal))
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_prompt_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "prompt_unavailable", "message": "Prompt operation failed"})
+            return
+        if path == "/api/assistant/profiles":
+            try:
+                self._send_json(HTTPStatus.OK, {"profiles": providers.list_profiles(self._principal)})
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_profiles_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "database_unavailable", "message": "Profiles are unavailable"})
+            return
         if path == "/api/health":
             public = self._is_public_caller()
             try:

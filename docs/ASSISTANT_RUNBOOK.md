@@ -1,0 +1,147 @@
+# Помощник PI Planner: запуск бэкенда
+
+Полный контракт запросов и ответов — [OpenAPI](openapi/assistant.yaml). Чат хранит историю и
+закрепляет ревизию контекста, версии двух обязательных промптов, профиль модели и ревизию
+базы знаний. Справочный чат работает без прогона. Плановый чат читает сохранённый снимок;
+сценарии не изменяют опубликованный план.
+
+## Запуск
+
+1. Задайте `POSTGRES_PASSWORD` и `PI_PLANNER_ADMIN_TOKEN` в `.env`. Пустые `*_API_KEY`
+   допустимы, если используются только локальные модели.
+2. Для существующего тома PostgreSQL обновите образ БД и примените миграции:
+
+   ```bash
+   docker compose up -d db
+   docker compose run --rm migrate
+   docker compose up -d --build app assistant-worker caddy
+   ```
+
+   База использует PostgreSQL 17 с pgvector и сохраняет прежний `postgres_data`.
+   Не запускайте приложение поверх старого образа PostgreSQL без расширения `vector`.
+3. Для локального поиска правил поднимите Ollama, установите модель эмбеддингов и
+   проиндексируйте разрешённые документы:
+
+   ```bash
+   docker compose --profile rag-local up -d ollama
+   docker compose --profile rag-local exec ollama ollama pull embeddinggemma
+   docker compose exec app python tools/index_assistant_kb.py
+   ```
+
+   Альтернатива последней команде — `POST /api/assistant/kb/reindex` с ролью `admin`;
+   состояние — `GET /api/assistant/kb/status`. Индексируются только файлы из
+   `docs/assistant_kb_manifest.json`. Нужна установленная модель эмбеддингов: код не
+   скачивает её автоматически. Если индекс ещё не готов, чат явно сообщает об этом.
+
+## Профили модели
+
+Профиль создаёт администратор через `POST /api/assistant/profiles`. В базе хранится
+`api_key_ref`, а не значение ключа. После создания вызовите
+`POST /api/assistant/profiles/{profileId}/check`; затем выберите ID профиля при
+создании чата. Для облачной модели используйте `privacy_mode=configured`, для
+локального сервера — `local_only`.
+
+Пример Groq:
+
+```json
+{
+  "name": "groq-main",
+  "protocol": "openai_compatible",
+  "base_url": "https://api.groq.com/openai/v1",
+  "model": "YOUR_GROQ_MODEL",
+  "auth_type": "bearer",
+  "api_key_ref": "env:GROQ_API_KEY",
+  "network_scope": "external"
+}
+```
+
+Пример Gemini: `protocol=gemini`, `base_url=https://generativelanguage.googleapis.com/v1beta`,
+`model=YOUR_GEMINI_MODEL`, `auth_type=header`, `auth_header_name=x-goog-api-key`,
+`api_key_ref=env:GEMINI_API_KEY`, `network_scope=external`.
+
+Для Qwen Cloud или своего OpenAI-совместимого сервера укажите `protocol=openai_compatible`,
+**собственный** корневой `base_url`, имя модели и тип авторизации. Сервис добавляет
+`/chat/completions` к корневому адресу. Если сервер принимает Bearer-токен,
+используйте `auth_type=bearer` и `api_key_ref=env:QWEN_API_KEY` либо другую переменную.
+Если авторизации нет, используйте `auth_type=none` и не передавайте `api_key_ref`.
+Внутренний hostname нужно перечислить в `PI_PLANNER_INTERNAL_LLM_HOSTS`; внешний
+endpoint должен использовать HTTPS. Не записывайте ключ в `base_url` или JSON профиля.
+
+Для локального Qwen через Ollama:
+
+```bash
+docker compose --profile rag-local exec ollama ollama pull qwen3.5:9b
+```
+
+```json
+{
+  "name": "qwen-local",
+  "protocol": "ollama",
+  "base_url": "http://ollama:11434",
+  "model": "qwen3.5:9b",
+  "auth_type": "none",
+  "network_scope": "internal"
+}
+```
+
+Из контейнера `localhost` означает сам контейнер приложения; для соседнего сервиса
+используйте `ollama`, а для отдельного хоста — доступное контейнеру имя и allowlist.
+Память/скорость локальной модели зависят от железа; `OLLAMA_MEMORY_LIMIT` можно менять.
+
+## Чат, промпты и сценарии
+
+Администратор редактирует единственный дефолтный промпт через
+`PUT /api/assistant/prompts/default`; пользователь свой обязательный личный промпт —
+через `PUT /api/assistant/prompts/me` с телом `{"content":"..."}`. Прежние версии
+остаются в истории запросов. Текст промпта не меняет роль и права пользователя.
+
+Создайте справочный чат `POST /api/assistant/conversations` с телом:
+
+```json
+{"scope":"knowledge","provider_profile_id":1,"privacy_mode":"configured"}
+```
+
+Для планового чата используйте `scope=planning` и добавьте `pi_id`, `scenario_id`,
+`run_id`. Отправьте `POST /api/assistant/conversations/{conversationId}/messages`
+с заголовком `Idempotency-Key` и телом:
+
+```json
+{"text":"Почему команда ALPHA не укладывается?","expected_context_revision":1,"expected_last_message_id":null}
+```
+
+Ответ `202` содержит `job_id`; состояние и результат читайте через
+`GET /api/assistant/jobs/{jobId}`, историю — через
+`GET /api/assistant/conversations/{conversationId}/messages`. Продолжение разговора
+передаёт ID последнего сообщения и ту же ревизию контекста. При выборе нового
+прогона используйте `POST .../context`: старая история и основания сохраняются.
+`GET /api/assistant/evidence/{evidenceId}` возвращает сохранённое основание только
+владельцу чата.
+
+Расчёт мер требует роли `planner` и планового чата. Пример для
+`POST /api/assistant/conversations/{conversationId}/scenarios/compare` с
+`Idempotency-Key`:
+
+```json
+{
+  "expected_context_revision": 1,
+  "alternatives": [
+    {"measures": [{"kind":"hire","role_id":7,"team_id":"ALPHA","rate":0.5,
+                   "start_sprint":2,"hiring_lag_sprints":1,"skill_ids":[]}]},
+    {"measures": [{"kind":"loan","engineer_id":"ENG-1","team_id":"ALPHA",
+                   "rate":0.5,"start_sprint":2}]}
+  ]
+}
+```
+
+`skill_ids` должны покрывать требования роли; пустой массив годится только если
+подтверждённых обязательных навыков нет. Для `train` дополнительно передайте
+`trainee_id`, `mentor_id`, `training_sprints` и `mentor_rate`. До трёх альтернатив,
+до пяти мер в каждой. Совместный пакет указывается одним массивом `measures`, его
+эффект вычисляется заново. Последняя проверенная комбинация доступна чату для
+объяснения; список советов и их актуальность — в `GET .../recommendations`.
+Повторный расчёт прежней альтернативы может содержать `supersedes` с ID совета.
+
+Ошибки сценария и недоступные источники возвращаются явными статусами job.
+`verified_by_scenario` относится только к успешно пересчитанному пакету.
+КPI `bus_factor` в сценарии помечается `unavailable`, поскольку текущая формула
+не пересчитывает состав носителей навыков по каждому спринту.
