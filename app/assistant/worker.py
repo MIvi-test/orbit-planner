@@ -205,11 +205,15 @@ def process(job: dict[str, Any]) -> None:
             if (conversation["context_revision"] != payload["context_revision"]
                     or context is None or str(context["snapshot_id"]) != payload["snapshot_id"]):
                 raise conversations.ChatError("conversation_changed", 409)
+            calculation_started = time.perf_counter()
             result = scenarios.evaluate(UUID(payload["snapshot_id"]), payload["alternatives"])
+            result["calculation_ms"] = round((time.perf_counter() - calculation_started) * 1000, 1)
             if not scenarios.publish(job, result):
                 LOG.info("discarded late scenario result", extra={"job_id": str(job["job_id"])})
             return
+        preparation_started = time.perf_counter()
         row, profile, messages, system, snapshot_id, newer, selected_focus, found, records, intent = _prepare(job)
+        preparation_ms = round((time.perf_counter() - preparation_started) * 1000, 1)
         current = db.query_one("SELECT 1 FROM public.assistant_jobs WHERE job_id = %s "
                                "AND status = 'running' AND attempt_count = %s AND lease_until > now() "
                                "AND deadline_at > now()", (job["job_id"], job["attempt_count"]))
@@ -227,6 +231,7 @@ def process(job: dict[str, Any]) -> None:
             return
         generation = None
         answer = None
+        llm_started = time.perf_counter()
         for attempt in range(2):
             outbound = messages if attempt == 0 else [*messages, {"role": "user", "content":
                 "Исправь формат: без чисел в prose, только существующие ID и типизированные fact_refs. "
@@ -269,7 +274,11 @@ def process(job: dict[str, Any]) -> None:
         if found.vector_status != "ready":
             answer["limitations"].append("Векторный поиск: " + found.vector_status)
         usage = {"model": generation.model, "input_tokens": generation.input_tokens,
-                 "output_tokens": generation.output_tokens, "structured_output": generation.structured_output}
+                 "output_tokens": generation.output_tokens, "structured_output": generation.structured_output,
+                 "preparation_ms": preparation_ms, "llm_ms": round((time.perf_counter() - llm_started) * 1000, 1),
+                 "snapshot_id": str(snapshot_id) if snapshot_id else None,
+                 "kb_revision": str(found.revision) if found.revision else None,
+                 "profile_id": row["profile_id"]}
         if not _finish(job, row, answer, usage, records):
             LOG.info("discarded late assistant result", extra={"job_id": str(job["job_id"])})
     except providers.ProviderError as exc:
@@ -300,7 +309,11 @@ def run(*, once: bool = False, poll_seconds: float = 1.0) -> None:
             time.sleep(max(poll_seconds, 1.0))
             continue
         if job is not None:
+            started = time.perf_counter()
             process(job)
+            LOG.info("assistant job attempt ended", extra={"job_id": str(job["job_id"]),
+                                                          "kind": job["kind"],
+                                                          "duration_ms": round((time.perf_counter() - started) * 1000, 1)})
         elif once:
             return
         else:
