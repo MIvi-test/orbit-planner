@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import conversations, prompts, providers
+from app.assistant import conversations, knowledge, prompts, providers
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -430,6 +430,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(length)
 
     def _upload(self, path: str) -> None:
+        if path == "/api/assistant/kb/reindex":
+            self._assistant_kb_reindex()
+            return
         if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
             self._assistant_write(path)
             return
@@ -717,8 +720,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
                             {"error": "assistant_unavailable", "message": "Assistant operation failed"})
 
+    def _assistant_kb_reindex(self) -> None:
+        try:
+            result = knowledge.enqueue(self._principal)
+            self._audited("assistant_kb_reindex", "queued", job_id=result["job_id"])
+            self._send_json(HTTPStatus.ACCEPTED, result)
+        except knowledge.KnowledgeError as exc:
+            status = HTTPStatus.CONFLICT if str(exc) == "knowledge_reindex_busy" else HTTPStatus.UNPROCESSABLE_ENTITY
+            self._send_json(status, {"error": str(exc), "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log_event("assistant_kb_reindex_failed", level="error", error=type(exc).__name__)
+            self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                            {"error": "knowledge_unavailable", "message": "Knowledge indexing unavailable"})
+
     # ------------------------------------------------------------------- API
     def _api(self, path: str) -> None:
+        if path == "/api/assistant/kb/status":
+            try:
+                self._send_json(HTTPStatus.OK, knowledge.status())
+            except Exception as exc:  # noqa: BLE001
+                log_event("assistant_kb_status_failed", level="error", error=type(exc).__name__)
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                                {"error": "knowledge_unavailable", "message": "Knowledge status unavailable"})
+            return
         if path.startswith("/api/assistant/conversations") or path.startswith("/api/assistant/jobs/"):
             self._assistant_read(path)
             return

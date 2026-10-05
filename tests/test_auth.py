@@ -75,6 +75,19 @@ def test_viewer_chat_routes_receive_verified_principal(secured, monkeypatch) -> 
     assert seen == [("db:1", "knowledge"), ("db:1", "chat", "request-1")]
 
 
+def test_kb_management_requires_admin(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.knowledge, "status", lambda: {"revision": None, "documents": 0})
+    monkeypatch.setattr(server.knowledge, "enqueue", lambda principal: {
+        "job_id": principal.owner_key, "status": "queued"})
+    status, _, _ = call(port, "GET", "/api/assistant/kb/status", "viewer-token-0123456789")
+    assert status == 403
+    status, _, body = call(port, "GET", "/api/assistant/kb/status", ADMIN_TOKEN)
+    assert status == 200 and json.loads(body)["documents"] == 0
+    status, _, body = call(port, "POST", "/api/assistant/kb/reindex", ADMIN_TOKEN)
+    assert status == 202 and json.loads(body)["job_id"] == "env:admin"
+
+
 # ------------------------------------------------------------------ S-1
 @pytest.mark.parametrize("path", [
     "/%2e%2e/%2e%2e/app/db.py",

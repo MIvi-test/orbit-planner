@@ -247,6 +247,24 @@ docker compose up -d --build app assistant-worker caddy backup
 поднимает worker автоматически; отдельно он запускается командой
 `python -m app.assistant.worker`.
 
+Для базы знаний PostgreSQL 17 запускается на образе `pgvector/pgvector` с тем же
+томом данных. После обновления образа выполните `docker compose run --rm migrate`:
+миграция создаёт расширение `vector`, не заменяя существующий volume. Локальные
+эмбеддинги можно поднять отдельно:
+
+```bash
+docker compose --profile rag-local up -d ollama
+docker compose --profile rag-local exec ollama ollama pull embeddinggemma
+docker compose exec app python tools/index_assistant_kb.py
+```
+
+Последняя команда индексирует только `docs/assistant_kb_manifest.json`.
+Повторная индексация неизменённых документов сохраняет их версии и активную
+ревизию. Администратор также может запустить её через
+`POST /api/assistant/kb/reindex` и проверить `GET /api/assistant/kb/status`.
+Для собственного внутреннего Ollama задайте `PI_PLANNER_KB_EMBED_BASE_URL` и
+добавьте его хост в `PI_PLANNER_INTERNAL_LLM_HOSTS`.
+
 `backup` снимает PostgreSQL custom-format dump сразу после старта и далее раз
 в сутки. После каждого dump он восстанавливает архив во временную базу и
 проверяет наличие ключевых объектов; сбой завершает контейнер, после чего

@@ -410,6 +410,9 @@ paths:
                 properties:
                   revision: { type: [string, 'null'] }
                   documents: { type: integer, minimum: 0 }
+                  embedding_model: { type: [string, 'null'] }
+                  embedding_digest: { type: [string, 'null'] }
+                  dimensions: { type: [integer, 'null'] }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/assistant/kb/reindex:
     post:
@@ -650,6 +653,17 @@ components:
         limitations:
           type: array
           items: { type: string }
+        kb_revision: { type: [string, 'null'], format: uuid }
+        sources:
+          type: array
+          items:
+            type: object
+            required: [chunk_id, path, heading, version]
+            properties:
+              chunk_id: { type: string, format: uuid }
+              path: { type: string }
+              heading: { type: string }
+              version: { type: string }
     Recommendation:
       type: object
       required: [recommendation_id, text, basis_status, freshness, evidence_ids]

@@ -43,7 +43,8 @@ INSERT INTO schema_migrations (version, checksum) VALUES
   ('0072_pi_contexts', 'baseline'),
   ('0073_engineer_calendar_qualifications', 'baseline'),
   ('0074_upload_revisions', 'baseline'),
-  ('0075_assistant_foundation', 'baseline')
+  ('0075_assistant_foundation', 'baseline'),
+  ('0076_assistant_knowledge', 'baseline')
 ON CONFLICT (version) DO NOTHING;
 
 -- The seed is loaded after db/01_schema.sql. Register its first generation now.

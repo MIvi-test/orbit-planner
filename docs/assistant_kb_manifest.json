@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "documents": [
+    {"path": "docs/SYSTEM_GUIDE.md", "kind": "system", "compatibility": "current_app", "access": "viewer"},
+    {"path": "docs/PLANNER_SPEC.md", "kind": "planner_rules", "compatibility": "current_formula", "access": "viewer"},
+    {"path": "docs/ASSISTANT_RULES.md", "kind": "kpi_scenario_rules", "compatibility": "current_formula", "access": "viewer"},
+    {"path": "docs/DECISIONS.md", "kind": "decisions", "compatibility": "current_formula", "access": "viewer",
+     "sections": ["ADR-028", "ADR-030", "ADR-031", "ADR-032"]}
+  ]
+}

@@ -232,6 +232,9 @@ def send_message(principal: auth.Principal, conversation_id: Any, raw: Any,
             raise ChatError("context_revision_conflict", 409)
         _no_active_job(cur, cid)
         _profile(cur, row["profile_id"], principal, row["privacy_mode"])
+        cur.execute("SELECT revision_id FROM public.assistant_kb_revisions WHERE active")
+        kb_row = cur.fetchone()
+        kb_revision = str(kb_row["revision_id"]) if kb_row else None
         cur.execute("SELECT message_id, sequence_no FROM public.assistant_messages "
                     "WHERE conversation_id = %s ORDER BY sequence_no DESC LIMIT 1", (cid,))
         last = cur.fetchone()
@@ -241,13 +244,15 @@ def send_message(principal: auth.Principal, conversation_id: Any, raw: Any,
         message_id, job_id = uuid4(), uuid4()
         cur.execute("INSERT INTO public.assistant_messages "
                     "(message_id, conversation_id, sequence_no, context_revision, role, content, "
-                    "default_prompt_id, user_prompt_id, profile_id) "
-                    "VALUES (%s, %s, %s, %s, 'user', %s, %s, %s, %s)",
+                    "default_prompt_id, user_prompt_id, profile_id, payload) "
+                    "VALUES (%s, %s, %s, %s, 'user', %s, %s, %s, %s, %s)",
                     (message_id, cid, seq, row["revision"], text.strip(),
-                     default["prompt_id"], personal["prompt_id"], row["profile_id"]))
+                     default["prompt_id"], personal["prompt_id"], row["profile_id"],
+                     Jsonb({"kb_revision": kb_revision})))
         payload = {"message_id": str(message_id), "context_revision": row["revision"],
                    "generation_id": str(row["generation_id"]) if row["generation_id"] else None,
                    "snapshot_id": str(row["snapshot_id"]) if row["snapshot_id"] else None,
+                   "kb_revision": kb_revision,
                    "privacy_mode": row["privacy_mode"],
                    "principal": {"name": principal.name, "role": principal.role,
                                  "source": principal.source, "user_id": principal.user_id}}
