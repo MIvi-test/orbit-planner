@@ -5,10 +5,25 @@ from collections import Counter
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from functools import lru_cache, wraps
+import json
 from typing import Any
 from uuid import UUID
 
 from app.assistant import snapshots
+
+
+def _cached_fact(function: Any) -> Any:
+    """Snapshot IDs are immutable; return a fresh JSON value to every caller."""
+    @lru_cache(maxsize=8)
+    def cached(*args: Any) -> str:
+        return json.dumps(function(*args), ensure_ascii=False, sort_keys=True)
+
+    @wraps(function)
+    def read(*args: Any) -> dict[str, Any]:
+        return json.loads(cached(*args))
+
+    return read
 
 
 def plain(value: Any) -> Any:
@@ -36,6 +51,7 @@ def _load(snapshot_id: UUID) -> tuple[Any, Any, dict[str, Any]]:
                           "actuals_upload_id": plan.actuals_upload_id}
 
 
+@_cached_fact
 def get_overview(snapshot_id: UUID) -> dict[str, Any]:
     inputs, plan, origin = _load(snapshot_id)
     decisions = Counter(row.decision for row in plan.schedule)
@@ -50,6 +66,7 @@ def get_overview(snapshot_id: UUID) -> dict[str, Any]:
                   "kpi_rows": len(plan.kpis), "complete_selection": True})
 
 
+@_cached_fact
 def get_team(snapshot_id: UUID, team_id: str) -> dict[str, Any]:
     inputs, plan, origin = _load(snapshot_id)
     team_tasks = [task for task in inputs.tasks if task.team_id == team_id]
@@ -71,6 +88,7 @@ def get_team(snapshot_id: UUID, team_id: str) -> dict[str, Any]:
                   "demand": [row for row in plan.role_demands if row[0] == team_id]})
 
 
+@_cached_fact
 def get_task_trace(snapshot_id: UUID, task_id: str) -> dict[str, Any]:
     inputs, plan, origin = _load(snapshot_id)
     task = next((item for item in inputs.tasks if item.task_id == task_id), None)
@@ -86,6 +104,7 @@ def get_task_trace(snapshot_id: UUID, task_id: str) -> dict[str, Any]:
                   "alerts": [row for row in plan.alerts if row.entity_id == task_id]})
 
 
+@_cached_fact
 def get_metric(snapshot_id: UUID, code: str) -> dict[str, Any]:
     inputs, plan, origin = _load(snapshot_id)
     rows = [row for row in plan.kpis if row.kpi_code.casefold() == code.casefold()]
@@ -100,6 +119,7 @@ def get_metric(snapshot_id: UUID, code: str) -> dict[str, Any]:
                              "fund_hours_per_fte": inputs.fund_hours_per_fte}})
 
 
+@_cached_fact
 def compare_runs(before_id: UUID, after_id: UUID) -> dict[str, Any]:
     before_inputs, before, before_origin = _load(before_id)
     after_inputs, after, after_origin = _load(after_id)

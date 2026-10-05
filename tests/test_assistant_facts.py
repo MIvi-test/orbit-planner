@@ -79,3 +79,22 @@ def test_numeric_claim_is_rendered_from_saved_evidence():
     answer["summary"] = "Команда имеет 99 задач."
     with pytest.raises(ValueError, match="untyped_numeric_claim"):
         evidence.render_fact_refs(answer, records)
+
+
+def test_fact_cache_returns_an_independent_value(monkeypatch):
+    calls = []
+
+    def load(_sid):
+        calls.append(1)
+        return (Row(tasks=(), team_sp_per_sprint={}),
+                Row(pi_id="PI", as_of_sprint=0, status="ok",
+                    params={"algorithm": "a", "formula_version": "f"},
+                    actuals_upload_id=None, schedule=(), assignments=(), alerts=(), kpis=()),
+                {}, {})
+
+    monkeypatch.setattr(facts.snapshots, "load", load)
+    sid = uuid4()
+    first = facts.get_overview(sid)
+    first["task_count"] = 999
+    second = facts.get_overview(sid)
+    assert second["task_count"] == 0 and calls == [1]
