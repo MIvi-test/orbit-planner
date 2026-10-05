@@ -35,7 +35,7 @@ def test_validation_failure_exits_nonzero_and_reports_run(monkeypatch, capsys) -
                         lambda: inputs([task("A")], [engineer("ENG-1")]))
     violation = {"check_code": "UNDER_ALLOCATED", "entity": "A / QA", "detail": "0 ЧЧ"}
 
-    def reject(_plan):
+    def reject(_plan, **_kwargs):
         raise run_planner.planner.PlanValidationError(42, 1, [violation])
 
     monkeypatch.setattr(run_planner.planner, "write_plan", reject)

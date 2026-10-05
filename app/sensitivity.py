@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from app import db, planner
+from app.assistant import snapshots
 
 FACTOR = Decimal("0.80")
 ETC_FACTOR = Decimal("1.20")
@@ -41,16 +42,11 @@ def evaluate(run_id: int) -> dict[str, Any]:
     )
     if active is None or int(active["run_id"]) != run_id:
         raise ScenarioUnavailable("Сценарии доступны только для текущего прогона")
-    inputs = planner.load_inputs()
-    modes = active["params"] or {}
-    options = {
-        "as_of_sprint": int(active["as_of_sprint"]),
-        "baseline_starts": planner.load_baseline_starts(),
-        "dependency_mode": modes.get("dependency_mode", planner.DEPENDENCY_MODE_START_START),
-        "initiative_mode": modes.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
-        "simulate_next_pi": False,
-    }
-    baseline = planner.build_plan(inputs, **options)
+    try:
+        inputs, baseline, baseline_starts, options = snapshots.replay(snapshots.for_current_run(run_id))
+    except snapshots.SnapshotUnavailable as exc:
+        raise ScenarioUnavailable(str(exc)) from exc
+    build_options = {**options, "baseline_starts": baseline_starts}
     base = {row.task_id: row for row in baseline.schedule}
     scenarios = []
     for kind, label in (
@@ -58,7 +54,7 @@ def evaluate(run_id: int) -> dict[str, Any]:
         ("etc_120", "Остаток часов по ролям +20%"),
         ("velocity_80", "Скорость команд −20%"),
     ):
-        changed = planner.build_plan(_changed_inputs(inputs, kind), **options)
+        changed = planner.build_plan(_changed_inputs(inputs, kind), **build_options)
         delayed = []
         for row in changed.schedule:
             old = base.get(row.task_id)

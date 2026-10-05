@@ -8,6 +8,7 @@ from itertools import permutations
 from typing import Any
 
 from app import db, planner
+from app.assistant import snapshots
 
 
 class QualityUnavailable(ValueError):
@@ -109,7 +110,15 @@ def evaluate(run_id: int) -> dict[str, Any]:
             if new_people is not None and new_people != people:
                 switches.append({"task_id": task_id, "role_id": role_id,
                                  "before": sorted(people), "after": sorted(new_people)})
-    comparison = compare_modes(int(run["as_of_sprint"]), run["params"] or {})
+    try:
+        saved_inputs, _saved_plan, baseline_starts, saved_options = snapshots.replay(
+            snapshots.for_current_run(run_id)
+        )
+    except snapshots.SnapshotUnavailable as exc:
+        raise QualityUnavailable(str(exc)) from exc
+    comparison = compare_modes(int(run["as_of_sprint"]), run["params"] or {},
+                               inputs=saved_inputs, baseline_starts=baseline_starts,
+                               saved_options=saved_options)
     return {
         "run_id": run_id,
         "completed_value": {"tasks": completed["tasks"], "sp": str(completed["sp"])},
@@ -127,23 +136,22 @@ def evaluate(run_id: int) -> dict[str, Any]:
     }
 
 
-def compare_modes(as_of_sprint: int, params: dict[str, Any]) -> dict[str, Any]:
+def compare_modes(as_of_sprint: int, params: dict[str, Any], *,
+                  inputs: planner.Inputs, baseline_starts: dict[str, int],
+                  saved_options: dict[str, Any]) -> dict[str, Any]:
     """Price of both published heuristics on the same current input.
 
     Complete initiative SP is a technical proxy, never labelled business value.
     The total live SP is a valid but loose upper bound; no optimality claim.
     """
-    inputs = planner.load_inputs()
     groups: dict[str, list[Any]] = defaultdict(list)
     for task in inputs.tasks:
         groups[task.prodf_id].append(task)
     modes: dict[str, dict[str, Any]] = {}
     for mode in (planner.INITIATIVE_MODE_GREEDY, planner.INITIATIVE_MODE_ATOMIC):
         plan = planner.build_plan(
-            inputs, as_of_sprint=as_of_sprint, initiative_mode=mode,
-            dependency_mode=str(params.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE)),
-            priority_strategy=str(params.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY)),
-            simulate_next_pi=False,
+            inputs, baseline_starts=baseline_starts,
+            **{**saved_options, "as_of_sprint": as_of_sprint, "initiative_mode": mode},
         )
         placed = {row.task_id for row in plan.in_quarter}
         complete = [prodf_id for prodf_id, tasks in groups.items()
@@ -159,14 +167,16 @@ def compare_modes(as_of_sprint: int, params: dict[str, Any]) -> dict[str, Any]:
             "planned_tasks": len(placed),
         }
     upper = sum((task.sp_to_plan for task in inputs.tasks), Decimal(0))
-    order_search = reference_order_search(inputs, as_of_sprint, params)
+    order_search = reference_order_search(inputs, as_of_sprint, params,
+                                          baseline_starts=baseline_starts)
     return {"modes": modes, "upper_bound_sp": str(upper), "order_search": order_search,
             "method": "Один текущий вход и правила ограничений; SP завершённых инициатив — техническая мера. "
                       "Верхняя граница — все живые SP, оптимум не доказан."}
 
 
 def reference_order_search(inputs: planner.Inputs, as_of_sprint: int,
-                           params: dict[str, Any]) -> dict[str, Any]:
+                           params: dict[str, Any],
+                           baseline_starts: dict[str, int] | None = None) -> dict[str, Any]:
     """Exhaust all initiative orders on small inputs, keeping every feasibility rule.
 
     The result is exact among these orders and this placement algorithm; it is
@@ -186,6 +196,7 @@ def reference_order_search(inputs: planner.Inputs, as_of_sprint: int,
         for mode in (planner.INITIATIVE_MODE_GREEDY, planner.INITIATIVE_MODE_ATOMIC):
             plan = planner.build_plan(
                 ordered_input, as_of_sprint=as_of_sprint, initiative_mode=mode,
+                baseline_starts=baseline_starts or {},
                 dependency_mode=str(params.get("dependency_mode", planner.DEFAULT_DEPENDENCY_MODE)),
                 priority_strategy=str(params.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY)),
                 simulate_next_pi=False,

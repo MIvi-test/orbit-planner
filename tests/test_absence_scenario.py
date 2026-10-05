@@ -8,20 +8,19 @@ def test_absence_replans_when_same_role_colleague_is_fully_occupied(monkeypatch)
         [engineer("E-1"), engineer("E-2")],
     )
     original = planner.build_plan(source)
-    old = [
-        {"task_id": row.task_id, "decision": row.decision,
-         "start_sprint": row.start_sprint, "end_sprint": row.end_sprint,
-         "prodf_id": f"PRODF-{row.task_id}"}
-        for row in original.schedule
-    ]
-    monkeypatch.setattr(absence.planner, "load_inputs", lambda: source)
-    monkeypatch.setattr(absence.planner, "load_baseline_starts", lambda: {})
+    options = {
+        "as_of_sprint": 0,
+        "dependency_mode": planner.DEFAULT_DEPENDENCY_MODE,
+        "initiative_mode": planner.INITIATIVE_MODE_GREEDY,
+        "priority_strategy": planner.DEFAULT_PRIORITY_STRATEGY,
+        "simulate_next_pi": True,
+    }
+    monkeypatch.setattr(absence.snapshots, "for_current_run", lambda _run_id: "snapshot-1")
+    monkeypatch.setattr(absence.snapshots, "replay", lambda _snapshot_id: (source, original, {}, options))
     monkeypatch.setattr(absence.db, "query_one", lambda sql: (
         {"run_id": 1, "as_of_sprint": 0, "params": {}}
         if "as_of_sprint" in sql else {"run_id": 1}
     ))
-    monkeypatch.setattr(absence.db, "query_dicts", lambda _sql, _params: old)
-
     result = absence.evaluate("E-1", 1)
 
     assert len(result["affected_tasks"]) == 1

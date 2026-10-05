@@ -117,8 +117,13 @@ def run_plan(as_of_sprint: int) -> dict[str, Any]:
     inputs = planner.load_inputs()
     baseline_starts = planner.load_baseline_starts() if as_of_sprint > 0 else {}
     modes = baseline_modes() if as_of_sprint > 0 else {}
-    plan = planner.build_plan(inputs, as_of_sprint=as_of_sprint, baseline_starts=baseline_starts, **modes)
-    run_id = planner.write_plan(plan)
+    options = {"as_of_sprint": as_of_sprint, "dependency_mode": modes.get(
+        "dependency_mode", planner.DEFAULT_DEPENDENCY_MODE),
+        "initiative_mode": modes.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
+        "priority_strategy": modes.get("priority_strategy", planner.DEFAULT_PRIORITY_STRATEGY),
+        "simulate_next_pi": True}
+    plan = planner.build_plan(inputs, baseline_starts=baseline_starts, **options)
+    run_id = planner.write_plan(plan, inputs=inputs, baseline_starts=baseline_starts, options=options)
     return {
         "run_id": run_id,
         "as_of_sprint": as_of_sprint,

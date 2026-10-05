@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from app import db, planner
+from app.assistant import snapshots
 
 HALF = Decimal("0.50")
 MENTOR_COST = Decimal("0.10")
@@ -15,14 +16,8 @@ class ScenarioUnavailable(ValueError):
     pass
 
 
-def _plan(inputs: planner.Inputs, as_of: int, modes: dict) -> planner.Plan:
-    return planner.build_plan(
-        inputs, as_of_sprint=as_of,
-        baseline_starts=planner.load_baseline_starts(),
-        dependency_mode=modes.get("dependency_mode", planner.DEPENDENCY_MODE_START_START),
-        initiative_mode=modes.get("initiative_mode", planner.INITIATIVE_MODE_GREEDY),
-        simulate_next_pi=False,
-    )
+def _plan(inputs: planner.Inputs, baseline_starts: dict[str, int], options: dict) -> planner.Plan:
+    return planner.build_plan(inputs, baseline_starts=baseline_starts, **options)
 
 
 def _assumed_skills(inputs: planner.Inputs, role_id: int) -> frozenset[int]:
@@ -118,21 +113,23 @@ def evaluate(run_id: int, role_id: int, team_id: str, start_sprint: int) -> dict
     )
     if active is None or int(active["run_id"]) != run_id:
         raise ScenarioUnavailable("Сценарии доступны только для текущего прогона")
-    inputs = planner.load_inputs()
+    try:
+        inputs, base, baseline_starts, options = snapshots.replay(snapshots.for_current_run(run_id))
+    except snapshots.SnapshotUnavailable as exc:
+        raise ScenarioUnavailable(str(exc)) from exc
     if not 1 <= start_sprint <= inputs.sprint_count or start_sprint < max(1, active["as_of_sprint"]):
         raise ValueError("спринт начала вне открытого PI")
     if team_id not in inputs.team_sp_per_sprint:
         raise ValueError(f"команда {team_id} не найдена")
     if not any((task.team_id == team_id and role_id in task.needed) for task in inputs.tasks):
         raise ValueError("для выбранной команды и роли нет живого спроса")
-    base = _plan(inputs, int(active["as_of_sprint"]), active["params"] or {})
     results = []
 
     # One sprint is reserved for hiring; candidate is assumed to have all
     # explicitly confirmed skills of the target role, shown in the response.
     hire_start = start_sprint + 1
     hired = _virtual_worker(inputs, role_id, team_id, "scenario-hire", hire_start)
-    results.append(_outcome(base, _plan(hired, int(active["as_of_sprint"]), active["params"] or {}),
+    results.append(_outcome(base, _plan(hired, baseline_starts, options),
                             inputs, "hire", "+0,5 ставки после найма", hire_start,
                             "0,5 ставки с даты выхода; лаг найма — один спринт"))
 
@@ -146,7 +143,7 @@ def evaluate(run_id: int, role_id: int, team_id: str, start_sprint: int) -> dict
         for trainee in trainees:
             trained = _training(inputs, trainee, mentor, role_id, team_id, start_sprint)
             results.append(_outcome(
-                base, _plan(trained, int(active["as_of_sprint"]), active["params"] or {}),
+                base, _plan(trained, baseline_starts, options),
                 inputs, "train", f"Обучить {trainee.engineer_id} у {mentor.engineer_id}",
                 start_sprint + 1,
                 "0,5 ставки сотрудника меняет роль после одного спринта; наставник теряет 0,1 ставки в учебном спринте",
@@ -157,7 +154,7 @@ def evaluate(run_id: int, role_id: int, team_id: str, start_sprint: int) -> dict
     for lender in lenders:
         loaned = _loan(inputs, lender, team_id, start_sprint)
         results.append(_outcome(
-            base, _plan(loaned, int(active["as_of_sprint"]), active["params"] or {}),
+            base, _plan(loaned, baseline_starts, options),
             inputs, "loan", f"Перевести 0,5 ставки {lender.engineer_id} в {team_id}",
             start_sprint, "0,5 ставки сняты с прежних орбит; общий фонд организации не вырос",
         ))
