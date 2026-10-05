@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import conversations, evidence, knowledge, prompts, providers
+from app.assistant import conversations, evidence, knowledge, prompts, providers, scenarios
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -669,6 +669,11 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["conversations"] and self.command == "POST":
                 result = conversations.create(self._principal, self._assistant_body())
                 status = HTTPStatus.CREATED
+            elif (len(parts) == 4 and parts[0] == "conversations"
+                  and parts[2:] == ["scenarios", "compare"] and self.command == "POST"):
+                result = scenarios.enqueue(self._principal, parts[1], self._assistant_body(),
+                                           self.headers.get("Idempotency-Key"))
+                status = HTTPStatus.ACCEPTED
             elif len(parts) == 3 and parts[0] == "conversations":
                 cid, operation = parts[1:]
                 if operation == "settings" and self.command == "PUT":

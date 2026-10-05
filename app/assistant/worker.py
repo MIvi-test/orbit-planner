@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from app import auth, db
-from app.assistant import conversations, evidence, knowledge, memory, prompts, providers, retrieval, snapshots
+from app.assistant import conversations, evidence, knowledge, memory, prompts, providers, retrieval, scenarios, snapshots
 
 LOG = logging.getLogger("assistant.worker")
 LEASE_SECONDS = 180
@@ -32,7 +32,7 @@ def claim() -> dict[str, Any] | None:
                     "error_payload = %s::jsonb WHERE status = 'running' AND lease_until < now() "
                     "AND attempt_count >= 2", (Jsonb({"code": "worker_retry_exhausted", "retryable": False}),))
         cur.execute("SELECT * FROM public.assistant_jobs "
-                    "WHERE kind IN ('message', 'kb_reindex') AND deadline_at > now() AND "
+                    "WHERE kind IN ('message', 'scenario', 'kb_reindex') AND deadline_at > now() AND "
                     "(status = 'queued' OR (status = 'running' AND lease_until < now())) "
                     "ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")
         row = cur.fetchone()
@@ -177,6 +177,22 @@ def process(job: dict[str, Any]) -> None:
                 raise conversations.ChatError("admin_required", 403)
             knowledge.reindex(job_id=job["job_id"], attempt_count=job["attempt_count"])
             return
+        if job["kind"] == "scenario":
+            principal = _current_principal(job)
+            if not principal.allows("planner"):
+                raise conversations.ChatError("planner_required", 403)
+            payload = job["input_payload"]
+            conversation = conversations.get(principal, job["conversation_id"])
+            context = db.query_one("SELECT snapshot_id FROM public.assistant_context_revisions "
+                                   "WHERE conversation_id = %s AND revision = %s",
+                                   (job["conversation_id"], payload["context_revision"]))
+            if (conversation["context_revision"] != payload["context_revision"]
+                    or context is None or str(context["snapshot_id"]) != payload["snapshot_id"]):
+                raise conversations.ChatError("conversation_changed", 409)
+            result = scenarios.evaluate(UUID(payload["snapshot_id"]), payload["alternatives"])
+            if not scenarios.publish(job, result):
+                LOG.info("discarded late scenario result", extra={"job_id": str(job["job_id"])})
+            return
         row, profile, messages, system, snapshot_id, newer, selected_focus, found, records = _prepare(job)
         current = db.query_one("SELECT 1 FROM public.assistant_jobs WHERE job_id = %s "
                                "AND status = 'running' AND attempt_count = %s AND lease_until > now() "
@@ -216,6 +232,8 @@ def process(job: dict[str, Any]) -> None:
         _fail(job, str(exc), False)
     except snapshots.SnapshotUnavailable:
         _fail(job, "snapshot_unavailable", False)
+    except scenarios.ScenarioError as exc:
+        _fail(job, str(exc), False)
     except (prompts.PromptError, ValueError):
         _fail(job, "invalid_answer_or_context", False)
     except Exception:

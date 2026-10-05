@@ -98,6 +98,22 @@ def test_evidence_route_uses_verified_owner(secured, monkeypatch) -> None:
     assert json.loads(body) == {"owner": "db:1", "evidence_id": "record-1"}
 
 
+def test_scenario_route_requires_planner_role(secured, monkeypatch) -> None:
+    port, _events = secured
+    seen = []
+    monkeypatch.setattr(server.scenarios, "enqueue", lambda principal, cid, body, key: (
+        seen.append((principal.owner_key, cid, key)) or {"job_id": "job", "status": "queued"}))
+    body = json.dumps({"expected_context_revision": 1, "alternatives": [{"measures": []}]}).encode()
+    path = "/api/assistant/conversations/chat/scenarios/compare"
+    status, _, _ = call(port, "POST", path, "viewer-token-0123456789", body,
+                        {"Idempotency-Key": "scenario-1"})
+    assert status == 403
+    status, _, _ = call(port, "POST", path, "planner-token-012345678", body,
+                        {"Idempotency-Key": "scenario-1"})
+    assert status == 202
+    assert seen == [("db:2", "chat", "scenario-1")]
+
+
 # ------------------------------------------------------------------ S-1
 @pytest.mark.parametrize("path", [
     "/%2e%2e/%2e%2e/app/db.py",

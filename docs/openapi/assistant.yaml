@@ -688,7 +688,7 @@ components:
     Measure:
       oneOf:
         - type: object
-          required: [kind, role_id, team_id, rate, start_sprint, hiring_lag_sprints]
+          required: [kind, role_id, team_id, rate, start_sprint, hiring_lag_sprints, skill_ids]
           properties:
             kind: { const: hire }
             role_id: { type: integer }
@@ -696,6 +696,9 @@ components:
             rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
             start_sprint: { type: integer, minimum: 1 }
             hiring_lag_sprints: { type: integer, minimum: 0 }
+            skill_ids:
+              type: array
+              items: { type: integer, minimum: 1 }
         - type: object
           required: [kind, engineer_id, team_id, rate, start_sprint]
           properties:
@@ -705,7 +708,7 @@ components:
             rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
             start_sprint: { type: integer, minimum: 1 }
         - type: object
-          required: [kind, trainee_id, mentor_id, role_id, team_id, rate, start_sprint, training_sprints]
+          required: [kind, trainee_id, mentor_id, role_id, team_id, rate, start_sprint, training_sprints, mentor_rate, skill_ids]
           properties:
             kind: { const: train }
             trainee_id: { type: string }
@@ -715,3 +718,7 @@ components:
             rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
             start_sprint: { type: integer, minimum: 1 }
             training_sprints: { type: integer, minimum: 1 }
+            mentor_rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            skill_ids:
+              type: array
+              items: { type: integer, minimum: 1 }
