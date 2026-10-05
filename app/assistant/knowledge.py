@@ -154,7 +154,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class LocalEmbedder:
-    def __init__(self) -> None:
+    def __init__(self, *, timeout: float = 60) -> None:
         self.base_url = os.environ.get("PI_PLANNER_KB_EMBED_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
         self.model = os.environ.get("PI_PLANNER_KB_EMBED_MODEL", "embeddinggemma").strip()
         parsed = urllib.parse.urlsplit(self.base_url)
@@ -164,6 +164,7 @@ class LocalEmbedder:
         if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.hostname.lower() not in allowed
                 or parsed.username or parsed.password or parsed.query or parsed.fragment or not self.model):
             raise KnowledgeError("invalid_local_embedding_endpoint")
+        self.timeout = timeout
         self._opener = urllib.request.build_opener(_NoRedirect())
 
     def _json(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -172,7 +173,7 @@ class LocalEmbedder:
                                          {"Content-Type": "application/json"},
                                          method="POST" if payload is not None else "GET")
         try:
-            with self._opener.open(request, timeout=60) as response:
+            with self._opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise KnowledgeError("local_embedding_unavailable") from exc

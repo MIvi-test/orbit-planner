@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -211,6 +212,12 @@ def send_message(principal: auth.Principal, conversation_id: Any, raw: Any,
         _uuid(raw["expected_last_message_id"])
     if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
         raise ChatError("idempotency_key_required")
+    try:
+        deadline_seconds = int(os.environ.get("PI_PLANNER_ASSISTANT_MESSAGE_DEADLINE_SECONDS", "30"))
+    except ValueError as exc:
+        raise ChatError("invalid_message_deadline") from exc
+    if not 10 <= deadline_seconds <= 300:
+        raise ChatError("invalid_message_deadline")
     cid = _uuid(conversation_id)
     digest = hashlib.sha256(json.dumps({"conversation_id": str(cid), **raw},
                                      sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -259,8 +266,10 @@ def send_message(principal: auth.Principal, conversation_id: Any, raw: Any,
         cur.execute("INSERT INTO public.assistant_jobs "
                     "(job_id, owner_key, conversation_id, kind, status, idempotency_key, request_sha256, "
                     "input_payload, deadline_at) "
-                    "VALUES (%s, %s, %s, 'message', 'queued', %s, %s, %s, now() + interval '4 minutes')",
-                    (job_id, principal.owner_key, cid, idempotency_key, digest, Jsonb(payload)))
+                    "VALUES (%s, %s, %s, 'message', 'queued', %s, %s, %s, "
+                    "now() + (%s * interval '1 second'))",
+                    (job_id, principal.owner_key, cid, idempotency_key, digest,
+                     Jsonb(payload), deadline_seconds))
         cur.execute("UPDATE public.assistant_conversations SET updated_at = now(), "
                     "title = CASE WHEN title = '' THEN %s ELSE title END "
                     "WHERE conversation_id = %s", (text.strip()[:80], cid))

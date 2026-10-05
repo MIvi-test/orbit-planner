@@ -95,7 +95,7 @@ def search(question: str, revision: UUID | None, *, scope: str,
     vector: list[dict[str, Any]] = []
     vector_status = "ready"
     try:
-        embedder = LocalEmbedder()
+        embedder = LocalEmbedder(timeout=10)
         if embedder.model != space["model"] or embedder.digest() != space["model_digest"]:
             vector_status = "embedding_space_changed"
         else:

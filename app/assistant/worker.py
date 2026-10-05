@@ -5,6 +5,7 @@ import argparse
 import logging
 import signal
 import time
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -235,12 +236,27 @@ def process(job: dict[str, Any]) -> None:
         answer = None
         llm_started = time.perf_counter()
         for attempt in range(2):
+            remaining = (job["deadline_at"] - datetime.now(timezone.utc)).total_seconds()
+            if remaining < 3:
+                if attempt == 0:
+                    _fail(job, "message_deadline_exceeded", False)
+                    return
+                answer = {"status": "insufficient_data",
+                          "summary": "Не удалось надёжно проверить сформированный ответ.",
+                          "explanation": "Сохранённые основания доступны отдельно.",
+                          "clarification": "", "fact_refs": [], "recommendations": [],
+                          "evidence_ids": [], "entity_refs": [],
+                          "context_revision": row["context_revision"],
+                          "newer_run_available": newer,
+                          "limitations": ["Истёк лимит времени на исправление ответа."],
+                          "degraded": True}
+                break
             outbound = messages if attempt == 0 else [*messages, {"role": "user", "content":
                 "Исправь формат: без чисел в prose, только существующие ID и типизированные fact_refs. "
                 "Верни все обязательные поля JSON."}]
             generation = providers.generate(profile, outbound, system, memory.ANSWER_SCHEMA,
                                             privacy_mode=job["input_payload"]["privacy_mode"],
-                                            timeout=90, max_output_tokens=1200)
+                                            timeout=min(25, remaining - 2), max_output_tokens=1200)
             try:
                 answer = memory.parse_answer(generation.text, row["context_revision"], newer,
                                              snapshot_id, selected_focus)
