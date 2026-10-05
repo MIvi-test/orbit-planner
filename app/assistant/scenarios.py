@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
+from functools import lru_cache
 import hashlib
 import json
 from decimal import Decimal, InvalidOperation
@@ -230,6 +232,13 @@ def _difference(before: planner.Plan, after: planner.Plan, inputs: planner.Input
 def evaluate(snapshot_id: UUID, alternatives: list[dict[str, Any]]) -> dict[str, Any]:
     if not isinstance(alternatives, list) or not 1 <= len(alternatives) <= MAX_ALTERNATIVES:
         raise ScenarioError("invalid_alternatives")
+    key = json.dumps(alternatives, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return deepcopy(_evaluate_cached(snapshot_id, key))
+
+
+@lru_cache(maxsize=4)
+def _evaluate_cached(snapshot_id: UUID, alternatives_json: str) -> dict[str, Any]:
+    alternatives = json.loads(alternatives_json)
     inputs, baseline, baseline_starts, options = snapshots.replay(snapshot_id)
     results = []
     for alternative in alternatives:

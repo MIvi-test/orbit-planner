@@ -35,6 +35,14 @@ def test_package_recalculates_once_and_preserves_source(monkeypatch):
     assert len(calls) == 1
     assert result["alternatives"][0]["verified_by_scenario"] is True
     assert original.engineers == (engineer("E1", rate="0.50"),)
+    repeated = scenarios.evaluate(sid, [{"measures": [
+        {"kind": "hire", "role_id": 1, "team_id": T1, "rate": 0.5,
+         "start_sprint": 1, "hiring_lag_sprints": 1, "skill_ids": []},
+        {"kind": "hire", "role_id": 1, "team_id": T1, "rate": 0.5,
+         "start_sprint": 1, "hiring_lag_sprints": 1, "skill_ids": []},
+    ]}])
+    assert len(calls) == 1
+    assert repeated == result and repeated is not result
 
 
 def test_loan_keeps_total_rate_and_rejects_duplicate_allocation():

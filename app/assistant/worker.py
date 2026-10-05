@@ -102,6 +102,7 @@ def _prepare(job: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any],
                                   snapshot_id, row["content"])
     plan = snapshots.load(snapshot_id)[1] if snapshot_id else None
     scenario = scenarios.latest_result(job["conversation_id"], snapshot_id) if snapshot_id else None
+    pending = memory.pending_intent(job["conversation_id"], row["context_revision"])
     previous = db.query_one(
         "SELECT snapshot_id FROM public.assistant_context_revisions "
         "WHERE conversation_id = %s AND revision < %s AND snapshot_id IS NOT NULL "
@@ -111,7 +112,8 @@ def _prepare(job: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any],
                                    focus=selected_focus,
                                    metric_codes={item.kpi_code for item in plan.kpis} if plan else set(),
                                    has_scenario=scenario is not None,
-                                   has_previous_run=previous is not None)
+                                   has_previous_run=previous is not None,
+                                   pending_intent=pending)
     comparison = (facts.compare_runs(previous["snapshot_id"], snapshot_id)
                   if intent.name == "changes" and previous else None)
     kb_revision = UUID(payload["kb_revision"]) if payload.get("kb_revision") else None
@@ -226,7 +228,7 @@ def process(job: dict[str, Any]) -> None:
                       "context_revision": row["context_revision"],
                       "newer_run_available": newer, "limitations": [],
                       "kb_revision": str(found.revision) if found.revision else None,
-                      "sources": []}
+                      "sources": [], "pending_intent": intent.name}
             _finish(job, row, answer, {"deterministic": True}, [])
             return
         generation = None

@@ -87,6 +87,17 @@ def focus(conversation_id: UUID, revision: int, snapshot_id: UUID | None,
     return None
 
 
+def pending_intent(conversation_id: UUID, revision: int) -> str | None:
+    row = db.query_one("SELECT payload FROM public.assistant_messages "
+                       "WHERE conversation_id = %s AND context_revision = %s "
+                       "AND role = 'assistant' ORDER BY sequence_no DESC LIMIT 1",
+                       (conversation_id, revision))
+    payload = (row or {}).get("payload") or {}
+    if payload.get("status") == "needs_clarification":
+        return payload.get("pending_intent")
+    return None
+
+
 def facts(snapshot_id: UUID | None, question: str) -> str:
     if snapshot_id is None:
         return SYSTEM_HELP

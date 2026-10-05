@@ -37,3 +37,13 @@ def test_changes_use_previous_bound_run():
                                     metric_codes=set(), has_scenario=False, has_previous_run=False)
     assert selected.name == "changes" and selected.clarification is None
     assert missing.clarification
+
+
+def test_measure_followup_preserves_pending_intent():
+    first = orchestrator.classify("Можно перевести инженера?", has_snapshot=True,
+                                  focus=None, metric_codes=set(), has_scenario=False)
+    followup = orchestrator.classify("Половину ставки с третьего спринта", has_snapshot=True,
+                                     focus=None, metric_codes=set(), has_scenario=False,
+                                     pending_intent=first.name)
+    assert first.name == followup.name == "compare_measures"
+    assert followup.clarification

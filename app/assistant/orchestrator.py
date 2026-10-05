@@ -13,7 +13,8 @@ class Intent:
 
 def classify(question: str, *, has_snapshot: bool,
              focus: tuple[str, str] | None, metric_codes: set[str],
-             has_scenario: bool, has_previous_run: bool = False) -> Intent:
+             has_scenario: bool, has_previous_run: bool = False,
+             pending_intent: str | None = None) -> Intent:
     text = question.casefold()
     if re.search(r"что изменилось|изменени[яй]|сравн.*прогон|новый прогон", text):
         return (Intent("changes") if has_snapshot and has_previous_run else
@@ -26,6 +27,11 @@ def classify(question: str, *, has_snapshot: bool,
             return Intent("compare_measures", "Задайте меры с ролями, ставками, спринтами и навыками; "
                           "сравнение рассчитывается через сценарный API этого чата.")
         return Intent("compare_measures")
+    if (re.search(r"наня[тьл]|найм|перевест[иь]|перевод|обучить|обучени", text)
+            or (pending_intent == "compare_measures" and
+                re.search(r"ставк|спринт|половин|четверт|сотрудник|инженер|роль|команд", text))):
+        return Intent("compare_measures", "Укажите ID сотрудников, команду, роль, ставку, "
+                      "спринт и навыки для мер; расчёт выполняется через сценарный API чата.")
     if re.search(r"как (?:работает|устроен|начать|система)|что такое|чем отличается|правил[оа]|зачем", text):
         if not re.search(r"мо[яию]|мои|именно|у нас|эт[ауи] задач|эт[ауи] команд", text):
             return Intent("system_help")
