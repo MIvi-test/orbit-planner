@@ -19,22 +19,26 @@ def prepare(snapshot_id: UUID | None, question: str,
             focus: tuple[str, str] | None,
             found: retrieval.SearchResult,
             document_context: str,
-            scenario: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], str]:
+            scenario: dict[str, Any] | None = None,
+            comparison: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], str]:
     records: list[dict[str, Any]] = []
     context = ""
     if snapshot_id is not None:
-        _inputs, plan, _baseline, _options = snapshots.load(snapshot_id)
-        codes = {row.kpi_code for row in plan.kpis}
-        mentioned = [code for code in sorted(codes, key=len, reverse=True)
-                     if re.search(r"(?<![\w])" + re.escape(code) + r"(?![\w])", question, re.I)]
-        if focus and focus[0] == "task":
-            payload = facts.get_task_trace(snapshot_id, focus[1])
-        elif focus and focus[0] == "team":
-            payload = facts.get_team(snapshot_id, focus[1])
-        elif len(mentioned) == 1:
-            payload = facts.get_metric(snapshot_id, mentioned[0])
+        if comparison is not None:
+            payload = comparison
         else:
-            payload = facts.get_overview(snapshot_id)
+            _inputs, plan, _baseline, _options = snapshots.load(snapshot_id)
+            codes = {row.kpi_code for row in plan.kpis}
+            mentioned = [code for code in sorted(codes, key=len, reverse=True)
+                         if re.search(r"(?<![\w])" + re.escape(code) + r"(?![\w])", question, re.I)]
+            if focus and focus[0] == "task":
+                payload = facts.get_task_trace(snapshot_id, focus[1])
+            elif focus and focus[0] == "team":
+                payload = facts.get_team(snapshot_id, focus[1])
+            elif len(mentioned) == 1:
+                payload = facts.get_metric(snapshot_id, mentioned[0])
+            else:
+                payload = facts.get_overview(snapshot_id)
         evidence_id = uuid4()
         records.append({"evidence_id": evidence_id, "source_type": "snapshot",
                         "source_ref": str(snapshot_id), "payload": payload})

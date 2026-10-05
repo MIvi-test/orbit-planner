@@ -28,3 +28,12 @@ def test_metric_and_focus_route():
                                  focus=("team", "ALPHA"), metric_codes=set(), has_scenario=False)
     assert metric.name == "metric_explanation"
     assert team.name == "team_analysis"
+
+
+def test_changes_use_previous_bound_run():
+    selected = orchestrator.classify("Что изменилось?", has_snapshot=True, focus=None,
+                                     metric_codes=set(), has_scenario=False, has_previous_run=True)
+    missing = orchestrator.classify("Что изменилось?", has_snapshot=True, focus=None,
+                                    metric_codes=set(), has_scenario=False, has_previous_run=False)
+    assert selected.name == "changes" and selected.clarification is None
+    assert missing.clarification

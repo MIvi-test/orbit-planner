@@ -13,10 +13,11 @@ class Intent:
 
 def classify(question: str, *, has_snapshot: bool,
              focus: tuple[str, str] | None, metric_codes: set[str],
-             has_scenario: bool) -> Intent:
+             has_scenario: bool, has_previous_run: bool = False) -> Intent:
     text = question.casefold()
     if re.search(r"что изменилось|изменени[яй]|сравн.*прогон|новый прогон", text):
-        return (Intent("changes", "Укажите два прогона для сравнения или обновите контекст чата.")
+        return (Intent("changes") if has_snapshot and has_previous_run else
+                Intent("changes", "Выберите второй прогон через обновление контекста чата.")
                 if has_snapshot else Intent("changes", "Сначала выберите PI и прогон."))
     if re.search(r"сравн.*(?:мер|найм|перевод|обуч|пакет)|найм.*перевод|эффект.*(?:найм|перевод|обуч)", text):
         if not has_snapshot:

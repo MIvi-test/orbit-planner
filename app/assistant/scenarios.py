@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from app import auth, db, planner
-from app.assistant import conversations, facts, snapshots
+from app.assistant import conversations, facts, recommendations, snapshots
 from app.planner.constants import ALGORITHM, FORMULA_VERSION
 
 MAX_ALTERNATIVES = 3
@@ -261,7 +261,8 @@ def enqueue(principal: auth.Principal, conversation_id: str, raw: Any,
             or not isinstance(raw["alternatives"], list)
             or not 1 <= len(raw["alternatives"]) <= MAX_ALTERNATIVES
             or any(not isinstance(item, dict) or not isinstance(item.get("measures"), list)
-                   or not 1 <= len(item["measures"]) <= MAX_MEASURES for item in raw["alternatives"])):
+                   or not 1 <= len(item["measures"]) <= MAX_MEASURES
+                   or set(item) - {"measures", "supersedes"} for item in raw["alternatives"])):
         raise conversations.ChatError("invalid_scenario_request")
     if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
         raise conversations.ChatError("idempotency_key_required")
@@ -281,6 +282,7 @@ def enqueue(principal: auth.Principal, conversation_id: str, raw: Any,
                 raise conversations.ChatError("idempotency_conflict", 409)
             return {"job_id": str(existing["job_id"]), "status": existing["status"]}
         context = conversations._joined(cur, cid, principal.owner_key, lock=True)
+        recommendations.validate_supersedes(cur, cid, raw["alternatives"])
         if context["revision"] != raw["expected_context_revision"]:
             raise conversations.ChatError("context_revision_conflict", 409)
         if context["scope"] != "planning" or not context["snapshot_id"]:
@@ -321,8 +323,28 @@ def publish(job: dict[str, Any], result: dict[str, Any]) -> bool:
                     "(evidence_id, conversation_id, source_type, source_ref, payload) "
                     "VALUES (%s, %s, 'scenario', %s, %s)",
                     (evidence_id, job["conversation_id"], str(scenario_id), Jsonb(result)))
+        recommendation_ids = []
+        for index, alternative in enumerate(result["alternatives"]):
+            recommendation_id = uuid4()
+            prior = job["input_payload"]["alternatives"][index].get("supersedes")
+            gained = len(alternative["result"]["gained_tasks"])
+            lost = len(alternative["result"]["lost_tasks"])
+            text = (f"Пакет {index + 1}: восстановлено задач {gained}, потеряно задач {lost}; "
+                    "проверьте изменённые назначения, KPI и ограничения в сценарном результате.")
+            cur.execute("INSERT INTO public.assistant_recommendations "
+                        "(recommendation_id, conversation_id, scenario_result_id, context_revision, "
+                        "text, basis_status, supersedes) VALUES "
+                        "(%s, %s, %s, %s, %s, 'verified_by_scenario', %s)",
+                        (recommendation_id, job["conversation_id"], scenario_id,
+                         job["input_payload"]["context_revision"], text,
+                         UUID(prior) if prior else None))
+            if prior:
+                cur.execute("UPDATE public.assistant_recommendations SET freshness = 'superseded' "
+                            "WHERE recommendation_id = %s AND conversation_id = %s",
+                            (UUID(prior), job["conversation_id"]))
+            recommendation_ids.append(str(recommendation_id))
         output = {**result, "scenario_result_id": str(scenario_id),
-                  "evidence_ids": [str(evidence_id)]}
+                  "evidence_ids": [str(evidence_id)], "recommendation_ids": recommendation_ids}
         cur.execute("UPDATE public.assistant_jobs SET status = 'completed', result_payload = %s, "
                     "lease_until = NULL, updated_at = now() WHERE job_id = %s",
                     (Jsonb(output), job["job_id"]))

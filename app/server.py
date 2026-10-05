@@ -65,7 +65,7 @@ from app import (
     absence, auth, availability, contexts, data_quality, db, ingest,
     plan_quality, qualifications, sensitivity, skill_review, trace, views, workforce,
 )
-from app.assistant import conversations, evidence, knowledge, prompts, providers, scenarios
+from app.assistant import conversations, evidence, knowledge, prompts, providers, recommendations, scenarios
 from app.metrics import NO_RESPONSE_STATUS, PROMETHEUS_CONTENT_TYPE, Metrics
 
 try:  # версия ETL и PI живут в одном месте — etl/config.py, а не здесь
@@ -713,6 +713,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = conversations.get(self._principal, parts[1])
             elif len(parts) == 3 and parts[0] == "conversations" and parts[2] == "messages":
                 result = conversations.list_messages(self._principal, parts[1], cursor)
+            elif len(parts) == 3 and parts[0] == "conversations" and parts[2] == "recommendations":
+                result = recommendations.list_for_conversation(self._principal, parts[1])
             elif len(parts) == 2 and parts[0] == "jobs":
                 result = conversations.get_job(self._principal, parts[1])
             elif len(parts) == 2 and parts[0] == "evidence":

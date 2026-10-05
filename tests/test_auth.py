@@ -114,6 +114,16 @@ def test_scenario_route_requires_planner_role(secured, monkeypatch) -> None:
     assert seen == [("db:2", "chat", "scenario-1")]
 
 
+def test_recommendations_route_is_owned(secured, monkeypatch) -> None:
+    port, _events = secured
+    monkeypatch.setattr(server.recommendations, "list_for_conversation", lambda principal, cid: {
+        "owner": principal.owner_key, "conversation": cid, "recommendations": []})
+    status, _, body = call(port, "GET", "/api/assistant/conversations/chat/recommendations",
+                           "viewer-token-0123456789")
+    assert status == 200
+    assert json.loads(body)["owner"] == "db:1"
+
+
 # ------------------------------------------------------------------ S-1
 @pytest.mark.parametrize("path", [
     "/%2e%2e/%2e%2e/app/db.py",
