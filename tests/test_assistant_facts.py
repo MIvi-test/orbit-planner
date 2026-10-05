@@ -67,3 +67,15 @@ def test_evidence_read_is_scoped_to_owner(monkeypatch):
 def test_unverified_citation_is_rejected():
     with pytest.raises(ValueError, match="unverified_evidence_reference"):
         evidence.check_citations({"summary": "[evidence:made-up]", "explanation": ""}, [])
+
+
+def test_numeric_claim_is_rendered_from_saved_evidence():
+    eid = uuid4()
+    answer = {"summary": "Команда испытывает дефицит.", "explanation": "Есть незавершённые задачи.",
+              "fact_refs": [{"evidence_id": str(eid), "field": "task_count"}]}
+    records = [{"evidence_id": eid, "source_type": "snapshot", "payload": {"task_count": 17}}]
+    evidence.render_fact_refs(answer, records)
+    assert f"task_count = 17 [evidence:{eid}]" in answer["explanation"]
+    answer["summary"] = "Команда имеет 99 задач."
+    with pytest.raises(ValueError, match="untyped_numeric_claim"):
+        evidence.render_fact_refs(answer, records)

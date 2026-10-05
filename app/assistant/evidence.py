@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -17,7 +18,8 @@ MAX_MODEL_FACT_CHARS = 18000
 def prepare(snapshot_id: UUID | None, question: str,
             focus: tuple[str, str] | None,
             found: retrieval.SearchResult,
-            document_context: str) -> tuple[list[dict[str, Any]], str]:
+            document_context: str,
+            scenario: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], str]:
     records: list[dict[str, Any]] = []
     context = ""
     if snapshot_id is not None:
@@ -42,6 +44,16 @@ def prepare(snapshot_id: UUID | None, question: str,
                        "объём данных превышает контекст модели. Уточните задачу, команду или KPI.")
         else:
             context = f"[evidence:{evidence_id}] {text}"
+    if scenario is not None:
+        evidence_id = uuid4()
+        records.append({"evidence_id": evidence_id, "source_type": "scenario",
+                        "source_ref": scenario["scenario_result_id"],
+                        "payload": scenario["result"]})
+        scenario_text = json.dumps(scenario["result"], ensure_ascii=False, separators=(",", ":"))
+        if len(context) + len(scenario_text) <= MAX_MODEL_FACT_CHARS:
+            context += f"\n[evidence:{evidence_id}] Сценарный расчёт: {scenario_text}"
+        else:
+            context += "\nСценарный результат сохранён, но слишком велик для ответа. Уточните меру или команду."
     for hit in found.hits:
         if f"[kb:{hit.chunk_id}]" not in document_context:
             continue
@@ -63,6 +75,42 @@ def check_citations(answer: dict[str, Any], records: list[dict[str, Any]]) -> No
     cited_kb = set(re.findall(r"\[kb:([^\]]+)\]", content))
     if not cited <= allowed or not cited_kb <= allowed_kb:
         raise ValueError("unverified_evidence_reference")
+
+
+def render_fact_refs(answer: dict[str, Any], records: list[dict[str, Any]]) -> None:
+    """Insert numeric values from saved evidence, never from model-provided values."""
+    by_id = {str(record["evidence_id"]): record for record in records}
+    rendered: list[str] = []
+    for ref in answer.get("fact_refs", []):
+        item = by_id.get(ref["evidence_id"])
+        field = ref["field"]
+        if (item is None or item["source_type"] == "document" or len(field) > 120
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_0-9]+)*", field)):
+            raise ValueError("invalid_fact_reference")
+        value: Any = item["payload"]
+        for part in field.split("."):
+            if isinstance(value, dict):
+                value = value.get(part)
+            elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+                value = value[int(part)]
+            else:
+                raise ValueError("invalid_fact_reference")
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError("non_numeric_fact_reference")
+        try:
+            numeric = Decimal(str(value))
+        except InvalidOperation as exc:
+            raise ValueError("non_numeric_fact_reference") from exc
+        if not numeric.is_finite():
+            raise ValueError("non_numeric_fact_reference")
+        rendered.append(f"{field} = {value} [evidence:{ref['evidence_id']}]")
+    if rendered:
+        answer["explanation"] += ("\n\nПроверенные значения: " + "; ".join(rendered))
+    bare = re.sub(r"\[(?:evidence|kb):[^\]]+\]", "", answer["summary"] + answer["explanation"])
+    # Numerals in prose are forbidden; all numeric claims are rendered above.
+    prose = bare.split("Проверенные значения:", 1)[0]
+    if re.search(r"\d", prose):
+        raise ValueError("untyped_numeric_claim")
 
 
 def save(cur: Any, *, conversation_id: UUID, message_id: UUID,

@@ -639,6 +639,16 @@ components:
         evidence_ids:
           type: array
           items: { type: string, format: uuid }
+        fact_refs:
+          type: array
+          description: Numeric fields cited by the model and rendered from saved evidence.
+          items:
+            type: object
+            required: [evidence_id, field]
+            properties:
+              evidence_id: { type: string, format: uuid }
+              field: { type: string }
+        degraded: { type: boolean }
         entity_refs:
           type: array
           items:

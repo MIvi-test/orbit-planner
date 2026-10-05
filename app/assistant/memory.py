@@ -25,6 +25,10 @@ ANSWER_SCHEMA: dict[str, Any] = {
         "summary": {"type": "string"},
         "explanation": {"type": "string"},
         "clarification": {"type": "string"},
+        "fact_refs": {"type": "array", "maxItems": 10, "items": {
+            "type": "object", "properties": {"evidence_id": {"type": "string"},
+                                          "field": {"type": "string"}},
+            "required": ["evidence_id", "field"], "additionalProperties": False}},
     },
     "required": ["status", "summary", "explanation", "clarification"],
     "additionalProperties": False,
@@ -130,8 +134,15 @@ def parse_answer(raw: str, revision: int, newer_run_available: bool | None,
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError("invalid_model_json") from exc
-    if not isinstance(value, dict) or set(value) != set(ANSWER_SCHEMA["required"]):
+    required = set(ANSWER_SCHEMA["required"])
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"fact_refs"}:
         raise ValueError("invalid_model_answer")
+    if ("fact_refs" in value and
+            (not isinstance(value["fact_refs"], list) or len(value["fact_refs"]) > 10 or
+             any(not isinstance(ref, dict) or set(ref) != {"evidence_id", "field"} or
+                 not isinstance(ref["evidence_id"], str) or not isinstance(ref["field"], str)
+                 for ref in value["fact_refs"]))):
+        raise ValueError("invalid_fact_refs")
     if (value["status"] not in {"answered", "needs_clarification", "insufficient_data"}
             or not isinstance(value["summary"], str) or not isinstance(value["explanation"], str)
             or not isinstance(value["clarification"], str)
@@ -143,6 +154,7 @@ def parse_answer(raw: str, revision: int, newer_run_available: bool | None,
     limitations = ([] if snapshot_id is not None else ["Разговор не привязан к прогону."])
     refs = ([{"type": selected_focus[0], "id": selected_focus[1], "context_revision": revision}]
             if selected_focus else [])
-    return {**value, "recommendations": [], "evidence_ids": [], "entity_refs": refs,
+    return {**value, "fact_refs": value.get("fact_refs", []),
+            "recommendations": [], "evidence_ids": [], "entity_refs": refs,
             "context_revision": revision, "newer_run_available": newer_run_available,
             "limitations": limitations}

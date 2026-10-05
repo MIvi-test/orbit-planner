@@ -327,3 +327,12 @@ def publish(job: dict[str, Any], result: dict[str, Any]) -> bool:
                     "lease_until = NULL, updated_at = now() WHERE job_id = %s",
                     (Jsonb(output), job["job_id"]))
         return True
+
+
+def latest_result(conversation_id: UUID, snapshot_id: UUID) -> dict[str, Any] | None:
+    row = db.query_one("SELECT scenario_result_id, result_payload FROM public.assistant_scenario_results "
+                       "WHERE conversation_id = %s AND snapshot_id = %s "
+                       "ORDER BY created_at DESC, scenario_result_id DESC LIMIT 1",
+                       (conversation_id, snapshot_id))
+    return ({"scenario_result_id": str(row["scenario_result_id"]),
+             "result": row["result_payload"]} if row else None)
