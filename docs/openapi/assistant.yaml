@@ -1,0 +1,698 @@
+openapi: 3.1.1
+info:
+  title: PI Planner Assistant API
+  version: 0.1.0
+  description: >-
+    Server-owned conversations, knowledge retrieval, and read-only planning
+    scenarios. This contract is implemented incrementally by RAG-01–RAG-11.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: Assistant
+  - name: Configuration
+  - name: Knowledge
+paths:
+  /api/assistant/profiles:
+    get:
+      tags: [Configuration]
+      operationId: listAssistantProfiles
+      summary: List selectable model profiles
+      description: Returns only profiles allowed for the caller; never returns secrets.
+      responses:
+        '200':
+          description: Profiles visible to this user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profiles]
+                properties:
+                  profiles:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProviderProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Configuration]
+      operationId: createAssistantProfile
+      summary: Create a model profile
+      description: Admin only. Configure an API root, model, protocol and secret reference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderProfileInput' }
+      responses:
+        '201':
+          description: Profile created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderProfile' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
+  /api/assistant/profiles/{profileId}:
+    parameters:
+      - { $ref: '#/components/parameters/profileId' }
+    put:
+      tags: [Configuration]
+      operationId: updateAssistantProfile
+      summary: Update a model profile
+      description: Admin only. A changed endpoint or key reference creates a new profile version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProviderProfileInput' }
+      responses:
+        '200':
+          description: New profile version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProviderProfile' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/assistant/profiles/{profileId}/check:
+    parameters:
+      - { $ref: '#/components/parameters/profileId' }
+    post:
+      tags: [Configuration]
+      operationId: checkAssistantProfile
+      summary: Check the configured provider
+      description: Admin only. Calls the configured endpoint and may consume provider quota.
+      responses:
+        '200':
+          description: Connectivity and observed capabilities, with no key value.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reachable, structured_output]
+                properties:
+                  reachable: { type: boolean }
+                  structured_output: { type: boolean }
+                  detail: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ProviderUnavailable' }
+  /api/assistant/prompts/default:
+    get:
+      tags: [Configuration]
+      operationId: getDefaultAssistantPrompt
+      summary: Read the active project prompt
+      responses:
+        '200':
+          description: Active default version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Prompt' }
+    put:
+      tags: [Configuration]
+      operationId: setDefaultAssistantPrompt
+      summary: Activate a new project prompt version
+      description: Admin only; prior versions remain for historical messages.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromptInput' }
+      responses:
+        '200':
+          description: Active version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Prompt' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/assistant/prompts/me:
+    get:
+      tags: [Configuration]
+      operationId: getMyAssistantPrompt
+      summary: Read my mandatory personal prompt
+      responses:
+        '200':
+          description: Active personal version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Prompt' }
+    put:
+      tags: [Configuration]
+      operationId: setMyAssistantPrompt
+      summary: Activate my personal prompt
+      description: A neutral version exists until the owner changes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromptInput' }
+      responses:
+        '200':
+          description: Active version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Prompt' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
+  /api/assistant/conversations:
+    get:
+      tags: [Assistant]
+      operationId: listMyAssistantConversations
+      summary: List my conversations
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Page of owned conversations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationPage' }
+    post:
+      tags: [Assistant]
+      operationId: createAssistantConversation
+      summary: Start a knowledge or planning conversation
+      description: Knowledge conversations work before any dataset is uploaded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConversationInput' }
+            examples:
+              knowledge:
+                value: { scope: knowledge, provider_profile_id: 1, privacy_mode: local_only }
+              planning:
+                value: { scope: planning, pi_id: PI-2026-Q3, scenario_id: main, run_id: 4, provider_profile_id: 2, privacy_mode: configured }
+      responses:
+        '201':
+          description: New conversation, owned by the authenticated user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
+  /api/assistant/conversations/{conversationId}:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    get:
+      tags: [Assistant]
+      operationId: getMyAssistantConversation
+      summary: Read conversation and current context revision
+      responses:
+        '200':
+          description: Owned conversation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/assistant/conversations/{conversationId}/settings:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    put:
+      tags: [Assistant]
+      operationId: updateMyAssistantConversationSettings
+      summary: Change the selected model profile or privacy mode
+      description: A cloud switch is explicit because the selected conversation context may be sent to the provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_profile_id, privacy_mode]
+              properties:
+                provider_profile_id: { type: integer, minimum: 1 }
+                privacy_mode: { $ref: '#/components/schemas/PrivacyMode' }
+      responses:
+        '200':
+          description: Updated conversation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/assistant/conversations/{conversationId}/context:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    post:
+      tags: [Assistant]
+      operationId: bindAssistantConversationContext
+      summary: Bind a knowledge chat to a run or update a planning chat
+      description: Adds a context revision; existing messages retain old evidence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pi_id, scenario_id, run_id, expected_context_revision]
+              properties:
+                pi_id: { type: string }
+                scenario_id: { type: string }
+                run_id: { type: integer, minimum: 1 }
+                expected_context_revision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: New context revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/assistant/conversations/{conversationId}/messages:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    get:
+      tags: [Assistant]
+      operationId: listMyAssistantMessages
+      summary: Read conversation messages
+      parameters:
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: Page of messages and cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessagePage' }
+    post:
+      tags: [Assistant]
+      operationId: sendAssistantMessage
+      summary: Add a message and queue an answer
+      parameters:
+        - { $ref: '#/components/parameters/idempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text, expected_context_revision, expected_last_message_id]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 10000 }
+                expected_context_revision: { type: integer, minimum: 1 }
+                expected_last_message_id: { type: [string, 'null'], format: uuid }
+      responses:
+        '202':
+          description: User message stored and answer queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuedJob' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
+  /api/assistant/conversations/{conversationId}/scenarios/compare:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    post:
+      tags: [Assistant]
+      operationId: compareAssistantScenarios
+      summary: Calculate individual and combined staffing measures
+      description: Planner role required. Hypotheses never modify the published plan.
+      parameters:
+        - { $ref: '#/components/parameters/idempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_context_revision, alternatives]
+              properties:
+                expected_context_revision: { type: integer, minimum: 1 }
+                alternatives:
+                  type: array
+                  minItems: 1
+                  maxItems: 3
+                  items:
+                    type: object
+                    required: [measures]
+                    properties:
+                      measures:
+                        type: array
+                        minItems: 1
+                        maxItems: 5
+                        items: { $ref: '#/components/schemas/Measure' }
+      responses:
+        '202':
+          description: Scenario job queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuedJob' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
+  /api/assistant/conversations/{conversationId}/recommendations:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    get:
+      tags: [Assistant]
+      operationId: listMyAssistantRecommendations
+      summary: Read advice and its freshness
+      responses:
+        '200':
+          description: Recommendations with evidence and supersession links.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recommendations]
+                properties:
+                  recommendations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Recommendation' }
+  /api/assistant/jobs/{jobId}:
+    parameters:
+      - { $ref: '#/components/parameters/jobId' }
+    get:
+      tags: [Assistant]
+      operationId: getMyAssistantJob
+      summary: Read a job status or completed answer
+      responses:
+        '200':
+          description: Owned job; processing errors are returned in job.error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/assistant/jobs/{jobId}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/jobId' }
+    post:
+      tags: [Assistant]
+      operationId: cancelMyAssistantJob
+      summary: Request cancellation of my job
+      responses:
+        '200':
+          description: Updated owned job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/assistant/evidence/{evidenceId}:
+    parameters:
+      - { $ref: '#/components/parameters/evidenceId' }
+    get:
+      tags: [Assistant]
+      operationId: getMyAssistantEvidence
+      summary: Read evidence saved with an answer
+      responses:
+        '200':
+          description: Evidence from an owned conversation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Evidence' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/assistant/kb/status:
+    get:
+      tags: [Knowledge]
+      operationId: getAssistantKnowledgeStatus
+      summary: Read active knowledge revision
+      description: Admin only.
+      responses:
+        '200':
+          description: Current revision and indexing state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, documents]
+                properties:
+                  revision: { type: [string, 'null'] }
+                  documents: { type: integer, minimum: 0 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/assistant/kb/reindex:
+    post:
+      tags: [Knowledge]
+      operationId: reindexAssistantKnowledge
+      summary: Index the approved document manifest
+      description: Admin only; publish a revision after a complete build.
+      responses:
+        '202':
+          description: Indexing started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueuedJob' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    conversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    profileId:
+      name: profileId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    jobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    evidenceId:
+      name: evidenceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 200 }
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Insufficient role or permission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource does not exist or is not owned by the caller.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Context, message sequence or idempotency key conflict.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InvalidInput:
+      description: Request fields are invalid or incomplete.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ProviderUnavailable:
+      description: Configured model service is unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id: { type: string }
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            retryable: { type: boolean }
+            details: { type: object, additionalProperties: true }
+    PrivacyMode:
+      type: string
+      enum: [local_only, configured]
+    ProviderProfileInput:
+      type: object
+      required: [name, protocol, base_url, model, auth_type, network_scope]
+      properties:
+        name: { type: string, minLength: 1 }
+        protocol: { type: string, enum: [gemini, ollama, openai_compatible] }
+        base_url: { type: string, format: uri }
+        model: { type: string, minLength: 1 }
+        auth_type: { type: string, enum: [bearer, header, none] }
+        auth_header_name: { type: [string, 'null'] }
+        api_key_ref: { type: [string, 'null'], description: 'Environment or mounted secret reference, never the key value.' }
+        network_scope: { type: string, enum: [internal, external] }
+        capabilities: { type: object, additionalProperties: true }
+        limits: { type: object, additionalProperties: true }
+        min_role: { type: string, enum: [viewer, planner, admin] }
+    ProviderProfile:
+      type: object
+      required: [profile_id, name, protocol, base_url, model, auth_type, network_scope, credential_configured, version]
+      properties:
+        profile_id: { type: integer }
+        name: { type: string }
+        protocol: { type: string }
+        base_url: { type: string }
+        model: { type: string }
+        auth_type: { type: string }
+        network_scope: { type: string }
+        credential_configured: { type: boolean }
+        version: { type: integer }
+        capabilities: { type: object, additionalProperties: true }
+    PromptInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 12000 }
+    Prompt:
+      type: object
+      required: [prompt_id, version, content]
+      properties:
+        prompt_id: { type: integer }
+        version: { type: integer }
+        content: { type: string }
+    ConversationInput:
+      oneOf:
+        - type: object
+          required: [scope, provider_profile_id, privacy_mode]
+          properties:
+            scope: { const: knowledge }
+            provider_profile_id: { type: integer, minimum: 1 }
+            privacy_mode: { $ref: '#/components/schemas/PrivacyMode' }
+        - type: object
+          required: [scope, pi_id, scenario_id, run_id, provider_profile_id, privacy_mode]
+          properties:
+            scope: { const: planning }
+            pi_id: { type: string, minLength: 1 }
+            scenario_id: { type: string, minLength: 1 }
+            run_id: { type: integer, minimum: 1 }
+            provider_profile_id: { type: integer, minimum: 1 }
+            privacy_mode: { $ref: '#/components/schemas/PrivacyMode' }
+    Conversation:
+      type: object
+      required: [conversation_id, scope, context_revision, provider_profile_id, privacy_mode, newer_run_available]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        title: { type: string }
+        scope: { type: string, enum: [knowledge, planning] }
+        context_revision: { type: integer, minimum: 1 }
+        provider_profile_id: { type: integer }
+        privacy_mode: { $ref: '#/components/schemas/PrivacyMode' }
+        pi_id: { type: [string, 'null'] }
+        scenario_id: { type: [string, 'null'] }
+        run_id: { type: [integer, 'null'] }
+        newer_run_available: { type: [boolean, 'null'] }
+    ConversationPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Conversation' }
+        next_cursor: { type: [string, 'null'] }
+    MessagePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [message_id, role, text, context_revision]
+            properties:
+              message_id: { type: string, format: uuid }
+              role: { type: string, enum: [user, assistant] }
+              text: { type: string }
+              context_revision: { type: integer }
+              answer: { $ref: '#/components/schemas/Answer' }
+        next_cursor: { type: [string, 'null'] }
+    QueuedJob:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { const: queued }
+    Job:
+      type: object
+      required: [job_id, status, error]
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, completed, failed, cancelled, expired] }
+        result: { oneOf: [{ $ref: '#/components/schemas/Answer' }, { type: object }] }
+        error: { oneOf: [{ $ref: '#/components/schemas/Error' }, { type: 'null' }] }
+    Answer:
+      type: object
+      required: [status, summary, explanation, recommendations, evidence_ids, entity_refs, context_revision, newer_run_available, limitations]
+      properties:
+        status: { type: string, enum: [answered, needs_clarification, insufficient_data] }
+        summary: { type: string }
+        explanation: { type: string }
+        recommendations:
+          type: array
+          items: { $ref: '#/components/schemas/Recommendation' }
+        clarification: { type: [string, 'null'] }
+        evidence_ids:
+          type: array
+          items: { type: string, format: uuid }
+        entity_refs:
+          type: array
+          items:
+            type: object
+            required: [type, id, context_revision]
+            properties:
+              type: { type: string }
+              id: { type: string }
+              context_revision: { type: integer }
+        context_revision: { type: integer }
+        newer_run_available: { type: [boolean, 'null'] }
+        limitations:
+          type: array
+          items: { type: string }
+    Recommendation:
+      type: object
+      required: [recommendation_id, text, basis_status, freshness, evidence_ids]
+      properties:
+        recommendation_id: { type: string, format: uuid }
+        text: { type: string }
+        basis_status: { type: string, enum: [verified_by_scenario, proposal, needs_data] }
+        freshness: { type: string, enum: [current, stale, superseded] }
+        evidence_ids:
+          type: array
+          items: { type: string, format: uuid }
+        scenario_result_id: { type: [string, 'null'], format: uuid }
+        supersedes: { type: [string, 'null'], format: uuid }
+    Evidence:
+      type: object
+      required: [evidence_id, source_type, source_ref, payload]
+      properties:
+        evidence_id: { type: string, format: uuid }
+        source_type: { type: string, enum: [snapshot, document, scenario] }
+        source_ref: { type: string }
+        payload: { type: object, additionalProperties: true }
+    Measure:
+      oneOf:
+        - type: object
+          required: [kind, role_id, team_id, rate, start_sprint, hiring_lag_sprints]
+          properties:
+            kind: { const: hire }
+            role_id: { type: integer }
+            team_id: { type: string }
+            rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            start_sprint: { type: integer, minimum: 1 }
+            hiring_lag_sprints: { type: integer, minimum: 0 }
+        - type: object
+          required: [kind, engineer_id, team_id, rate, start_sprint]
+          properties:
+            kind: { const: loan }
+            engineer_id: { type: string }
+            team_id: { type: string }
+            rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            start_sprint: { type: integer, minimum: 1 }
+        - type: object
+          required: [kind, trainee_id, mentor_id, role_id, team_id, rate, start_sprint, training_sprints]
+          properties:
+            kind: { const: train }
+            trainee_id: { type: string }
+            mentor_id: { type: string }
+            role_id: { type: integer }
+            team_id: { type: string }
+            rate: { type: number, exclusiveMinimum: 0, maximum: 1 }
+            start_sprint: { type: integer, minimum: 1 }
+            training_sprints: { type: integer, minimum: 1 }

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from app import db, planner
+from app.assistant import generations
 
 ROOT = Path(__file__).resolve().parent.parent
 SUBSTITUTIONS_SQL = ROOT / "db" / "03_substitutions.sql"
@@ -236,6 +237,7 @@ def load_dataset(data: bytes, filename: str | None, *, actor: str | None = None,
                     "WHERE batch_id = (SELECT MAX(batch_id) FROM load_batches)", (actor,)
                 )
 
+            generations.activate(current_pi["pi_id"], sha)
             plan = run_plan(0)
             result = {"dataset": name, "sha256": sha, "rows": counts,
                       "data_quality": dq, "plan": plan}

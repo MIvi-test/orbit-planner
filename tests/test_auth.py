@@ -25,7 +25,9 @@ def secured(monkeypatch):
     monkeypatch.setenv("PI_PLANNER_AUTH", "required")
     monkeypatch.setenv("PI_PLANNER_ADMIN_TOKEN", ADMIN_TOKEN)
     monkeypatch.setattr(auth.db, "query_one", lambda sql, params=None: (
-        {"name": USERS[params[0]][0], "role": USERS[params[0]][1]} if params and params[0] in USERS else None
+        {"user_id": {"vera": 1, "pavel": 2, "alla": 3}[USERS[params[0]][0]],
+         "name": USERS[params[0]][0], "role": USERS[params[0]][1]}
+        if params and params[0] in USERS else None
     ))
     events: list[tuple] = []
     monkeypatch.setattr(auth.db, "execute_write", lambda sql, params=None, **kw: events.append(tuple(params or ())) or 1)

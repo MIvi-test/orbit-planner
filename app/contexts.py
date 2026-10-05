@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app import db, ingest
+from app.assistant import generations
 
 ROOT = Path(__file__).resolve().parent.parent
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$")
@@ -81,6 +82,8 @@ def create(data: bytes, filename: str, pi_id: str, scenario_id: str,
                     "UPDATE load_batches SET loaded_by = %s WHERE batch_id = "
                     "(SELECT MAX(batch_id) FROM load_batches)", (actor,),
                 )
+                digest = hashlib.sha256(data).hexdigest()
+                generations.activate(pi_id, digest, scenario_id=scenario_id)
                 for file in BOOTSTRAP_SQL[2:]:
                     conn.execute(ingest._strip_transaction((ROOT / file).read_text(encoding="utf-8")))
                 plan = ingest.run_plan(0)
@@ -93,7 +96,6 @@ def create(data: bytes, filename: str, pi_id: str, scenario_id: str,
                         "INSERT INTO schema_migrations (version, checksum) VALUES (%s, %s)",
                         (file.stem, hashlib.sha256(file.read_bytes()).hexdigest()),
                     )
-            digest = hashlib.sha256(data).hexdigest()
             conn.execute(
                 "INSERT INTO public.pi_contexts "
                 "(pi_id, scenario_id, schema_name, dataset_version) VALUES (%s, %s, %s, %s)",

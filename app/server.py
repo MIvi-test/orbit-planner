@@ -245,7 +245,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._gate(path):
                 pass  # ответ 401/403/429 уже отправлен
             elif path.startswith("/api/") or path == "/metrics":
-                if path in ("/api/livez", "/api/version", "/api/me", "/api/pi-contexts", "/metrics"):
+                if (path in ("/api/livez", "/api/version", "/api/me", "/api/pi-contexts", "/metrics")
+                        or path.startswith("/api/assistant/")):
                     self._api(path)
                 else:
                     try:
@@ -299,7 +300,7 @@ class Handler(BaseHTTPRequestHandler):
         METRICS.enter()
         try:
             if self._gate(path):
-                if path == "/api/pi-contexts":
+                if path == "/api/pi-contexts" or path.startswith("/api/assistant/"):
                     self._upload(path)
                 else:
                     try:
@@ -332,6 +333,15 @@ class Handler(BaseHTTPRequestHandler):
                 bytes=self._bytes,
                 client=self.address_string(),
             )
+
+    def do_PUT(self) -> None:  # noqa: N802
+        """Assistant settings use PUT; reuse the authenticated write envelope."""
+        path = urlparse(self.path).path
+        if not path.startswith("/api/assistant/"):
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED,
+                            {"error": "method_not_allowed", "message": path})
+            return
+        self.do_POST()
 
     # ------------------------------------------------------------ доступ (S-2)
     _principal: auth.Principal = auth.ANONYMOUS

@@ -37,6 +37,19 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 INSERT INTO schema_migrations (version, checksum) VALUES
 """
 
+ASSISTANT_BOOTSTRAP = """
+-- The seed is loaded after db/01_schema.sql. Register its first generation now.
+INSERT INTO public.assistant_dataset_generations
+    (generation_id, schema_name, pi_id, scenario_id, source_sha256)
+SELECT gen_random_uuid(), current_schema(), p.pi_id, 'main',
+       COALESCE((SELECT b.source_sha256 FROM load_batches b
+                 ORDER BY b.batch_id DESC LIMIT 1), 'unloaded')
+FROM pi_periods p
+WHERE NOT EXISTS (SELECT 1 FROM public.assistant_dataset_generations g
+                  WHERE g.schema_name = current_schema() AND g.active)
+ORDER BY p.pi_id LIMIT 1;
+"""
+
 
 def render() -> str:
     versions: list[str] = []
@@ -48,7 +61,7 @@ def render() -> str:
     if not versions:
         raise SystemExit(f"нет миграций в {MIGRATIONS}")
     rows = ",\n".join(f"  ('{version}', 'baseline')" for version in versions)
-    return f"{HEADER}{rows}\nON CONFLICT (version) DO NOTHING;\n"
+    return f"{HEADER}{rows}\nON CONFLICT (version) DO NOTHING;\n{ASSISTANT_BOOTSTRAP}"
 
 
 def main(argv: list[str] | None = None) -> int:
