@@ -127,9 +127,15 @@ async function parseErrorBody(res: Response): Promise<unknown> {
 }
 
 function messageFrom(body: unknown, fallback: string): string {
-  if (body && typeof body === 'object' && 'message' in body) {
+  if (body && typeof body === 'object') {
     const m = (body as { message?: unknown }).message
     if (typeof m === 'string') return m
+    // Ответы помощника: {error: {code, message, retryable}, request_id}
+    const nested = (body as { error?: unknown }).error
+    if (nested && typeof nested === 'object') {
+      const nm = (nested as { message?: unknown }).message
+      if (typeof nm === 'string') return nm
+    }
   }
   return fallback
 }

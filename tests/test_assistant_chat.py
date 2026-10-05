@@ -74,3 +74,16 @@ def test_worker_rechecks_user_role(monkeypatch):
     with pytest.raises(conversations.ChatError, match="user_no_longer_active"):
         worker._current_principal({"owner_key": "db:7", "input_payload": {
             "principal": {"source": "db", "user_id": 7}}})
+
+
+@pytest.mark.parametrize("raw", [None, {}, {"title": ""}, {"title": "   "}, {"title": "x" * 121}, {"title": 5},
+                                 {"title": "ok", "extra": 1}])
+def test_rename_rejects_bad_titles_before_touching_the_database(raw):
+    with pytest.raises(conversations.ChatError) as exc:
+        conversations.rename(auth.ANONYMOUS, str(uuid4()), raw)
+    assert exc.value.code == "invalid_title"
+
+
+def test_chat_owner_can_rename_and_delete_with_viewer_role():
+    assert auth.required_role("DELETE", "/api/assistant/conversations/abc") == "viewer"
+    assert auth.required_role("PUT", "/api/assistant/conversations/abc/title") == "viewer"

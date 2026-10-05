@@ -98,3 +98,12 @@ def test_fact_cache_returns_an_independent_value(monkeypatch):
     first["task_count"] = 999
     second = facts.get_overview(sid)
     assert second["task_count"] == 0 and calls == [1]
+
+
+def test_markdown_list_numbers_are_not_numeric_claims():
+    answer = {"summary": "План строится по шагам.",
+              "explanation": "1. Загрузка датасета.\n2) Проверка качества.\n  3. Расчёт плана.", "fact_refs": []}
+    evidence.render_fact_refs(answer, [])
+    answer["explanation"] += "\n4. В плане 37 задач."
+    with pytest.raises(ValueError, match="untyped_numeric_claim"):
+        evidence.render_fact_refs(answer, [])

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { L } from '../../components/imperium/L'
 import { Group, Paper, SimpleGrid, Skeleton, Stack, Table, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import type { ScreenId } from '../../hooks/useHashRoute'
@@ -139,7 +140,7 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
   if ([kpiQ, alertsQ, scheduleQ].some((q) => q.isPending)) {
     return (
       <Stack gap="md">
-        <Title order={2}>Сводка</Title>
+        <Title order={2}><L>Сводка</L></Title>
         <Skeleton height={120} />
         <Skeleton height={240} />
       </Stack>
@@ -169,7 +170,7 @@ export function SummaryScreen({ onNavigate }: { onNavigate: (id: ScreenId) => vo
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>Сводка</Title>
+          <Title order={2}><L>Сводка</L></Title>
           <Text c="dimmed" mt={2}>
             Главное по кварталу: что в плане, что под угрозой и что нужно решить. Подробности — по плиткам и в разделах слева.
           </Text>

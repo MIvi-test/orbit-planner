@@ -7,6 +7,7 @@
  * - `details.note` и `details.method` — готовый русский текст, как есть.
  */
 import { useQuery } from '@tanstack/react-query'
+import { L } from '../../components/imperium/L'
 import { Badge, Group, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Table, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import { useKpiSnapshots, useSprintForecastAccuracy, useSprints } from '../../hooks/useViews'
@@ -45,7 +46,7 @@ export function KpiScreen() {
   if (anyPending(queries)) {
     return (
       <Stack gap="md">
-        <Title order={2}>KPI</Title>
+        <Title order={2}><L>KPI</L></Title>
         <Skeleton height={220} />
         <Skeleton height={220} />
       </Stack>
@@ -54,7 +55,7 @@ export function KpiScreen() {
   if (error) {
     return (
       <Stack gap="md">
-        <Title order={2}>KPI</Title>
+        <Title order={2}><L>KPI</L></Title>
         <QueryError error={error} title="Не удалось загрузить KPI" />
       </Stack>
     )
@@ -70,7 +71,7 @@ export function KpiScreen() {
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>KPI</Title>
+          <Title order={2}><L>KPI</L></Title>
           <Text c="dimmed" mt={2}>
             Три показателя качества плана: насколько он выполняется, как идут спринты и как много зависит от одного человека.
           </Text>
@@ -224,7 +225,7 @@ function PredictabilityBlock({ rows }: { rows: KpiSnapshotRow[] }) {
         />
         <Stack gap="sm" style={{ flex: 1, minWidth: 260 }}>
           <Pair label="Прогноз" row={forecast} />
-          <Pair label="Факт" row={actual} emptyText="Факт появится после загрузки первого спринта." neutral={intermediate} />
+          <Pair label="Факт" row={actual} emptyText="Появится после загрузки первого спринта." neutral={intermediate} />
           {intermediate && ad && <ProgressVsPlan details={ad} />}
           {cover && <CoverageLine cover={cover} />}
           {d && (
@@ -310,7 +311,7 @@ function Pair({ label, row, emptyText, neutral = false }: { label: string; row?:
       </Text>
       {note && (
         <Text size="xs" c="dimmed" component="div">
-          {note}
+          {note.charAt(0).toUpperCase() + note.slice(1)}
         </Text>
       )}
     </div>

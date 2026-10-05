@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ActionIcon, Button, Group, Modal, NumberInput, Stack, Text, TextInput, Tooltip } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
+import { notifications } from '../../utils/notify'
 import { useQueryClient } from '@tanstack/react-query'
 import { setInitiativePriority } from '../../api/goals'
 import { useRun } from '../../hooks/useRun'

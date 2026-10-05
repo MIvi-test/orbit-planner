@@ -1,4 +1,5 @@
 import { Alert, SimpleGrid, Stack, Text, Title } from '@mantine/core'
+import { L } from '../../components/imperium/L'
 import { DatasetDropzone } from './DatasetDropzone'
 import { ActualsDropzone } from './ActualsDropzone'
 import { UploadHistory } from './UploadHistory'
@@ -16,7 +17,7 @@ export function UploadScreen({ onOpenPlan }: { onOpenPlan: () => void }) {
   return (
     <Stack gap="xl">
       <div>
-        <Title order={2}>Загрузка данных</Title>
+        <Title order={2}><L>Загрузка данных</L></Title>
         <Text c="dimmed" mt={4}>
           Загрузите выданный датасет — план построится автоматически. Раз в две
           недели загружайте факт закрытого спринта: сервис пересчитает

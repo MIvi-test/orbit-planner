@@ -110,9 +110,11 @@ def render_fact_refs(answer: dict[str, Any], records: list[dict[str, Any]]) -> N
         rendered.append(f"{field} = {value} [evidence:{ref['evidence_id']}]")
     if rendered:
         answer["explanation"] += ("\n\nПроверенные значения: " + "; ".join(rendered))
-    bare = re.sub(r"\[(?:evidence|kb):[^\]]+\]", "", answer["summary"] + answer["explanation"])
+    bare = re.sub(r"\[(?:evidence|kb):[^\]]+\]", "", answer["summary"] + "\n" + answer["explanation"])
     # Numerals in prose are forbidden; all numeric claims are rendered above.
     prose = bare.split("Проверенные значения:", 1)[0]
+    # Номера пунктов Markdown-списка («1.», «2)») — разметка, а не числовое утверждение.
+    prose = re.sub(r"(?m)^[ \t]*\d{1,2}[.)][ \t]", "- ", prose)
     if re.search(r"\d", prose):
         raise ValueError("untyped_numeric_claim")
 

@@ -10,6 +10,7 @@
  * показываются как есть.
  */
 import { useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { useQuery } from '@tanstack/react-query'
 import { Group, Paper, SegmentedControl, Select, Skeleton, Stack, Table, Text, TextInput, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
@@ -63,7 +64,7 @@ export function RisksScreen() {
   if (anyPending(queries)) {
     return (
       <Stack gap="md">
-        <Title order={2}>Риски</Title>
+        <Title order={2}><L>Риски</L></Title>
         <Skeleton height={96} />
         <Skeleton height={320} />
       </Stack>
@@ -73,7 +74,7 @@ export function RisksScreen() {
   if (error) {
     return (
       <Stack gap="md">
-        <Title order={2}>Риски</Title>
+        <Title order={2}><L>Риски</L></Title>
         <QueryError error={error} title="Не удалось загрузить риски" />
       </Stack>
     )
@@ -113,7 +114,7 @@ export function RisksScreen() {
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>Риски</Title>
+          <Title order={2}><L>Риски</L></Title>
           <Text c="dimmed" size="sm" mt={2}>
             {alerts.length > 0
               ? `${alerts.length} ${plural(alerts.length)} в этом прогоне: ${summary}.`

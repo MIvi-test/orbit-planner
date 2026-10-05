@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { L } from '../../components/imperium/L'
 import { Accordion, Anchor, Badge, Group, Paper, Popover, SimpleGrid, Skeleton, Stack, Table, Text, Title, UnstyledButton } from '@mantine/core'
 import { IconChevronDown } from '@tabler/icons-react'
 import { useHashQuery } from '../../hooks/useHashRoute'
@@ -30,7 +31,7 @@ export function ProfilesScreen() {
   if (query.isPending) {
     return (
       <Stack gap="md">
-        <Title order={2}>Профили</Title>
+        <Title order={2}><L>Профили</L></Title>
         <SimpleGrid cols={{ base: 1, md: 2 }}>
           <Skeleton height={360} />
           <Skeleton height={360} />
@@ -42,7 +43,7 @@ export function ProfilesScreen() {
   if (query.error) {
     return (
       <Stack gap="md">
-        <Title order={2}>Профили</Title>
+        <Title order={2}><L>Профили</L></Title>
         <QueryError error={query.error} title="Не удалось загрузить профили команд" />
       </Stack>
     )

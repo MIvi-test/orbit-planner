@@ -7,6 +7,9 @@ import type { ReactNode } from 'react'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Alert, Skeleton, Stack, Text } from '@mantine/core'
 import { ApiError, ServiceUnavailableError } from '../../api/client'
+import { useImperium } from '../../theme/appTheme'
+import { ServitorLoader } from '../imperium/ServitorLoader'
+import { WrathPanel } from '../imperium/ImperiumPanels'
 
 interface Props<T> {
   query: UseQueryResult<T>
@@ -27,7 +30,9 @@ export function QueryState<T>({
   emptyBody,
   children,
 }: Props<T>) {
+  const imperium = useImperium()
   if (query.isPending) {
+    if (imperium) return <ServitorLoader variant="panel" />
     return (
       <Stack gap={8}>
         {Array.from({ length: skeletonRows }).map((_, i) => (
@@ -39,6 +44,7 @@ export function QueryState<T>({
 
   if (query.isError) {
     const err = query.error
+    if (imperium) return <WrathPanel error={err} title={err instanceof ServiceUnavailableError ? 'API недоступен' : undefined} />
     if (err instanceof ServiceUnavailableError) {
       return (
         <Alert color="red" variant="light" title="API недоступен">

@@ -19,7 +19,7 @@ multipart в stdlib Python 3.13 разбирать нечем, а сырое т�
 нескольких эндпоинтов тянуть FastAPI/uvicorn не нужно — `uv.lock` остаётся без
 изменений. Метрики отдаются в текстовом формате Prometheus (version=0.0.4)
 руками, без `prometheus_client`; имена метрик — **замороженный контракт** для
-devops, описан в docs/RUNBOOK.md («Контракт для мониторинга»). Переименование
+devops, описан в docs/OBSERVABILITY.md. Переименование
 метрики или лейбла = сломанный дашборд, а не рефакторинг.
 
 Роли эндпоинтов разные, и путать их нельзя:
@@ -98,7 +98,7 @@ MIME_OVERRIDES = {
 }
 
 # Публичный контракт для фронта и devops. `/metrics` тоже здесь: он известен
-# серверу, но наружу его закрывает Caddy (`respond 404`) — см. RUNBOOK.
+# серверу, но наружу его закрывает Caddy (`respond 404`) — см. docs/OBSERVABILITY.md.
 # `/api/views` — справочник витрин; сами витрины живут под ним же, но лейблом
 # `route` становится `/api/views/{view}` (см. app/metrics.py).
 KNOWN_API = (
@@ -334,6 +334,15 @@ class Handler(BaseHTTPRequestHandler):
                 bytes=self._bytes,
                 client=self.address_string(),
             )
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        """Удаление своего чата помощника и выключение профиля модели; остальные маршруты DELETE не поддерживают."""
+        path = urlparse(self.path).path
+        if not (path.startswith("/api/assistant/conversations/") or path.startswith("/api/assistant/profiles/")):
+            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED,
+                            {"error": "method_not_allowed", "message": path})
+            return
+        self.do_POST()
 
     def do_PUT(self) -> None:  # noqa: N802
         """Assistant settings use PUT; reuse the authenticated write envelope."""
@@ -596,6 +605,13 @@ class Handler(BaseHTTPRequestHandler):
                 profile_id = None
             elif len(parts) == 1 and parts[0].isdigit() and self.command == "PUT":
                 profile_id = int(parts[0])
+            elif len(parts) == 1 and parts[0].isdigit() and self.command == "DELETE":
+                if not providers.deactivate(int(parts[0])):
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": path})
+                    return
+                self._audited("assistant_profile_delete", "ok", profile_id=int(parts[0]))
+                self._send_json(HTTPStatus.OK, {"deleted": True, "profile_id": int(parts[0])})
+                return
             elif len(parts) == 2 and parts[0].isdigit() and parts[1] == "check" and self.command == "POST":
                 profile = providers.get(int(parts[0]))
                 if profile is None:
@@ -669,6 +685,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["conversations"] and self.command == "POST":
                 result = conversations.create(self._principal, self._assistant_body())
                 status = HTTPStatus.CREATED
+            elif len(parts) == 2 and parts[0] == "conversations" and self.command == "DELETE":
+                result = conversations.delete(self._principal, parts[1])
+                status = HTTPStatus.OK
             elif (len(parts) == 4 and parts[0] == "conversations"
                   and parts[2:] == ["scenarios", "compare"] and self.command == "POST"):
                 result = scenarios.enqueue(self._principal, parts[1], self._assistant_body(),
@@ -681,6 +700,9 @@ class Handler(BaseHTTPRequestHandler):
                     status = HTTPStatus.OK
                 elif operation == "context" and self.command == "POST":
                     result = conversations.bind_context(self._principal, cid, self._assistant_body())
+                    status = HTTPStatus.OK
+                elif operation == "title" and self.command == "PUT":
+                    result = conversations.rename(self._principal, cid, self._assistant_body())
                     status = HTTPStatus.OK
                 elif operation == "messages" and self.command == "POST":
                     result = conversations.send_message(self._principal, cid, self._assistant_body(),

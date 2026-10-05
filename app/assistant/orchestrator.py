@@ -32,9 +32,11 @@ def classify(question: str, *, has_snapshot: bool,
                 re.search(r"ставк|спринт|половин|четверт|сотрудник|инженер|роль|команд", text))):
         return Intent("compare_measures", "Укажите ID сотрудников, команду, роль, ставку, "
                       "спринт и навыки для мер; расчёт выполняется через сценарный API чата.")
-    if re.search(r"как (?:работает|устроен|начать|система)|что такое|чем отличается|правил[оа]|зачем", text):
-        if not re.search(r"мо[яию]|мои|именно|у нас|эт[ауи] задач|эт[ауи] команд", text):
-            return Intent("system_help")
+    own = re.search(r"мо[яеию]|мои|именно|у нас|наш|эт[аоуи]т? (?:задач|команд|прогон|план)", text)
+    if re.search(r"как (?:работает|устроен|строится|считается|рассчитыва|формируется|определяется|"
+                 r"загрузить|начать|система)|что такое|что означа|что значит|чем отличается|откуда бер|"
+                 r"правил[оа]|зачем|что (?:ты )?умеешь", text) and not own:
+        return Intent("system_help")
     mentioned = [code for code in metric_codes
                  if re.search(r"(?<![\w])" + re.escape(code.casefold()) + r"(?![\w])", text)]
     if len(mentioned) == 1:
@@ -43,9 +45,13 @@ def classify(question: str, *, has_snapshot: bool,
     if focus:
         return Intent("task_explanation" if focus[0] == "task" else "team_analysis")
     if re.search(r"мо[яию]|мои|у нас|команд|задач|план|дефицит|прогон", text):
+        if not has_snapshot and not own:
+            # Чат «о системе»: общий вопрос со словом «план» — это справка, а не разбор конкретного прогона.
+            return Intent("system_help")
         return (Intent("overview") if has_snapshot else
                 Intent("overview", "Для разбора вашего плана выберите PI и прогон."))
-    return Intent("system_help")
+    # В чате с прогоном неопознанный вопрос («что произошло?») — о прогоне: модель получает его обзор.
+    return Intent("overview") if has_snapshot else Intent("system_help")
 
 
 def operation(intent: Intent) -> str:

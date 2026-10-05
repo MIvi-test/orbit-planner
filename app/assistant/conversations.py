@@ -151,6 +151,38 @@ def settings(principal: auth.Principal, conversation_id: Any, raw: Any) -> dict[
         return _public(cur, row)
 
 
+TITLE_MAX = 120
+
+
+def rename(principal: auth.Principal, conversation_id: Any, raw: Any) -> dict[str, Any]:
+    """Пользователь называет свой чат сам; название не влияет на контекст и ответы."""
+    if not isinstance(raw, dict) or set(raw) != {"title"}:
+        raise ChatError("invalid_title")
+    title = raw["title"]
+    if not isinstance(title, str) or not title.strip() or len(title.strip()) > TITLE_MAX:
+        raise ChatError("invalid_title")
+    cid = _uuid(conversation_id)
+    with db.transaction(operation="assistant_conversation_rename") as cur:
+        row = _joined(cur, cid, principal.owner_key, lock=True)
+        cur.execute("UPDATE public.assistant_conversations SET title = %s, updated_at = now() "
+                    "WHERE conversation_id = %s", (title.strip(), cid))
+        row["title"] = title.strip()
+        return _public(cur, row)
+
+
+def delete(principal: auth.Principal, conversation_id: Any) -> dict[str, Any]:
+    """Удаляет свой чат со всей историей, доказательствами и рекомендациями. Чат с активным заданием не удаляется."""
+    cid = _uuid(conversation_id)
+    with db.transaction(operation="assistant_conversation_delete") as cur:
+        _joined(cur, cid, principal.owner_key, lock=True)
+        _no_active_job(cur, cid)
+        for table in ("assistant_recommendations", "assistant_evidence", "assistant_scenario_results",
+                      "assistant_messages", "assistant_jobs", "assistant_context_revisions"):
+            cur.execute(f"DELETE FROM public.{table} WHERE conversation_id = %s", (cid,))  # noqa: S608 - имена из списка выше
+        cur.execute("DELETE FROM public.assistant_conversations WHERE conversation_id = %s", (cid,))
+    return {"deleted": True, "conversation_id": str(cid)}
+
+
 def _no_active_job(cur: Any, cid: UUID) -> None:
     cur.execute("SELECT 1 FROM public.assistant_jobs WHERE conversation_id = %s "
                 "AND status IN ('queued', 'running')", (cid,))
@@ -213,7 +245,7 @@ def send_message(principal: auth.Principal, conversation_id: Any, raw: Any,
     if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
         raise ChatError("idempotency_key_required")
     try:
-        deadline_seconds = int(os.environ.get("PI_PLANNER_ASSISTANT_MESSAGE_DEADLINE_SECONDS", "30"))
+        deadline_seconds = int(os.environ.get("PI_PLANNER_ASSISTANT_MESSAGE_DEADLINE_SECONDS", "150"))
     except ValueError as exc:
         raise ChatError("invalid_message_deadline") from exc
     if not 10 <= deadline_seconds <= 300:

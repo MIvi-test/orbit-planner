@@ -7,6 +7,7 @@
  *  - роли без людей в штате — вопрос найма, отдельный блок.
  */
 import { useMemo, useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Group, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import {
@@ -27,6 +28,7 @@ import { HiringGap } from './HiringGap'
 import { TeamDrawer } from './TeamDrawer'
 import { LEVEL_COLOR, LEVEL_WORD, starLevel, type StarLevel } from './risk'
 import { muted, panel } from './darkStyles'
+import { useLabel } from '../../theme/imperiumLabels'
 
 export function StarMapScreen() {
   const { runId } = useRun()
@@ -60,7 +62,7 @@ export function StarMapScreen() {
   if (anyPending(queries)) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <Skeleton height={560} style={{ opacity: 0.15 }} />
       </>,
     )
@@ -68,7 +70,7 @@ export function StarMapScreen() {
   if (error) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <QueryError error={error} title="Не удалось загрузить звёздную карту" />
       </>,
     )
@@ -78,7 +80,7 @@ export function StarMapScreen() {
   if (orbits.length === 0) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <div style={panel}>
           <Text size="sm">Инженеров в базе нет. Загрузите датасет на вкладке «Загрузка» — карта построится по составу команд.</Text>
         </div>
@@ -103,7 +105,7 @@ export function StarMapScreen() {
     <>
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2} c="var(--star)">Звёздная карта</Title>
+          <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
           <Text size="sm" mt={2} style={muted}>
             {orbits.length} инженеров в {teams.size} командах, {shared} из них делят ставку между двумя командами.{' '}
             {single} из {skills.length} компетенций держатся на одном человеке, {critical} — критично.
@@ -206,6 +208,7 @@ function Legend({
   onClearSkill: () => void
 }) {
   const order: StarLevel[] = ['critical', 'single', 'ok']
+  const label = useLabel()
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, padding: '8px 10px', fontSize: 13, alignItems: 'center' }}>
       {order.map((l) => (
@@ -213,7 +216,7 @@ function Legend({
           <svg width="14" height="14" aria-hidden>
             <circle cx="7" cy="7" r="5" fill={LEVEL_COLOR[l]} />
           </svg>
-          {LEVEL_WORD[l]} <span className="mono" style={muted}>{levels.get(l) ?? 0}</span>
+          {label(LEVEL_WORD[l])} <span className="mono" style={muted}>{levels.get(l) ?? 0}</span>
         </span>
       ))}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

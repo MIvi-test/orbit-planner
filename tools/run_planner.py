@@ -16,7 +16,7 @@
     SELECT * FROM v_plan_violations WHERE run_id = <run_id> AND severity = 'error';
 
 **Заморозка.** После первого прогона базу не пересевать: `plan_runs` хранит
-историю пересчётов, а `build/seed.sql` её сносит (docs/RUNBOOK.md, разделы 3 и 6).
+историю пересчётов, а `build/seed.sql` её сносит (docs/RUNBOOK.md, разделы 3 и 7).
 """
 from __future__ import annotations
 

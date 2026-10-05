@@ -104,7 +104,7 @@ def validate(raw: Any) -> dict[str, Any]:
         profile[key] = dict(profile.get(key, {})) if isinstance(profile.get(key, {}), dict) else profile.get(key)
         if not isinstance(profile[key], dict) or len(json.dumps(profile[key])) > 4096:
             raise ProfileError(f"{key} must be a small object")
-    if set(profile["capabilities"]) - {"json_mode"} or any(
+    if set(profile["capabilities"]) - {"json_mode", "thinking"} or any(
         not isinstance(value, bool) for value in profile["capabilities"].values()
     ):
         raise ProfileError("unsupported capabilities; runtime capabilities come from /check")
@@ -151,24 +151,62 @@ _COLUMNS = ("name", "protocol", "base_url", "model", "auth_type", "auth_header_n
             "network_scope", "capabilities", "limits", "min_role")
 
 
+def _merge_previous(raw: Any, previous: dict[str, Any]) -> Any:
+    """Правка профиля из интерфейса: ссылка на ключ и имя заголовка наружу не отдаются, лимиты и роль
+    в форме не показываются — если их нет в запросе, остаются прежними."""
+    if not isinstance(raw, dict):
+        return raw
+    merged = dict(raw)
+    for key in ("limits", "min_role"):
+        if key not in raw and previous.get(key) is not None:
+            merged[key] = previous[key]
+    if "capabilities" not in raw:
+        # Наблюдённые проверкой свойства новой версии не переносятся; настройки администратора — да.
+        kept = {k: v for k, v in (previous.get("capabilities") or {}).items() if k in ("json_mode", "thinking")}
+        if kept:
+            merged["capabilities"] = kept
+    if raw.get("auth_type") == previous["auth_type"] != "none":
+        if "api_key_ref" not in raw and previous["api_key_ref"] is not None:
+            merged["api_key_ref"] = previous["api_key_ref"]
+        if raw.get("auth_type") == "header" and "auth_header_name" not in raw:
+            merged["auth_header_name"] = previous["auth_header_name"]
+    return merged
+
+
 def save(raw: Any, profile_id: int | None = None) -> dict[str, Any] | None:
-    p = validate(raw)
-    values = tuple(Jsonb(p[key]) if key in {"capabilities", "limits"} else p[key] for key in _COLUMNS)
+    if profile_id is None:
+        p = validate(raw)
     with db.transaction(operation="assistant_profile_save") as cur:
         version = 1
         if profile_id is not None:
-            cur.execute("SELECT name, version FROM public.assistant_provider_profiles "
+            cur.execute("SELECT * FROM public.assistant_provider_profiles "
                         "WHERE profile_id = %s AND active FOR UPDATE", (profile_id,))
             previous = cur.fetchone()
             if previous is None:
                 return None
+            p = validate(_merge_previous(raw, previous))
             if previous["name"] != p["name"]:
                 raise ProfileError("profile name cannot change")
             version = previous["version"] + 1
             cur.execute("UPDATE public.assistant_provider_profiles SET active = FALSE WHERE profile_id = %s", (profile_id,))
+        values = tuple(Jsonb(p[key]) if key in {"capabilities", "limits"} else p[key] for key in _COLUMNS)
         cur.execute("INSERT INTO public.assistant_provider_profiles (" + ",".join(_COLUMNS) + ", version) "
                     "VALUES (" + ",".join(["%s"] * len(_COLUMNS)) + ", %s) RETURNING *", values + (version,))
-        return public(cur.fetchone())
+        saved = cur.fetchone()
+        if profile_id is not None:
+            # Чаты переходят на новую версию профиля; «только локальные» — лишь если профиль остался внутренним.
+            cur.execute("UPDATE public.assistant_conversations SET profile_id = %s WHERE profile_id = %s"
+                        + ("" if saved["network_scope"] == "internal" else " AND privacy_mode <> 'local_only'"),
+                        (saved["profile_id"], profile_id))
+        return public(saved)
+
+
+def deactivate(profile_id: int) -> bool:
+    """Профиль выключается, а не стирается: на него ссылаются прошлые ответы. Чатам нужно выбрать другую модель."""
+    with db.transaction(operation="assistant_profile_delete") as cur:
+        cur.execute("UPDATE public.assistant_provider_profiles SET active = FALSE "
+                    "WHERE profile_id = %s AND active RETURNING profile_id", (profile_id,))
+        return cur.fetchone() is not None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -238,11 +276,15 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
     protocol = profile["protocol"]
     structured = bool(output_schema and profile.get("capabilities", {}).get("structured_output_verified"))
     json_mode = bool(output_schema and profile.get("capabilities", {}).get("json_mode"))
+    # thinking=False выключает скрытые рассуждения (Qwen3, DeepSeek, Ollama, Gemini 2.5): ответ в разы быстрее.
+    no_thinking = profile.get("capabilities", {}).get("thinking") is False
     if protocol == "gemini":
         body: dict[str, Any] = {"contents": [{"role": "model" if m["role"] == "assistant" else "user",
                              "parts": [{"text": m["content"]}]} for m in messages],
                                 "systemInstruction": {"parts": [{"text": system}]},
                                 "generationConfig": {"maxOutputTokens": max_output_tokens}}
+        if no_thinking:
+            body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
         if structured:
             gemini_schema = {key: value for key, value in output_schema.items()
                              if key != "additionalProperties"}
@@ -254,12 +296,16 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
                 "stream": False}
         if protocol == "ollama":
             body["options"] = {"num_predict": max_output_tokens}
+            if no_thinking:
+                body["think"] = False
             if structured:
                 body["format"] = output_schema
             elif json_mode:
                 body["format"] = "json"
         else:
             body["max_tokens"] = max_output_tokens
+            if no_thinking:
+                body["enable_thinking"] = False
             if structured:
                 body["response_format"] = {"type": "json_schema", "json_schema":
                                            {"name": "answer", "strict": True, "schema": output_schema}}

@@ -1,0 +1,284 @@
+/* ===== Тема «Империум» (светлый «пергамент» и тёмный «металл»). Только оформление. ===== */
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] {
+  --ink: #d8d4c8; --paper: #0b0d0c; --surface: #14181a; --line: #2e373b; --muted: #9e9a8c;
+  --stamp: #e0561b; --wax: #c9a227; --wax-text: #d8b13a; --route: #39d98a; --route-text: #39d98a;
+  --bar-text: #0b0d0c;
+  --mantine-color-post-0: #f6efd6;
+  --mantine-color-post-1: #ecdfa8;
+  --mantine-color-post-2: #e0cf7d;
+  --mantine-color-post-3: #d8bf54;
+  --mantine-color-post-4: #d1b13a;
+  --mantine-color-post-5: #c9a227;
+  --mantine-color-post-6: #b78f1f;
+  --mantine-color-post-7: #9a7619;
+  --mantine-color-post-8: #7a5c12;
+  --mantine-color-post-9: #5a4309;
+  --mantine-color-body: #0b0d0c;
+  --mantine-color-text: #d8d4c8;
+  --mantine-color-dimmed: #9e9a8c;
+  --mantine-color-default: #14181a;
+  --mantine-color-default-border: #2e373b;
+  --mantine-color-default-hover: #1f2528;
+  --mantine-primary-color-filled: #c9a227;
+  --mantine-primary-color-filled-hover: #b78f1f;
+  --mantine-primary-color-light: rgba(201,162,39,0.18);
+  --mantine-primary-color-light-color: #d8bf54;
+  --mantine-primary-color-contrast: #0b0d0c;
+  --void: #0b0d0c; --field: #14181a; --star: #d8d4c8; --orbit: #c9a227;
+  --flare: #e0561b; --ember: #d8b13a; --bloom: #39d98a;
+  --sm-bg0: #1f2528; --sm-bg1: #14181a; --sm-bg2: #0b0d0c;
+  --sm-core0: #2a3236; --sm-core1: #14181a; --sm-dot: #d9c9a0;
+  --sm-muted: #9e9a8c; --sm-border: rgba(201,162,39,0.4);
+  --accent2: #8fb0ee; --accent2-bg: #1d3f8f;
+  --imp-gold: #c9a227; --imp-metal: #1f2528; --imp-grain: 0.07;
+  --font-heading: 'Oswald', 'Manrope', 'Golos Text', system-ui, sans-serif;
+  --font-display: 'Oswald', 'Golos Text', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'PT Mono', ui-monospace, monospace;
+  color-scheme: dark;
+}
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] .mantine-Paper-root,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  background-color: #14181a;
+}
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] .mantine-AppShell-header,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='dark'] .mantine-AppShell-navbar {
+  border-color: #2e373b;
+}
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] {
+  --ink: #1b1a14; --paper: #d9c9a0; --surface: #efe4c6; --line: #a8946a; --muted: #5e5238;
+  --stamp: #a3141a; --wax: #9c6a00; --wax-text: #7a5200; --route: #1a7a4a; --route-text: #14603a;
+  --bar-text: #ffffff;
+  --mantine-color-post-0: #f6efd6;
+  --mantine-color-post-1: #e7d9a8;
+  --mantine-color-post-2: #d5be74;
+  --mantine-color-post-3: #c3a448;
+  --mantine-color-post-4: #b08c2a;
+  --mantine-color-post-5: #9c7716;
+  --mantine-color-post-6: #8a6d0a;
+  --mantine-color-post-7: #765b08;
+  --mantine-color-post-8: #614a06;
+  --mantine-color-post-9: #4a3704;
+  --mantine-color-body: #d9c9a0;
+  --mantine-color-text: #1b1a14;
+  --mantine-color-dimmed: #5e5238;
+  --mantine-color-default: #efe4c6;
+  --mantine-color-default-border: #a8946a;
+  --mantine-color-default-hover: #e2d4aa;
+  --mantine-primary-color-filled: #614a06;
+  --mantine-primary-color-filled-hover: #4a3704;
+  --mantine-primary-color-light: rgba(97,74,6,0.14);
+  --mantine-primary-color-light-color: #614a06;
+  --mantine-primary-color-contrast: #ffffff;
+  --void: #e4d6b0; --field: #efe4c6; --star: #1b1a14; --orbit: #1d3f8f;
+  --flare: #a3141a; --ember: #9c6a00; --bloom: #1a7a4a;
+  --sm-bg0: #f6edd2; --sm-bg1: #e4d6b0; --sm-bg2: #cdbb8b;
+  --sm-core0: #f6edd2; --sm-core1: #cdbb8b; --sm-dot: #1d3f8f;
+  --sm-muted: #5e5238; --sm-border: rgba(29,63,143,0.4);
+  --accent2: #1d3f8f; --accent2-bg: #c9d4ee;
+  --imp-gold: #8a6d0a; --imp-metal: #cdbb8b; --imp-grain: 0.10;
+  --font-heading: 'Oswald', 'Manrope', 'Golos Text', system-ui, sans-serif;
+  --font-display: 'Oswald', 'Golos Text', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'PT Mono', ui-monospace, monospace;
+  color-scheme: light;
+}
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] .mantine-Paper-root,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  background-color: #efe4c6;
+}
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] .mantine-AppShell-header,
+:root[data-app-theme='imperium'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
+  border-color: #a8946a;
+}
+
+/* ---- Материалы: зерно металла, срезанные углы, клёпки ---- */
+:root[data-app-theme='imperium'] body {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.45  0 0 0 0 0.3  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-blend-mode: overlay;
+}
+:root[data-app-theme='imperium'] .mantine-Paper-root {
+  --cut: 10px;
+  position: relative;
+  border-radius: 0;
+  clip-path: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+  border-color: var(--imp-gold);
+  border-width: 1px;
+}
+:root[data-app-theme='imperium'] .mantine-Paper-root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 5px 5px, var(--imp-gold) 1.5px, transparent 2.2px) top left / 20px 20px no-repeat,
+    radial-gradient(circle at calc(100% - 5px) 5px, var(--imp-gold) 1.5px, transparent 2.2px) top right / 20px 20px no-repeat,
+    radial-gradient(circle at 5px calc(100% - 5px), var(--imp-gold) 1.5px, transparent 2.2px) bottom left / 20px 20px no-repeat,
+    radial-gradient(circle at calc(100% - 5px) calc(100% - 5px), var(--imp-gold) 1.5px, transparent 2.2px) bottom right / 20px 20px no-repeat;
+}
+
+/* ---- Типографика: военный гротеск капсом для заголовков ---- */
+:root[data-app-theme='imperium'] .mantine-Title-root,
+:root[data-app-theme='imperium'] .nav-label,
+:root[data-app-theme='imperium'] .mantine-Tabs-tab {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: var(--font-heading);
+}
+:root[data-app-theme='imperium'] .mantine-Title-root {
+  font-weight: 600;
+  color: var(--imp-gold);
+}
+/* Данные остаются читаемыми: таблицы и текст без декора */
+:root[data-app-theme='imperium'] .mantine-Table-table {
+  font-family: var(--font-text);
+}
+
+/* ---- Кнопки: срезанные углы, фаска, золотая кромка ---- */
+:root[data-app-theme='imperium'] .mantine-Button-root,
+:root[data-app-theme='imperium'] .mantine-ActionIcon-root {
+  border-radius: 0;
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--font-heading);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}
+:root[data-app-theme='imperium'] .mantine-Button-root:hover,
+:root[data-app-theme='imperium'] .mantine-ActionIcon-root:hover {
+  box-shadow: inset 0 0 0 2px var(--imp-gold);
+}
+:root[data-app-theme='imperium'] .mantine-Button-root:active,
+:root[data-app-theme='imperium'] .mantine-ActionIcon-root:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.55);
+}
+:root[data-app-theme='imperium'] .mantine-Button-root:focus-visible,
+:root[data-app-theme='imperium'] .mantine-ActionIcon-root:focus-visible,
+:root[data-app-theme='imperium'] .nav-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--imp-gold), 0 0 0 2px var(--imp-gold);
+}
+:root[data-app-theme='imperium'] .mantine-Input-input,
+:root[data-app-theme='imperium'] .mantine-Select-input {
+  border-radius: 0;
+  border-color: var(--imp-gold);
+}
+:root[data-app-theme='imperium'] .mantine-Dropzone-root {
+  border: 2px dashed var(--imp-gold);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--imp-metal) 40%, transparent);
+}
+:root[data-app-theme='imperium'] .mantine-Badge-root,
+:root[data-app-theme='imperium'] .team-chip {
+  border-radius: 0;
+}
+
+/* ---- Боковое меню и шапка ---- */
+:root[data-app-theme='imperium'] .nav-item {
+  border-radius: 0;
+  border-left: 3px solid transparent;
+}
+:root[data-app-theme='imperium'] .nav-item[data-active] {
+  border-left-color: var(--imp-gold);
+  background: color-mix(in srgb, var(--imp-gold) 14%, transparent);
+  color: var(--imp-gold);
+}
+
+/* ---- Маяк Варпа ---- */
+.warp-beacon--active { color: var(--imp-gold); }
+.warp-beacon--empty { color: #6b6b64; }
+.warp-beacon--offline { color: #55554f; }
+.warp-beacon--active .warp-beacon__glow { animation: beacon-pulse 2.8s ease-in-out infinite; transform-origin: 15px 14px; }
+.warp-beacon--offline .warp-beacon__lamp { animation: beacon-lamp 1.2s steps(2) infinite; }
+.warp-beacon__text { color: inherit; }
+@keyframes beacon-pulse { 0%, 100% { opacity: 0.12; transform: scale(0.92); } 50% { opacity: 0.34; transform: scale(1.08); } }
+@keyframes beacon-lamp { 50% { opacity: 0.25; } }
+
+/* ---- Сервиторы ---- */
+.servitor { color: var(--mantine-color-green-5, #39d98a); padding: 8px; }
+.servitor--fullscreen { padding: 24px; }
+.servitor-fullscreen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--mantine-color-body); }
+.servitor__gear { transform-origin: 38px 38px; animation: servitor-spin 3s linear infinite; }
+.servitor__arm { transform-origin: 6px 40px; animation: servitor-arm 1.8s ease-in-out infinite alternate; }
+.servitor__skull { animation: servitor-bob 2.4s ease-in-out infinite; }
+@keyframes servitor-spin { to { transform: rotate(360deg); } }
+@keyframes servitor-arm { from { transform: rotate(-12deg); } to { transform: rotate(10deg); } }
+@keyframes servitor-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+:root[data-app-theme='imperium'] .mantine-Skeleton-root {
+  background-color: color-mix(in srgb, var(--imp-metal) 70%, transparent);
+  border-radius: 0;
+}
+:root[data-app-theme='imperium'] .mantine-Skeleton-root::after {
+  background: repeating-linear-gradient(0deg, rgba(57, 217, 138, 0.08) 0 2px, transparent 2px 5px);
+}
+
+/* ---- «Гнев Императора» ---- */
+.wrath-panel {
+  position: relative;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #3a0709, #1a0304);
+  color: #f1d8d0;
+  border: 2px solid #a3141a;
+  box-shadow: inset 0 0 22px rgba(224, 86, 27, 0.45), 0 0 14px rgba(163, 20, 26, 0.5);
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+  background-image:
+    linear-gradient(135deg, #3a0709, #1a0304),
+    repeating-linear-gradient(115deg, transparent 0 38px, rgba(224, 86, 27, 0.18) 38px 39px, transparent 39px 70px);
+  background-blend-mode: normal, screen;
+}
+.wrath-panel__title { color: #e0561b; letter-spacing: 0.1em; font-family: var(--font-heading); }
+.wrath-panel__lines { margin: 4px 0 0; white-space: pre-wrap; font-size: 0.85rem; color: #f1d8d0; }
+
+/* ---- «Ультрамарины» ---- */
+.victory-panel {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #1d3f8f, #14295d);
+  color: #eef2fb;
+  border: 2px solid #c9a227;
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.5);
+  clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+}
+.victory-panel__title { color: #c9a227; letter-spacing: 0.1em; font-family: var(--font-heading); }
+
+/* ---- Уведомления: «Адептус Механикус» и успех ---- */
+.imperium-note { border-radius: 0; font-family: var(--font-mono); }
+.imperium-note--info, .imperium-note--warning, .imperium-note--critical {
+  background: #07130d !important;
+  border: 1px solid #39d98a !important;
+  color: #39d98a !important;
+}
+.imperium-note--warning { border-color: #d8b13a !important; }
+.imperium-note--critical { border-color: #e0561b !important; background: #1a0804 !important; }
+.imperium-note .mantine-Notification-title, .imperium-note .mantine-Notification-description { color: inherit !important; }
+.imperium-note .mantine-Notification-title { letter-spacing: 0.08em; font-weight: 700; }
+.imperium-note--info .mantine-Notification-title, .imperium-note--success .mantine-Notification-title { }
+.imperium-note--warning .mantine-Notification-title { color: #d8b13a !important; }
+.imperium-note--critical .mantine-Notification-title { color: #e0561b !important; }
+.imperium-note--success {
+  background: #1d3f8f !important;
+  border: 2px solid #c9a227 !important;
+  color: #eef2fb !important;
+}
+.imperium-note--success .mantine-Notification-title { color: #c9a227 !important; }
+
+/* ---- Подвал ---- */
+.imperium-footer {
+  margin-top: 28px;
+  padding: 10px 0;
+  border-top: 1px solid var(--imp-gold);
+  color: var(--imp-gold);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Подписи меню в «Империуме» длиннее обычных: чуть уже набор, чтобы влезали в панель. */
+:root[data-app-theme='imperium'] .nav-item .nav-label {
+  font-size: 0.88rem;
+  letter-spacing: 0.04em;
+}

@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useQuery } from '@tanstack/react-query'
-import { notifications } from '@mantine/notifications'
+import { notifications } from '../../utils/notify'
 import { Badge, Button, Drawer, Group, List, Select, Stack, Table, Text, TextInput } from '@mantine/core'
 import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanGoalOutcomeRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'

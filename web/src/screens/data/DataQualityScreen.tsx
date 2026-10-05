@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Badge, Button, Group, Menu, Paper, SegmentedControl, Select, Skeleton, Stack, Table, Text, TextInput, Title } from '@mantine/core'
 import { IconDownload } from '@tabler/icons-react'
 import { exportRows, type ExportColumn, type ExportFormat } from '../../utils/exportData'
@@ -39,8 +40,8 @@ export function DataQualityScreen() {
   )
   const count = (s: string) => rows.filter((r) => r.severity === s).length
 
-  if (query.isPending) return <Stack><Title order={2}>Данные</Title><Skeleton height={300} /></Stack>
-  if (query.error) return <Stack><Title order={2}>Данные</Title><QueryError error={query.error} title="Не удалось загрузить журнал качества данных" /></Stack>
+  if (query.isPending) return <Stack><Title order={2}><L>Данные</L></Title><Skeleton height={300} /></Stack>
+  if (query.error) return <Stack><Title order={2}><L>Данные</L></Title><QueryError error={query.error} title="Не удалось загрузить журнал качества данных" /></Stack>
 
   return (
     <Stack gap="md">

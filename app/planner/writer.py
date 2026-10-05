@@ -28,7 +28,7 @@ def write_plan(plan: Plan, *, inputs: Inputs | None = None,
                options: dict[str, Any] | None = None) -> int:
     """Пишет и проверяет контракт в одной транзакции; публикует только без ошибок.
 
-    `is_loan` не пишем никогда — это генерируемая колонка (см. RUNBOOK, раздел 6).
+    `is_loan` не пишем никогда — это генерируемая колонка (см. docs/RUNBOOK.md, раздел 7).
     """
     started = time.perf_counter()
     plan.params.setdefault("observability", {})

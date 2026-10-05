@@ -2,7 +2,7 @@
 
 Живая база не нужна — `app.db.health` и сборщик бизнес-метрик подменяются,
 поэтому тесты проходят и на машине без PostgreSQL. Проверка на настоящей базе
-описана в docs/RUNBOOK.md (разделы с приёмкой сервера и метрик).
+описана в docs/RUNBOOK.md (раздел 6.3) и docs/OBSERVABILITY.md.
 """
 from __future__ import annotations
 

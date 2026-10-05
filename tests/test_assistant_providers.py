@@ -72,3 +72,52 @@ def test_secret_never_in_public_profile(monkeypatch):
     assert result["credential_configured"]
     assert "example-secret" not in json.dumps(result)
     assert "api_key_ref" not in result
+
+
+def test_edit_without_key_ref_keeps_previous_reference():
+    previous = {"auth_type": "bearer", "api_key_ref": "env:OLD_KEY", "auth_header_name": None,
+                "limits": {"max_tokens": 900}, "min_role": "planner"}
+    raw = {"name": "x", "auth_type": "bearer"}
+    merged = providers._merge_previous(raw, previous)
+    assert merged["api_key_ref"] == "env:OLD_KEY"
+    assert merged["limits"] == {"max_tokens": 900} and merged["min_role"] == "planner"
+    assert providers._merge_previous({**raw, "api_key_ref": "env:NEW"}, previous)["api_key_ref"] == "env:NEW"
+    assert "api_key_ref" not in providers._merge_previous({"auth_type": "none"}, previous)
+    header = {"auth_type": "header", "api_key_ref": "env:G", "auth_header_name": "x-goog-api-key"}
+    merged = providers._merge_previous({"auth_type": "header", "api_key_ref": "env:H"}, header)
+    assert merged["auth_header_name"] == "x-goog-api-key" and merged["api_key_ref"] == "env:H"
+
+
+def test_profile_delete_is_admin_only():
+    from app import auth
+    assert auth.required_role("DELETE", "/api/assistant/profiles/3") == "admin"
+
+
+@pytest.mark.parametrize("protocol, check", [
+    ("openai_compatible", lambda b: b["enable_thinking"] is False),
+    ("ollama", lambda b: b["think"] is False),
+    ("gemini", lambda b: b["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}),
+])
+def test_thinking_off_is_sent_per_protocol(monkeypatch, protocol, check):
+    bodies = []
+    reply = ({"candidates": [{"content": {"parts": [{"text": "{}"}]}}]} if protocol == "gemini"
+             else {"message": {"content": "{}"}} if protocol == "ollama"
+             else {"choices": [{"message": {"content": "{}"}}]})
+    monkeypatch.setattr(providers, "_request", lambda _p, body, _t: bodies.append(body) or reply)
+    p = profile() | {"protocol": protocol, "capabilities": {"thinking": False}}
+    providers.generate(p, [{"role": "user", "content": "q"}], "system")
+    assert check(bodies[0])
+
+
+def test_thinking_flag_is_omitted_by_default(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(providers, "_request", lambda _p, body, _t: bodies.append(body) or
+                        {"choices": [{"message": {"content": "{}"}}]})
+    providers.generate(profile(), [{"role": "user", "content": "q"}], "system")
+    assert "enable_thinking" not in bodies[0]
+
+
+def test_edit_keeps_admin_capabilities_but_not_observed_ones():
+    previous = {"auth_type": "none", "api_key_ref": None, "auth_header_name": None,
+                "capabilities": {"thinking": False, "structured_output_verified": True}}
+    assert providers._merge_previous({"auth_type": "none"}, previous)["capabilities"] == {"thinking": False}

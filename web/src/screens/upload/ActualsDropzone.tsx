@@ -7,14 +7,16 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Dropzone } from '@mantine/dropzone'
 import { Alert, Anchor, Button, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
+import { notifications } from '../../utils/notify'
 import { useActualReportIssues, useActualUploads, useSprints } from '../../hooks/useViews'
 import { reviewActualRole, uploadActuals } from '../../api/uploads'
 import { downloadTemplate } from '../../api/client'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
+import { useImperium } from '../../theme/appTheme'
 
 export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void }) {
+  const imperium = useImperium()
   const [busy, setBusy] = useState(false)
   const [selectedSprint, setSelectedSprint] = useState<number | null>(null)
   const [confirmComplete, setConfirmComplete] = useState(false)
@@ -183,7 +185,7 @@ export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void })
               multiple={false}
             >
               <Stack align="center" gap={4} py="md" style={{ pointerEvents: 'none' }}>
-                <Text fw={500}>Перетащите файл .csv или .xlsx сюда или нажмите</Text>
+                <Text fw={500}>{imperium ? 'ПОМЕСТИТЕ СВИТОК ЗДЕСЬ ВО СЛАВУ ИМПЕРАТОРА · .csv / .xlsx' : 'Перетащите файл .csv или .xlsx сюда или нажмите'}</Text>
                 <Text size="sm" c="dimmed">
                   заполненный шаблон факта спринта {reportSprint}
                 </Text>

@@ -256,14 +256,16 @@ def process(job: dict[str, Any]) -> None:
                 "Верни все обязательные поля JSON."}]
             generation = providers.generate(profile, outbound, system, memory.ANSWER_SCHEMA,
                                             privacy_mode=job["input_payload"]["privacy_mode"],
-                                            timeout=min(25, remaining - 2), max_output_tokens=1200)
+                                            timeout=min(120, remaining - 2), max_output_tokens=1200)
             try:
                 answer = memory.parse_answer(generation.text, row["context_revision"], newer,
                                              snapshot_id, selected_focus)
                 evidence.check_citations(answer, records)
                 evidence.render_fact_refs(answer, records)
                 break
-            except ValueError:
+            except ValueError as exc:
+                LOG.info("assistant answer rejected by grounding check: %s (attempt %s)", exc, attempt + 1,
+                         extra={"job_id": str(job["job_id"])})
                 if attempt == 1:
                     answer = {"status": "insufficient_data",
                               "summary": "Не удалось надёжно проверить сформированный ответ.",

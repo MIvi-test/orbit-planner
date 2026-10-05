@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EngineerAbsenceRiskRow, OrbitMapRow } from '../../types/views'
 import { CORE_R, VIEW_H, VIEW_W, computeLayout } from './layout'
+import { useImperium } from '../../theme/appTheme'
+import { SolarBackdrop } from '../../components/imperium/SolarBackdrop'
 import { LEVEL_COLOR, LEVEL_WORD, gradeRadius, shortTeam, starLevel } from './risk'
 
 /** Фон из мелких звёзд: детерминированный, чтобы картинка не менялась между отрисовками. */
@@ -35,6 +37,7 @@ export function StarMapSvg({
   onSelect: (id: string) => void
   onSelectTeam: (teamId: string) => void
 }) {
+  const imperium = useImperium()
   const { cores, nodes } = useMemo(() => computeLayout(rows), [rows])
   const coreById = new Map(cores.map((c) => [c.team_id, c]))
   const [hover, setHover] = useState<string | null>(null)
@@ -187,6 +190,8 @@ export function StarMapSvg({
       {BACKDROP_STARS.map(([x, y, r, o], i) => (
         <circle key={`bg-${i}`} cx={bx + x * bw} cy={by + y * bh} r={r} fill="var(--sm-dot)" opacity={o} />
       ))}
+
+      {imperium && <SolarBackdrop cx={VIEW_W / 2} cy={VIEW_H / 2} />}
 
       {/* орбиты ядер */}
       {cores.map((c) => (

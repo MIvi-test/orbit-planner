@@ -28,9 +28,10 @@
   --bloom: #6ccfa6;
 
   /* --- шрифты ------------------------------------------------------ */
-  --font-text: 'Golos Text', system-ui, -apple-system, sans-serif;
-  --font-heading: 'Manrope', 'Golos Text', system-ui, sans-serif;
-  --font-mono: 'PT Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --font-text: 'Onest', 'Golos Text', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Onest', 'Golos Text', system-ui, sans-serif;
+  --font-display: 'Unbounded', 'Onest', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'PT Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   color-scheme: light;
 }
@@ -644,3 +645,7 @@ body {
 :root[data-app-theme='violet'][data-mantine-color-scheme='light'] .mantine-AppShell-navbar {
   border-color: #d8cdf3;
 }
+
+/* Элементы шапки, которые показываются только на очень широких окнах. */
+.show-from-1800 { display: none !important; }
+@media (min-width: 1800px) { .show-from-1800 { display: flex !important; } }

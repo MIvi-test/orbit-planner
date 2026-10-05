@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Badge, Group, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Switch, Table, Text, Title } from '@mantine/core'
 import { fmtHours, fmtSp, isPositive } from '../../api/wire'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
@@ -36,7 +37,7 @@ export function RolesScreen() {
   if (anyPending(queries)) {
     return (
       <Stack gap="md">
-        <Title order={2}>Роли и ёмкость</Title>
+        <Title order={2}><L>Роли и ёмкость</L></Title>
         <Skeleton height={360} />
         <Skeleton height={260} />
       </Stack>
@@ -46,7 +47,7 @@ export function RolesScreen() {
   if (error) {
     return (
       <Stack gap="md">
-        <Title order={2}>Роли и ёмкость</Title>
+        <Title order={2}><L>Роли и ёмкость</L></Title>
         <QueryError error={error} title="Не удалось загрузить роли и ёмкость" />
       </Stack>
     )
@@ -63,7 +64,7 @@ export function RolesScreen() {
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>Роли и ёмкость</Title>
+          <Title order={2}><L>Роли и ёмкость</L></Title>
           <Text c="dimmed" size="sm" mt={2}>
             Остаток работ сравнивается с фондом незакрытых спринтов. Фонд соседней команды
             показан как возможный заём, а не как подтверждённое назначение.

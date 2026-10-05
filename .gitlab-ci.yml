@@ -1,4 +1,4 @@
-# CI PI-Planner. Описание гейта и правил — IMPLEMENTATION_PLAN.md §2.3.
+# CI PI-Planner: unit, pg, cycle, schema-equivalence, web.
 #
 # Джобы со статусом «пока не блокирует» помечены `allow_failure: true` и
 # комментарием, КОГДА это снимается (волна плана). Снимать флаг — отдельным

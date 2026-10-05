@@ -48,7 +48,7 @@ export function RunSelect() {
       <Select
         aria-label="Прогон планировщика"
         size="sm"
-        w={210}
+        w={180}
         placeholder="Прогон"
         data={options}
         value={runId !== null ? String(runId) : null}

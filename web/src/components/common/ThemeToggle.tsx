@@ -9,6 +9,7 @@ const SWATCH: Record<AppTheme, { light: [string, string]; dark: [string, string]
   pinkie: { light: ['#ffd6e8', '#ec2494'], dark: ['#4d2438', '#f783ac'] },
   dracula: { light: ['#fbeaec', '#b3121c'], dark: ['#1c0910', '#c1121f'] },
   violet: { light: ['#f7f4ff', '#4c1d95'], dark: ['#1e1038', '#a78bfa'] },
+  imperium: { light: ['#e4d6b0', '#1d3f8f'], dark: ['#14181a', '#c9a227'] },
 }
 
 function Dot({ theme, mode, active }: { theme: AppTheme; mode: 'light' | 'dark'; active?: boolean }) {

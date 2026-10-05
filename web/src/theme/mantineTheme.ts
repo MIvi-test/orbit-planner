@@ -15,7 +15,7 @@ export const theme = createTheme({
     fontFamily: 'var(--font-heading)',
     sizes: {
       h1: { fontSize: rem(38), lineHeight: '1.15', fontWeight: '800' },
-      h2: { fontSize: rem(30), lineHeight: '1.2', fontWeight: '800' },
+      h2: { fontSize: rem(27), lineHeight: '1.2', fontWeight: '600' },
       h3: { fontSize: rem(21), lineHeight: '1.3', fontWeight: '700' },
       h4: { fontSize: rem(17), lineHeight: '1.35', fontWeight: '700' },
     },

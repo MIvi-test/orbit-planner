@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 export type ScreenId =
   | 'summary'
+  | 'assistant'
   | 'upload'
   | 'plan'
   | 'risks'
@@ -11,7 +12,7 @@ export type ScreenId =
   | 'profiles'
   | 'data'
 
-const SCREENS: ScreenId[] = ['summary', 'upload', 'plan', 'risks', 'starmap', 'kpi', 'roles', 'profiles', 'data']
+const SCREENS: ScreenId[] = ['summary', 'assistant', 'upload', 'plan', 'risks', 'starmap', 'kpi', 'roles', 'profiles', 'data']
 const DEFAULT_SCREEN: ScreenId = 'summary'
 
 function parse(hash: string): ScreenId {
@@ -19,7 +20,7 @@ function parse(hash: string): ScreenId {
   return SCREENS.includes(id) ? id : DEFAULT_SCREEN
 }
 
-/** Простая маршрутизация по хешу (`#/profiles?team=X`): девять экранов, без внешнего роутера. */
+/** Простая маршрутизация по хешу (`#/profiles?team=X`): десять экранов, без внешнего роутера. */
 export function useHashRoute(): [ScreenId, (id: ScreenId, query?: Record<string, string>) => void] {
   const [screen, setScreen] = useState<ScreenId>(() => parse(window.location.hash))
 

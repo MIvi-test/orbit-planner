@@ -58,7 +58,10 @@ paths:
       tags: [Configuration]
       operationId: updateAssistantProfile
       summary: Update a model profile
-      description: Admin only. A changed endpoint or key reference creates a new profile version.
+      description: >-
+        Admin only. Every save creates a new profile version; conversations move to it (local-only
+        conversations only when the profile stays internal). `api_key_ref`, `auth_header_name`,
+        `limits` and `min_role` omitted from the body keep their previous values. The name cannot change.
       requestBody:
         required: true
         content:
@@ -70,6 +73,24 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProviderProfile' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Configuration]
+      operationId: deleteAssistantProfile
+      summary: Remove a model profile
+      description: Admin only. The profile is deactivated, not erased; past answers keep referring to it and its conversations must pick another model.
+      responses:
+        '200':
+          description: Profile removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, profile_id]
+                properties:
+                  deleted: { type: boolean, const: true }
+                  profile_id: { type: integer }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/assistant/profiles/{profileId}/check:
@@ -200,6 +221,49 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Conversation' }
         '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Assistant]
+      operationId: deleteMyAssistantConversation
+      summary: Delete my conversation
+      description: Removes the conversation with its messages, evidence and recommendations. Refused with 409 while an answer is being prepared.
+      responses:
+        '200':
+          description: Conversation deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, conversation_id]
+                properties:
+                  deleted: { const: true }
+                  conversation_id: { type: string, format: uuid }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/assistant/conversations/{conversationId}/title:
+    parameters:
+      - { $ref: '#/components/parameters/conversationId' }
+    put:
+      tags: [Assistant]
+      operationId: renameMyAssistantConversation
+      summary: Rename my conversation
+      description: The title is free text (1–120 characters) and does not affect answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '200':
+          description: Updated conversation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/InvalidInput' }
   /api/assistant/conversations/{conversationId}/settings:
     parameters:
       - { $ref: '#/components/parameters/conversationId' }
@@ -528,6 +592,9 @@ components:
           type: object
           properties:
             json_mode: { type: boolean }
+            thinking:
+              type: boolean
+              description: 'false turns off hidden reasoning (Qwen3/DeepSeek enable_thinking, Ollama think, Gemini 2.5 thinkingBudget 0); answers are several times faster. Omitted — provider default.'
           additionalProperties: false
         limits: { type: object, additionalProperties: true }
         min_role: { type: string, enum: [viewer, planner, admin] }

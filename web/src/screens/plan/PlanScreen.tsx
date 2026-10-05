@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Alert, Group, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { usePlanData } from './usePlanData'
 import { useRun } from '../../hooks/useRun'
@@ -17,7 +18,7 @@ export function PlanScreen() {
   if (data.isPending) {
     return (
       <Stack gap="md">
-        <Title order={2}>План квартала</Title>
+        <Title order={2}><L>План квартала</L></Title>
         <Skeleton height={320} />
       </Stack>
     )
@@ -52,7 +53,7 @@ export function PlanScreen() {
     <Stack gap="md">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>План квартала</Title>
+          <Title order={2}><L>План квартала</L></Title>
           <Text c="dimmed" size="sm" mt={2}>
             {data.scheduleByTask.size > 0
               ? `В квартал взято ${inQuarter} задач из ${data.scheduleByTask.size} — остальные перенесены на следующий PI. Это решение планировщика, а не сокращение бэклога.`

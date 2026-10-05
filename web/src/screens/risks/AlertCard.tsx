@@ -53,7 +53,7 @@ export function AlertCard({
             Спринт {alert.sprint_no}
           </Badge>
         </Group>
-        <Text>{alert.message}</Text>
+        <Text>{alert.message.charAt(0).toUpperCase() + alert.message.slice(1)}</Text>
         {alert.alert_type === 'role_deficit' && (
           <RoleDeficit p={payloadOf<AlertRoleDeficitPayload>(alert.payload)} />
         )}

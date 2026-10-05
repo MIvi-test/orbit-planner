@@ -1,22 +1,20 @@
 -- =====================================================================
---  Приёмка M0 — проверки слоя данных ДС после заливки.
+--  Проверки слоя данных после заливки.
 --  Запуск:
 --    psql -h 127.0.0.1 -U postgres -d pi_planner -v ON_ERROR_STOP=1 -f tools/acceptance.sql
---  Ожидаемые значения и что делать при расхождении — docs/RUNBOOK.md, раздел 7.
+--  Что проверяется и что делать при расхождении — docs/RUNBOOK.md, раздел 6.1.
 --  Файл держим в UTF-8 (без BOM): в проверках есть кириллица.
 --
---  Числа в комментариях — эталон для ETL 1.1.0 и календаря Q3-2026
---  (01.07..30.09, 7 спринтов, 7-й короткий). Смена календаря меняет 0а/0б,
---  3/4/5 не меняет: спрос считается из датасета, а не из спринтов.
+--  Контрольные числа зависят от загруженного датасета: сверяйте вывод с
+--  `python tools/current_report.py`. Календарь: шесть спринтов по 14 дней.
 -- =====================================================================
 
 \echo '=== 0. Кодировка базы: ожидаем UTF8 ==='
 SELECT pg_encoding_to_char(encoding) AS encoding
 FROM pg_database WHERE datname = current_database();
 
-\echo '=== 0а. Календарь PI: ожидаем 01.07..30.09.2026, 92 дня, 7 спринтов ==='
--- Фонд ставки за квартал = fte_hours_per_sprint × factor: 80 × 6.5714 = 525.71 ЧЧ.
--- Было 480 (6 × 14 дней) — календарь стал точнее, фонд вырос на 9.5% (ADR-017).
+\echo '=== 0а. Календарь PI: ожидаем 01.07..22.09.2026, 84 дня, 6 спринтов ==='
+-- Фонд ставки за квартал = fte_hours_per_sprint × factor: 80 × 6.0000 = 480 ЧЧ (ADR-025).
 SELECT p.pi_id, p.start_date, p.end_date, p.sprint_count,
        (SELECT SUM(length_days) FROM sprints s WHERE s.pi_id = p.pi_id) AS pi_days,
        f.factor                                                        AS fund_factor,
@@ -24,7 +22,7 @@ SELECT p.pi_id, p.start_date, p.end_date, p.sprint_count,
 FROM pi_periods p
 JOIN v_pi_fund_factor f ON f.pi_id = p.pi_id;
 
-\echo '--- 0б. Фонд по спринтам: шесть полных (1.0000) и короткий 7-й (0.5714) ---'
+\echo '--- 0б. Фонд по спринтам: шесть полных спринтов (1.0000) ---'
 SELECT sprint_no, start_date, end_date, length_days, factor
 FROM v_sprint_fund_factor ORDER BY sprint_no;
 
@@ -43,32 +41,31 @@ UNION ALL SELECT 'team_history',         COUNT(*) FROM team_history
 UNION ALL SELECT 'dq_issues',            COUNT(*) FROM dq_issues
 ORDER BY tbl;
 
-\echo '=== 1б. Объекты схемы: ожидаем 29 таблиц + 17 вьюх ==='
--- 17 вьюх = 15 прежних + v_pi_fund_factor и v_sprint_fund_factor (ADR-017).
+\echo '=== 1б. Объекты схемы: число таблиц и вьюх сверить с отчётом ==='
 SELECT
   (SELECT COUNT(*) FROM information_schema.tables
     WHERE table_schema='public' AND table_type='BASE TABLE') AS tables,
   (SELECT COUNT(*) FROM information_schema.views
     WHERE table_schema='public')                            AS views;
 
-\echo '=== 2. Качество данных: ожидаем 38 находок, 0 блокирующих ==='
+\echo '=== 2. Качество данных: блокирующих находок (error) быть не должно ==='
 SELECT COUNT(*)                                   AS findings,
        COUNT(*) FILTER (WHERE severity='error')   AS blocking,
        COUNT(*) FILTER (WHERE severity='warning') AS warnings,
        COUNT(*) FILTER (WHERE severity='info')    AS info
 FROM dq_issues;
 
-\echo '=== 3. Дефицит часов по связкам «команда × роль»: ожидаем ~2371 ЧЧ на 47 связках ==='
+\echo '=== 3. Дефицит часов по связкам «команда × роль»: сверить с отчётом ==='
 SELECT COUNT(*)              AS pairs,
        ROUND(SUM(gap_hh), 2) AS gap_hh
 FROM v_role_deficit WHERE gap_hh > 0;
 
-\echo '--- 3а. Природа дефицита: все 47 должны быть «роли нет в команде» ---'
+\echo '--- 3а. Природа дефицита: дефицит — это роли, которых нет в команде ---'
 SELECT verdict, COUNT(*) AS pairs, ROUND(SUM(gap_hh), 2) AS gap_hh
 FROM v_role_deficit WHERE gap_hh > 0
 GROUP BY verdict ORDER BY gap_hh DESC;
 
-\echo '=== 4. Наём по компании: ожидаем 6 ролей и 665 ЧЧ (замещения отклонены, ADR-010) ==='
+\echo '=== 4. Наём по компании: замещения отклонены, ADR-010 ==='
 SELECT role_name,
        ROUND(demand_hh, 2) AS demand_hh,
        ROUND(supply_hh, 2) AS supply_hh,
@@ -82,7 +79,7 @@ SELECT COUNT(*)              AS hiring_roles,
        ROUND(SUM(gap_hh), 2) AS hiring_hh
 FROM v_role_coverage_org WHERE verdict LIKE 'НАЙМ%';
 
-\echo '--- 4а. Роли вне штата: те же 6 ролей и 665 ЧЧ, закрывать нечем ---'
+\echo '--- 4а. Роли вне штата: те же роли, закрывать нечем ---'
 SELECT COUNT(*) FILTER (WHERE bus_factor = 0)                          AS roles_not_in_staff,
        ROUND(SUM(demand_hh) FILTER (WHERE bus_factor = 0), 2)          AS demand_no_staff_hh
 FROM v_bus_factor WHERE demand_hh > 0;
@@ -92,7 +89,7 @@ SELECT (SELECT COUNT(*) FROM role_substitutions WHERE status <> 'rejected')  AS 
        (SELECT COUNT(*) FROM v_engineer_role_coverage)                       AS coverage_rows,
        (SELECT COUNT(*) FROM v_engineer_role_coverage WHERE NOT is_native)   AS substitution_rows;
 
-\echo '=== 5. Bus Factor: ожидаем 8 ролей с BF=1 и спрос 1429 ЧЧ ==='
+\echo '=== 5. Bus Factor: роли с BF=1 и их спрос ==='
 SELECT COUNT(*) FILTER (WHERE bus_factor = 1)                          AS bf1_roles,
        ROUND(SUM(demand_hh) FILTER (WHERE bus_factor = 1), 2)          AS bf1_demand_hh
 FROM v_bus_factor WHERE demand_hh > 0;
@@ -111,7 +108,7 @@ SELECT (SELECT COUNT(*) FROM v_plan_violations WHERE severity = 'error')   AS er
        (SELECT COUNT(*) FROM v_plan_violations WHERE severity = 'warning') AS warnings,
        (SELECT COUNT(*) FROM plan_runs)                                   AS runs;
 
-\echo '=== 7. Ёмкость в SP: перегруженных команд нет, Team-Platform загружена на 95% ==='
+\echo '=== 7. Ёмкость в SP: перегруженных команд нет ==='
 SELECT team_id,
        ROUND(avg_velocity, 2)           AS avg_velocity,
        focus_factor,
@@ -119,14 +116,14 @@ SELECT team_id,
 FROM v_team_capacity_sp
 ORDER BY sp_per_sprint DESC;
 
-\echo '--- 7а. Ёмкость ядра за квартал: × 6.5714 (92/14), а не × 7 спринтов ---'
+\echo '--- 7а. Ёмкость ядра за квартал: × 6.0000 (84/14) ---'
 SELECT team_id,
        ROUND(available_sp_per_sprint, 2) AS sp_per_sprint,
        ROUND(available_sp_per_pi, 2)     AS sp_per_pi
 FROM v_team_capacity_sp
 ORDER BY sp_per_sprint DESC;
 
-\echo '--- 7б. Фонд часов по спринтам: 7-й короче, значит фонд меньше на 42.9% ---'
+\echo '--- 7б. Фонд часов по спринтам: все спринты полные ---'
 -- Ровно то, что видит планировщик: 80 ЧЧ × ставка × factor спринта.
 SELECT s.sprint_no, s.length_days,
        ROUND(SUM(s.hours_own), 2) AS fund_hh
