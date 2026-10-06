@@ -26,7 +26,9 @@
    База использует PostgreSQL 17 с pgvector и сохраняет прежний `postgres_data`.
    Не запускайте приложение поверх старого образа PostgreSQL без расширения `vector`.
 3. Для локального поиска правил поднимите Ollama, установите модель эмбеддингов и
-   проиндексируйте разрешённые документы:
+   проиндексируйте разрешённые документы. Команды ниже выполняются из корня
+   репозитория при стандартном имени Compose-проекта; при `COMPOSE_PROJECT_NAME`
+   замените `$(basename "$PWD")` на это имя:
 
    ```bash
    docker compose --profile rag-local up -d ollama
@@ -36,6 +38,10 @@
    docker network disconnect "$(basename "$PWD")_ai_egress" "$(docker compose --profile rag-local ps -q ollama)"
    docker compose exec app python tools/index_assistant_kb.py
    ```
+
+   При остановке локальных моделей используйте `docker compose --profile rag-local down`.
+   Обычный `docker compose down` не включает Ollama из профиля и оставляет сеть
+   `backend` занятой. Том `ollama_data` при остановке сохраняется; флаг `-v` удалит его.
 
    Альтернатива последней команде — `POST /api/assistant/kb/reindex` с ролью `admin`;
    состояние — `GET /api/assistant/kb/status`. Индексируются только файлы из
@@ -95,6 +101,7 @@ endpoint должен использовать HTTPS. Не записывайт�
 Для локального Qwen через Ollama:
 
 ```bash
+# Если модели ещё нет, временно подключите Ollama к ai_egress, как в шаге 3 раздела «Запуск».
 docker compose --profile rag-local exec ollama ollama pull qwen3.5:9b
 ```
 

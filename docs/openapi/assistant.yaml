@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: >-
     Server-owned conversations, knowledge retrieval, and read-only planning
-    scenarios. This contract is implemented incrementally by RAG-01–RAG-11.
+    scenarios. The operations below describe the current assistant HTTP API.
 servers:
   - url: /
 security:

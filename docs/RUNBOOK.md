@@ -29,7 +29,7 @@
 Нужен Docker с Compose v2 (или podman с `podman compose`).
 
 ```bash
-cp .env.example .env     # задать POSTGRES_PASSWORD, PI_PLANNER_ADMIN_TOKEN, GRAFANA_ADMIN_PASSWORD
+cp .env.example .env     # задать POSTGRES_PASSWORD, PI_PLANNER_ADMIN_TOKEN, ASSISTANT_DB_PASSWORD, GRAFANA_ADMIN_PASSWORD
 docker compose up -d --build
 ```
 
@@ -45,8 +45,9 @@ docker compose up -d --build
 | `docker compose logs -f app` | логи приложения |
 | `docker compose up -d --build app` | пересобрать и перезапустить приложение |
 | `docker compose run --rm migrate` | применить миграции |
-| `docker compose down` | остановить стек, данные в томах сохраняются |
-| `docker compose down -v` | остановить и **удалить все данные** |
+| `docker compose down` | остановить обычные сервисы, данные в томах сохраняются |
+| `docker compose --profile rag-local down` | остановить и Ollama, если она запускалась; модели в томе сохраняются |
+| `docker compose --profile rag-local down -v` | остановить стек и **удалить все тома проекта**, включая модели Ollama |
 
 ### 1.2. Без Docker для приложения
 
@@ -76,8 +77,8 @@ run.bat             # Windows
 | Инструмент | Зачем | Как поставить |
 |---|---|---|
 | Python 3.14 и `uv` | бэкенд и тесты | `uv sync --frozen`; `uv python install` подтянет версию из `.python-version` |
-| Node LTS | сборка фронта (`web/dist`) | любая установка Node; на машине, которая только запускает сервис, не нужен |
-| PostgreSQL 17 | база | `docker run -d --name pi-planner-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pi_planner -p 5432:5432 postgres:17` |
+| Node.js 22 | сборка фронта (`web/dist`) | версия CI; на машине, которая только запускает сервис, не нужен |
+| PostgreSQL 17 с pgvector | база | `run.sh` поднимает `pgvector/pgvector:0.8.6-pg17-bookworm`; Compose использует тот же образ |
 
 **Кодировка базы обязательно UTF-8.** В сиде есть русский текст; на системе с
 не-UTF-8 локалью по умолчанию `initdb` выбирает другую кодировку, и вставка падает
@@ -86,7 +87,7 @@ run.bat             # Windows
 должна вернуть `UTF8`.
 
 **Фронт.** Разработка: запустите бэкенд (`./run.sh`), затем
-`cd web && npm install && npm run dev` — Vite на `http://127.0.0.1:5173` проксирует
+`cd web && npm ci && npm run dev` — Vite на `http://127.0.0.1:5173` проксирует
 `/api` на `:8000`. Перед коммитом выполните `npm run build`: `web/dist`
 хранится в репозитории и коммитится **вместе с правками `web/src`**, чтобы машине без
 Node ничего не пришлось собирать. `run.sh` пересобирает `web/dist` сам только когда
@@ -94,7 +95,9 @@ Node ничего не пришлось собирать. `run.sh` пересо�
 
 ## 3. Ручная заливка SQL
 
-Порядок обязателен:
+Порядок обязателен. Следующий пример относится к локальному PostgreSQL, который
+`run.sh` публикует на `127.0.0.1:5432`. База из Compose на хост-порт не выходит;
+для неё используйте `docker compose exec -T db psql ...`.
 
 ```bash
 for f in db/01_schema.sql db/02_contract.sql build/seed.sql \
@@ -151,10 +154,12 @@ chmod 600 .env
 openssl rand -hex 32       # POSTGRES_PASSWORD
 openssl rand -hex 32       # GRAFANA_ADMIN_PASSWORD
 openssl rand -hex 32       # PI_PLANNER_ADMIN_TOKEN
+openssl rand -hex 32       # ASSISTANT_DB_PASSWORD
 ```
 
-В `.env` задайте реальные `CADDY_DOMAIN`, `GRAFANA_DOMAIN`, оба пароля,
-`PI_PLANNER_ADMIN_TOKEN` (заглушка `CHANGE-ME` не даёт приложению стартовать) и
+В `.env` задайте реальные `CADDY_DOMAIN`, `GRAFANA_DOMAIN`, пароли PostgreSQL и
+Grafana, `PI_PLANNER_ADMIN_TOKEN` (заглушка `CHANGE-ME` не даёт приложению стартовать),
+`ASSISTANT_DB_PASSWORD` для отдельной роли ассистента и
 абсолютный `BACKUP_DIR` на отдельном диске. Значения `change-me-*`, `localhost` и
 относительный каталог копий — блокеры production-релиза. `.env` не коммитится и не
 прикладывается к тикетам; в CI его создаёт хранилище секретов с правами только у
@@ -168,7 +173,7 @@ docker compose build app migrate
 docker compose pull db backup caddy prometheus grafana
 ```
 
-Версии Prometheus и Grafana закреплены точно, но `postgres:17-bookworm`,
+Версии Prometheus и Grafana закреплены точно, но `pgvector/pgvector:0.8.6-pg17-bookworm`,
 `python:3.14-slim`, `node:22-bookworm-slim` и `caddy:2-alpine` остаются плавающими
 тегами. Для строго воспроизводимого релиза платформа должна фиксировать образы по
 digest.
@@ -319,11 +324,14 @@ docker compose up -d app assistant-worker backup
 * База знаний использует PostgreSQL 17 на образе `pgvector/pgvector` с тем же томом данных.
   После обновления образа выполните `docker compose run --rm migrate`: миграция создаёт
   расширение `vector`, не заменяя существующий volume.
-* Локальные эмбеддинги:
+* Локальные эмбеддинги (из корня репозитория; при `COMPOSE_PROJECT_NAME` замените
+  `$(basename "$PWD")` на имя Compose-проекта):
 
 ```bash
 docker compose --profile rag-local up -d ollama
+docker network connect "$(basename "$PWD")_ai_egress" "$(docker compose --profile rag-local ps -q ollama)"
 docker compose --profile rag-local exec ollama ollama pull embeddinggemma
+docker network disconnect "$(basename "$PWD")_ai_egress" "$(docker compose --profile rag-local ps -q ollama)"
 docker compose exec app python tools/index_assistant_kb.py
 ```
 
@@ -338,7 +346,7 @@ docker compose exec app python tools/index_assistant_kb.py
 ### 6.1. База
 
 ```bash
-psql -h 127.0.0.1 -U postgres -d pi_planner -v ON_ERROR_STOP=1 -f tools/acceptance.sql
+docker compose exec -T db psql -U postgres -d pi_planner -v ON_ERROR_STOP=1 < tools/acceptance.sql
 ```
 
 `tools/acceptance.sql` проверяет слой данных после заливки: кодировку, календарь и
@@ -352,7 +360,7 @@ Bus Factor, ёмкость команд, хэш исходного Excel и от
 транзакции с `ROLLBACK` в конце, поэтому база после теста не меняется.
 
 ```bash
-psql -h 127.0.0.1 -U postgres -d pi_planner -v ON_ERROR_STOP=1 -f tools/negative_test.sql
+docker compose exec -T db psql -U postgres -d pi_planner -v ON_ERROR_STOP=1 < tools/negative_test.sql
 ```
 
 ### 6.2. Планировщик

@@ -55,7 +55,7 @@ Bus Factor.
 ### 1.1. Запуск через Docker
 
 ```bash
-cp .env.example .env              # задать POSTGRES_PASSWORD и PI_PLANNER_ADMIN_TOKEN (openssl rand -hex 32)
+cp .env.example .env              # задать POSTGRES_PASSWORD, PI_PLANNER_ADMIN_TOKEN и ASSISTANT_DB_PASSWORD
 docker compose up -d --build
 ```
 
@@ -70,6 +70,7 @@ docker compose up -d --build
    (`db/*.sql` + `build/seed.sql`);
 3. одноразовый сервис `bootstrap-plan` строит базовый план квартала; `app`
    стартует только после него. При повторных запусках шаг ничего не меняет;
+   `assistant-db-init` создаёт отдельную роль БД для `assistant-worker`;
 4. `caddy` открывает приложение на 80/443, Grafana — на
    <https://grafana.localhost> (логин и пароль — `GRAFANA_ADMIN_*` в `.env`),
    дашборд **PI-Planner / Overview** создаётся автоматически.
@@ -82,8 +83,9 @@ Prometheus и PostgreSQL наружу не публикуются.
 | `docker compose logs -f app` | логи приложения |
 | `docker compose restart app` | перезапустить приложение |
 | `docker compose up -d --build app` | пересобрать и перезапустить после изменений кода |
-| `docker compose down` | остановить стек; данные в томах сохраняются |
-| `docker compose down -v` | остановить и **удалить все данные** (база, прогоны, факт, метрики); следующий `up` начнёт с чистого датасета |
+| `docker compose down` | остановить обычные сервисы; данные в томах сохраняются |
+| `docker compose --profile rag-local down` | остановить также Ollama, если её запускали с профилем `rag-local`; том с моделями сохраняется |
+| `docker compose --profile rag-local down -v` | остановить стек и **удалить все тома проекта**, включая базу, факт, метрики и модели Ollama |
 | `docker compose run --rm migrate` | применить миграции схемы |
 
 Порты 80/443 заняты или недоступны (например, rootless podman) — задать в
@@ -161,7 +163,7 @@ docker compose exec app python tools/manage_users.py audit --limit 50
 
 ```bash
 ./run.sh                          # бэкенд на :8000 (режим 1.2) должен работать
-cd web && npm install && npm run dev
+cd web && npm ci && npm run dev
 ```
 
 Открыть <http://127.0.0.1:5173> — Vite с горячей перезагрузкой, `/api`
@@ -573,14 +575,18 @@ web/src/
 | `db` | PostgreSQL 17; при первом старте инициализируется `db/*.sql` + `build/seed.sql` |
 | `bootstrap-plan` | одноразово строит базовый план (`run_planner.py --if-empty`) |
 | `app` | сервер приложения; read-only файловая система, без capabilities |
+| `assistant-db-init` | однократно создаёт ограниченную роль PostgreSQL для ассистента |
+| `assistant-worker` | обрабатывает задания чата; read-only файловая система, отдельная роль БД |
+| `ollama` | локальные модели и эмбеддинги; запускается только с `--profile rag-local` |
 | `caddy` | единственный публичный вход: HTTPS, заголовки безопасности, `/metrics` снаружи — 404 |
 | `prometheus` | сбор метрик и правила алертов (`ops/prometheus`) |
 | `grafana` | дашборд **PI-Planner / Overview** (`ops/grafana`), вход через Caddy |
 | `backup` | регулярный `pg_dump` с проверкой восстановления (`ops/backup.sh`) |
 | `migrate` | профиль `ops`: миграции схемы (`docker compose run --rm migrate`) |
 
-Сети разделены: `frontend` (Caddy ↔ app, Grafana), `backend` (app ↔ db),
-`monitoring` (Prometheus ↔ app). Все настройки — в `.env` (образец —
+Сети разделены: `frontend` (Caddy ↔ app), `backend` (db, app, worker и Ollama),
+`ai_egress` (исходящий доступ worker к облачным моделям), `monitoring`
+(Prometheus ↔ app), `observability_proxy` (Caddy ↔ Grafana). Все настройки — в `.env` (образец —
 `.env.example`, сам `.env` в git не попадает).
 
 **Метрики** собираются своим кодом (`app/metrics.py`, формат Prometheus 0.0.4):
@@ -620,15 +626,14 @@ smoke-тесты. Секреты не передаются в git, образ и
 **Юнит- и интеграционные тесты** (число тестов — в выводе `pytest`):
 
 ```bash
-./.venv/bin/python -m pip install pytest   # pytest — dev-зависимость, run.sh её не ставит
-./.venv/bin/python -m pytest -q
-# с uv >= 0.12: uv run --group dev pytest -q
+uv sync --frozen --group dev
+uv run pytest -q                       # без TEST_DATABASE_URL тесты PostgreSQL пропускаются
 ```
 
 **Фронт:**
 
 ```bash
-cd web && npx tsc --noEmit && npm run build
+cd web && npm ci && npm run build      # Node.js 22, как в CI; build включает проверку TypeScript
 ```
 
 **Корректность плана** — прямо в базе:
@@ -697,7 +702,8 @@ default_task.md         исходная постановка задачи
 | `app` не стартует | `docker compose ps` и `docker compose logs bootstrap-plan db app` — обычно база ещё не готова или упал базовый план |
 | браузер ругается на сертификат | локальный сертификат Caddy: подтвердить исключение один раз |
 | В интерфейсе «API недоступен» | приложение работает, но база не отвечает: `docker compose ps db`, `GET /api/health` |
-| Экраны пустые, «датасет не загружен» | загрузить xlsx на экране «Загрузка» или начать с нуля: `docker compose down -v && docker compose up -d` |
+| Экраны пустые, «датасет не загружен» | загрузить xlsx на экране «Загрузка»; очистка томов через `docker compose --profile rag-local down -v` уничтожит также модели Ollama |
+| `docker compose down` пишет `Network ..._backend Resource is still in use` | после обычного запуска осталась Ollama из профиля `rag-local`: выполните `docker compose --profile rag-local down` |
 | KPI без факта, риски почти пустые | факт ещё не загружен — это нормально. Чтобы увидеть пересчёт — загрузить файлы из `demo/` |
 | После правок кода ничего не изменилось | пересобрать: `docker compose up -d --build app`, обновить страницу с очисткой кэша (`Ctrl+Shift+R`) |
 | Файл факта отклонён | в ответе `400` перечислены проблемы по строкам; начать проще с шаблона («Шаблон» на экране «Загрузка») |
@@ -718,4 +724,6 @@ default_task.md         исходная постановка задачи
 | `docs/UI_DESIGN.md` | оформление: палитра, шрифты, раскладка, правила |
 | `docs/RUNBOOK.md` | эксплуатация: запуск, релиз, откат, восстановление, приёмка |
 | `docs/OBSERVABILITY.md` | метрики, алерты, дашборды, ограничения мониторинга |
+| `docs/ASSISTANT_RUNBOOK.md` | запуск ассистента, профили моделей, локальные эмбеддинги и чат |
+| `docs/openapi/assistant.yaml` | контракт API ассистента |
 | `docs/ANSWERS_ORGANIZERS.md` | ответы заказчика на вопросы по данным |
