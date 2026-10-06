@@ -275,8 +275,19 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
     ):
         raise ProfileError("invalid messages")
     protocol = profile["protocol"]
-    structured = bool(output_schema and profile.get("capabilities", {}).get("structured_output_verified"))
-    json_mode = bool(output_schema and profile.get("capabilities", {}).get("json_mode"))
+    capabilities = profile.get("capabilities", {})
+    known_schema = (
+        protocol == "gemini"
+        and profile["base_url"].rstrip("/") == "https://generativelanguage.googleapis.com/v1beta"
+        and profile["model"].startswith("gemini-3")
+    ) or (
+        protocol == "openai_compatible"
+        and profile["base_url"].rstrip("/") == "https://api.groq.com/openai/v1"
+        and profile["model"] in {"openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"}
+    )
+    observed = capabilities.get("structured_output_verified")
+    structured = bool(output_schema and (observed is True or observed is None and known_schema))
+    json_mode = bool(output_schema and (capabilities.get("json_mode") or known_schema))
     # Для Gemini 3.x минимальный уровень рассуждения заменяет устаревший budget=0.
     no_thinking = profile.get("capabilities", {}).get("thinking") is False
     if protocol == "gemini":

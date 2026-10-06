@@ -129,6 +129,21 @@ def test_gemini_3_uses_minimal_thinking_and_json_schema(monkeypatch):
     assert bodies[0]["generationConfig"]["responseJsonSchema"] == schema
 
 
+@pytest.mark.parametrize("protocol,base_url,model,expected_field", [
+    ("gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-3.5-flash-lite", "responseJsonSchema"),
+    ("openai_compatible", "https://api.groq.com/openai/v1", "openai/gpt-oss-20b", "response_format"),
+])
+def test_known_cloud_model_requests_schema_before_manual_check(monkeypatch, protocol, base_url, model, expected_field):
+    bodies = []
+    reply = ({"candidates": [{"content": {"parts": [{"text": "{}"}]}}]} if protocol == "gemini"
+             else {"choices": [{"message": {"content": "{}"}}]})
+    monkeypatch.setattr(providers, "_request", lambda _p, body, _t: bodies.append(body) or reply)
+    p = profile(protocol, base_url=base_url, model=model)
+    schema = {"type": "object", "additionalProperties": False}
+    providers.generate(p, [{"role": "user", "content": "q"}], "system", schema)
+    assert expected_field in (bodies[0]["generationConfig"] if protocol == "gemini" else bodies[0])
+
+
 def test_edit_keeps_admin_capabilities_but_not_observed_ones():
     previous = {"auth_type": "none", "api_key_ref": None, "auth_header_name": None,
                 "capabilities": {"thinking": False, "structured_output_verified": True}}
