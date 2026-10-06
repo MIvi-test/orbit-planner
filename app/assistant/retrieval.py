@@ -77,7 +77,7 @@ def search(question: str, revision: UUID | None, *, scope: str,
     if not formula or not algo:
         return SearchResult(revision, (), "incompatible_plan_version")
     common = (revision, scope, APP_VERSION, scope, formula, algo)
-    lexical_sql = ("WITH q AS (SELECT websearch_to_tsquery('russian', %s) | "
+    lexical_sql = ("WITH q AS (SELECT websearch_to_tsquery('russian', %s) || "
                    "plainto_tsquery('simple', %s) AS query) "
                    "SELECT c.chunk_id, d.document_id, d.path, d.version, c.heading_path, c.content, "
                    "rd.metadata, ts_rank_cd(c.search_tsv, q.query) AS rank " + _BASE +

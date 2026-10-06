@@ -289,7 +289,7 @@ def process(job: dict[str, Any]) -> None:
                               "newer_run_available": newer,
                               "limitations": ["Ответ модели не прошёл проверку оснований."],
                               "degraded": True}
-        if answer is not None and answer.get("degraded") and snapshot_id:
+        if answer is not None and answer.get("degraded") and snapshot_id and intent.name == "overview":
             answer, records = triage.answer(snapshot_id, "", None, row["context_revision"], newer)
             answer["degraded"] = True
             answer["limitations"].append("Объяснение модели не прошло проверку. Показан проверенный серверный список проблем.")

@@ -717,6 +717,21 @@ components:
               evidence_id: { type: string, format: uuid }
               field: { type: string }
         degraded: { type: boolean }
+        diagnostics:
+          type: object
+          description: Коды отказа и ID задания только при входе по аварийному административному токену.
+          properties:
+            job_id: { type: string, format: uuid }
+            reasons: { type: array, items: { type: string } }
+        triage:
+          type: object
+          description: Проверенный сервером порядок проблем из закреплённого снимка; выдача ограничена страницей.
+          properties:
+            snapshot_id: { type: string, format: uuid }
+            policy: { type: string }
+            total: { type: integer }
+            next_offset: { type: integer }
+            issues: { type: array, items: { type: object } }
         entity_refs:
           type: array
           items:
