@@ -226,7 +226,8 @@ def list_messages(principal: auth.Principal, conversation_id: Any, cursor: str |
         rows = cur.fetchall()
         items = [{"message_id": str(row["message_id"]), "role": row["role"],
                   "text": row["content"], "context_revision": row["context_revision"],
-                  **({"answer": diagnostics.public_payload(row["payload"], principal)} if row["role"] == "assistant" and row["payload"] else {})}
+                  **({"answer": diagnostics.public_payload(row["payload"], principal)}
+                     if row["role"] == "assistant" and row["payload"] else {})}
                  for row in rows[:50]]
         return {"items": items, "next_cursor": str(rows[49]["sequence_no"]) if len(rows) > 50 else None}
 

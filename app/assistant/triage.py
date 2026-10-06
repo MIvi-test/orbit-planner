@@ -16,7 +16,8 @@ POLICY = 'critical-problems-v1'
 STEPS = {
     'data_quality': ('Сначала уточнить исходные данные', 'Подтвердите остаток работ и спорные оценки у владельца задачи.'),
     'cascade_shift': ('Сначала разобрать блокирующую зависимость', 'Проверьте состояние предшественников и актуальность связей задач.'),
-    'deadline_miss': ('Затем разобрать риск срока инициативы', 'Проверьте перенесённые задачи и причины переноса; эффект мер требует сценарного расчёта.'),
+    'deadline_miss': ('Затем разобрать риск срока инициативы',
+                      'Проверьте перенесённые задачи и причины переноса; эффект мер требует сценарного расчёта.'),
     'role_deficit': ('Затем разобрать дефицит ресурсов', 'Сопоставьте ролевой спрос с доступностью; отдельно рассчитайте подходящие меры.'),
 }
 
@@ -31,7 +32,8 @@ def previous(conversation_id: UUID, revision: int, snapshot_id: UUID) -> dict[st
 
 def requested(question: str, saved: dict[str, Any] | None) -> bool:
     text = question.casefold()
-    return bool(re.search(r'критич\w*.*(?:проблем|ошиб|риск)|(?:проблем|риск)\w*.*(?:критич|приорит|поряд)|с чего начать|порядок.*разбор', text)
+    return bool(re.search(r'критич\w*.*(?:проблем|ошиб|риск)|(?:проблем|риск)\w*.*(?:критич|приорит|поряд)'
+                          r'|с чего начать|порядок.*разбор', text)
                 or saved and re.search(r'подроб|перв|втор|трет|следующ|ещ[её]|проблем\w*\s*(?:№|номер)?\s*\d|issue-', text))
 
 
@@ -84,7 +86,8 @@ def collect(snapshot_id: UUID) -> dict[str, Any]:
         item['rank'] = rank
     return {'operation': 'critical_problems', 'snapshot_id': str(snapshot_id), 'policy': POLICY,
             'issues': issues, 'total': len(issues), 'complete_selection': True,
-            'scope': 'Предупреждения прогона и задачи со спорным или неизвестным остатком. Зависимые задачи — потенциальный охват, не прогноз ущерба.'}
+            'scope': ('Предупреждения прогона и задачи со спорным или неизвестным остатком. '
+                      'Зависимые задачи — потенциальный охват, не прогноз ущерба.')}
 
 
 def answer(snapshot_id: UUID, question: str, saved: dict[str, Any] | None,
@@ -97,7 +100,8 @@ def answer(snapshot_id: UUID, question: str, saved: dict[str, Any] | None,
         match = re.search(r'(?:проблем\w*|пункт\w*|номер|№)\s*(?:№|номер)?\s*(\d+)', text)
         if match:
             detail = int(match[1])
-        for word, rank in (('перв', 1), ('втор', 2), ('трет', 3), ('четверт', 4), ('пят', 5), ('шест', 6), ('седьм', 7), ('восьм', 8), ('девят', 9), ('десят', 10)):
+        for word, rank in (('перв', 1), ('втор', 2), ('трет', 3), ('четверт', 4), ('пят', 5),
+                           ('шест', 6), ('седьм', 7), ('восьм', 8), ('девят', 9), ('десят', 10)):
             if word in text:
                 detail = rank
                 break
@@ -119,7 +123,8 @@ def answer(snapshot_id: UUID, question: str, saved: dict[str, Any] | None,
              'details_limited': len(i['source_alerts']) > (5 if detail else 1) or len(i['affected_task_ids']) > 20}
             for i in shown]
     result = {'status': 'answered', 'summary': f"Найдено проблем: {report['total']}. Показано: {len(shown)}.",
-              'explanation': 'Порядок рассчитан по правилам: качество данных, зависимости, сроки, ресурсы; затем серьёзность и охват задач.',
+              'explanation': ('Порядок рассчитан по правилам: качество данных, зависимости, сроки, ресурсы; '
+                              'затем серьёзность и охват задач.'),
               'clarification': '', 'fact_refs': [], 'recommendations': [], 'evidence_ids': [str(evidence_id)],
               'entity_refs': [], 'context_revision': revision, 'newer_run_available': newer,
               'limitations': [report['scope'], 'Эффект изменений не рассчитан; опубликованный план не изменён.'],

@@ -33,7 +33,8 @@ def setup() -> None:
         cur.execute('SELECT 1 FROM pg_roles WHERE rolname = %s', (ROLE,))
         if cur.fetchone() is None:
             cur.execute(sql.SQL('CREATE ROLE {} LOGIN').format(role))
-        cur.execute(sql.SQL('ALTER ROLE {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD {}').format(role, sql.Literal(password)))
+        cur.execute(sql.SQL('ALTER ROLE {} NOSUPERUSER NOCREATEDB NOCREATEROLE '
+                            'NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD {}').format(role, sql.Literal(password)))
         cur.execute(sql.SQL('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {}').format(role))
         cur.execute(sql.SQL('GRANT USAGE ON SCHEMA public TO {}').format(role))
         for table in READ:

@@ -12,7 +12,8 @@ def test_diagnostics_only_env_admin():
         result = diagnostics.public_payload(payload, principal)
         assert '_diagnostics' not in result and 'diagnostics' not in result
         assert result['nested'] == [{}]
-    assert diagnostics.public_payload(payload, auth.Principal('admin-token', 'admin', 'env'))['diagnostics']['reasons'] == ['invalid_model_json']
+    admin_payload = diagnostics.public_payload(payload, auth.Principal('admin-token', 'admin', 'env'))
+    assert admin_payload['diagnostics']['reasons'] == ['invalid_model_json']
     assert '_diagnostics' in payload
     assert diagnostics.reason('provider body or secret') == 'invalid_answer_or_context'
 
@@ -28,7 +29,8 @@ def test_entity_and_number_injection():
         with pytest.raises(ValueError, match=reason):
             evidence.render_fact_refs({'summary': text, 'explanation': '', 'fact_refs': []}, records)
     with pytest.raises(ValueError, match='invalid_fact_reference'):
-        evidence.render_fact_refs({'summary': 'Ответ', 'explanation': '', 'fact_refs': [{'evidence_id': str(uuid4()), 'field': 'count'}]}, records)
+        evidence.render_fact_refs({'summary': 'Ответ', 'explanation': '',
+                                   'fact_refs': [{'evidence_id': str(uuid4()), 'field': 'count'}]}, records)
 
 
 def test_complete_ranked_report_and_followup(monkeypatch):
