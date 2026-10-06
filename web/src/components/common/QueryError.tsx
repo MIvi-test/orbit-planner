@@ -6,6 +6,8 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import { Alert } from '@mantine/core'
 import { ApiError, ServiceUnavailableError } from '../../api/client'
+import { useImperium } from '../../theme/appTheme'
+import { WrathPanel } from '../imperium/ImperiumPanels'
 
 type AnyQuery = UseQueryResult<unknown, Error>
 
@@ -22,6 +24,8 @@ export function anyPending(queries: AnyQuery[]): boolean {
 }
 
 export function QueryError({ error, title }: { error: Error; title: string }) {
+  const imperium = useImperium()
+  if (imperium) return <WrathPanel error={error} title={error instanceof ServiceUnavailableError ? 'API недоступен' : title} />
   if (error instanceof ServiceUnavailableError) {
     return (
       <Alert color="red" variant="light" title="API недоступен">

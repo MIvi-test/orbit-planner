@@ -1,0 +1,143 @@
+/* ===== Единый стиль интерфейса: типографика, панели, таблицы, меню. Цвета берутся из токенов темы. ===== */
+
+/* ---- Фон: лёгкая «глубина» вместо плоской заливки ---- */
+body {
+  background-image:
+    radial-gradient(1100px 520px at 88% -8%, color-mix(in srgb, var(--mantine-primary-color-filled) 13%, transparent), transparent 70%),
+    radial-gradient(900px 480px at -6% 105%, color-mix(in srgb, var(--accent2, var(--mantine-primary-color-filled)) 9%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* ---- Заголовки: экранный — дисплейным шрифтом с акцентной чертой, блочный — с маркером ---- */
+.mantine-Title-root[data-order='2'] {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.mantine-Title-root[data-order='2']::after {
+  content: '';
+  display: block;
+  width: 64px;
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--mantine-primary-color-filled), var(--accent2, var(--mantine-primary-color-filled)));
+}
+.mantine-Title-root[data-order='3'],
+.mantine-Title-root[data-order='4'] {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+.mantine-Paper-root .mantine-Title-root[data-order='3'] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mantine-Paper-root .mantine-Title-root[data-order='3']::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 5px;
+  height: 1.05em;
+  border-radius: 3px;
+  background: var(--mantine-primary-color-filled);
+}
+
+/* ---- Панели: единый радиус, тонкая граница, мягкий верхний блик ---- */
+.mantine-Paper-root {
+  border-radius: 14px;
+  border-color: color-mix(in srgb, var(--mantine-color-text) 13%, transparent);
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--mantine-color-text) 3.5%, transparent), transparent 140px);
+}
+.mantine-Paper-root .mantine-Paper-root {
+  background-image: none;
+  border-radius: 10px;
+}
+
+/* ---- Числа и идентификаторы ---- */
+.tile-number,
+.mantine-Paper-root [data-display-number] {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* ---- Таблицы: тихая шапка капителью, мягкие разделители ---- */
+.mantine-Table-th {
+  font-family: var(--font-heading);
+  font-size: 0.74rem !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mantine-color-dimmed) !important;
+}
+.mantine-Table-tr:hover > .mantine-Table-td {
+  background: color-mix(in srgb, var(--mantine-primary-color-filled) 7%, transparent);
+}
+
+/* ---- Кнопки и поля ---- */
+.mantine-Button-root {
+  border-radius: 10px;
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+.mantine-Input-input,
+.mantine-Select-input {
+  border-radius: 10px;
+}
+.mantine-Badge-root {
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+
+/* ---- Боковое меню: акцентная планка у активного пункта, подпись текущей вкладки в свёрнутом виде ---- */
+.nav-item {
+  position: relative;
+  border-radius: 12px;
+  font-family: var(--font-heading);
+  font-weight: 500;
+}
+.nav-item[data-active]::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--mantine-primary-color-filled);
+}
+.nav-item[data-active] {
+  background: color-mix(in srgb, var(--mantine-primary-color-filled) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mantine-primary-color-filled) 35%, transparent);
+}
+.nav-item[data-ai] .nav-icon {
+  color: var(--accent2, var(--mantine-primary-color-filled));
+}
+.rail-current {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  padding: 8px 0;
+  pointer-events: none;
+}
+.rail-current span {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--mantine-primary-color-filled);
+  padding: 10px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mantine-primary-color-filled) 10%, transparent);
+}
+
+/* ---- Шапка: аккуратная сетка управляющих элементов ---- */
+.mantine-AppShell-header {
+  backdrop-filter: blur(10px);
+}

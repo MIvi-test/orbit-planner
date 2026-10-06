@@ -17,6 +17,7 @@ import re
 import sys
 import unicodedata
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import openpyxl
@@ -60,14 +61,21 @@ def split_skills(v) -> list[str]:
     return out
 
 
-def num(v) -> float:
-    if v is None or v == "":
-        return 0.0
-    if isinstance(v, str):
-        v = v.replace(",", ".").strip()
-        if not v:
-            return 0.0
-    return float(v)
+# Только проверенные эквиваленты и явно разобранные составные записи. Похожие
+# понятия (Java/JavaScript, Microservices/архитектура микросервисов) не сливаем.
+SKILL_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "apache kafka": ("Kafka",),
+    "core spring": ("Spring Core",),
+    "микросервисы": ("Microservices",),
+    "rest/grpc": ("REST", "gRPC"),
+    "rest/soap интеграции": ("REST", "SOAP"),
+    "ci/cd (gitlab, jenkins)": ("CI/CD", "GitLab", "Jenkins"),
+}
+
+
+def canonical_skills(raw: str) -> tuple[str, ...]:
+    """Сохраняем исходный текст отдельно; здесь только подтверждённые правила."""
+    return SKILL_EXPANSIONS.get(norm_text(raw).casefold(), (norm_text(raw),))
 
 
 def as_date(v):
@@ -114,12 +122,50 @@ class DQ:
 dq = DQ()
 
 
+class DependencyGraphError(ValueError):
+    """Исходные зависимости нельзя безопасно превратить в порядок задач."""
+
+
+class DataQualityError(ValueError):
+    """Во входном Excel есть ошибки, при которых план теряет данные."""
+
+    def __init__(self, problems):
+        self.problems = problems
+        super().__init__(f"блокирующие ошибки Excel: {len(problems)}")
+
+
+def require_valid_quality():
+    problems = [
+        f"{entity} [{entity_id or 'без ID'}], {code}: {detail}"
+        for entity, entity_id, code, severity, detail in dq.rows if severity == "error"
+    ]
+    if problems:
+        raise DataQualityError(problems)
+
+
+def validate_dependency_edge(a, b, typ, source_row, task_ids, previous_rows):
+    """Структурные ошибки рёбер не должны терять ограничения при загрузке."""
+    if a not in task_ids or b not in task_ids:
+        raise DependencyGraphError(f"строка Excel {source_row}: связь {a} → {b} ссылается на неизвестную задачу")
+    if a == b:
+        raise DependencyGraphError(f"строка Excel {source_row}: задача {a} зависит от самой себя")
+    if (a, b) in previous_rows:
+        raise DependencyGraphError(
+            f"строка Excel {source_row}: повтор связи {a} → {b} (впервые в строке {previous_rows[a, b]})"
+        )
+    if typ.lower() not in {"depends on", "has to be done before", "is required for"}:
+        raise DependencyGraphError(
+            f"строка Excel {source_row}: неизвестный тип зависимости «{typ}» для {a} → {b}"
+        )
+
+
 # ===================================================================== #
 #  поиск блоков на листе                                                #
 # ===================================================================== #
 class Sheet:
-    def __init__(self, ws):
+    def __init__(self, ws, formulas=None):
         self.ws = ws
+        self.formulas = formulas
         self.max_row = ws.max_row
         self.max_col = ws.max_column
 
@@ -163,8 +209,70 @@ class Sheet:
         for c in range(1, self.max_col + 1):
             h = norm_text(self.cell(header_row, c))
             if h:
+                if h in out:
+                    raise DataQualityError([
+                        f"лист {self.ws.title}: заголовок «{h}» повторяется в "
+                        f"{self.ws.cell(header_row, out[h]).coordinate} и "
+                        f"{self.ws.cell(header_row, c).coordinate}"
+                    ])
                 out[h] = c
         return out
+
+    def require_columns(self, columns, header_row, names):
+        missing = [name for name in names if name not in columns]
+        if missing:
+            raise DataQualityError([
+                f"лист {self.ws.title}, строка {header_row}: нет обязательной колонки «{name}»"
+                for name in missing
+            ])
+
+    def number(self, row, column, *, required=False, nonnegative=False, integer=False,
+               decimal_places=None):
+        cell = self.ws.cell(row, column)
+        value = cell.value
+        if value in (None, ""):
+            # Читалка формул (read_only) разбирает лист заново при каждом доступе к ячейке, поэтому
+            # обращаемся к ней только для пустых значений: иначе загрузка шла 17 секунд вместо 1.
+            original = self.formulas.cell(row, column) if self.formulas else None
+            if original is not None and original.data_type == "f":
+                problem = "у формулы нет сохранённого вычисленного значения"
+            elif required:
+                problem = "обязательное число пропущено"
+            else:
+                return None
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "MISSING_NUMBER", "error", problem)
+            return None
+        try:
+            number = Decimal(str(value).strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            number = Decimal("NaN")
+        if not number.is_finite():
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "INVALID_NUMBER", "error",
+                   f"некорректное число «{value}»")
+            return None
+        if nonnegative and number < 0:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "NEGATIVE_NUMBER", "error",
+                   f"отрицательное число {number}")
+            return None
+        if integer and number != number.to_integral_value():
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "FRACTIONAL_NUMBER", "error",
+                   f"дробное число {number}, требуется целое")
+            return None
+        if decimal_places is not None and number % Decimal(1).scaleb(-decimal_places) != 0:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "EXCESS_PRECISION", "error",
+                   f"число {number} точнее {decimal_places} знаков после запятой")
+            return None
+        return number
+
+    def date(self, row, column):
+        cell = self.ws.cell(row, column)
+        if cell.value in (None, ""):
+            return None
+        parsed = as_date(cell.value)
+        if parsed is None:
+            dq.add("excel", f"{self.ws.title}!{cell.coordinate}", "INVALID_DATE", "error",
+                   f"некорректная дата «{cell.value}»")
+        return parsed
 
     def ref_list(self, title_row: int) -> list[str]:
         vals = []
@@ -247,8 +355,17 @@ def build_ref(values, kind):
 # ===================================================================== #
 def parse(path: Path):
     wb = openpyxl.load_workbook(path, data_only=True)
-    sh = Sheet(wb.worksheets[0])
+    formula_wb = openpyxl.load_workbook(path, data_only=False, read_only=True)
+    sh = Sheet(wb.worksheets[0], formula_wb.worksheets[0])
     D: dict = {}
+    provenance: list[tuple] = []
+
+    def record(entity: str, entity_id: str, field: str, row: int, column: int,
+               normalized: object) -> None:
+        cell = sh.ws.cell(row, column)
+        provenance.append((1, entity, entity_id, field, sh.ws.title, cell.coordinate,
+                           None if cell.value is None else str(cell.value),
+                           None if normalized is None else str(normalized), C.ETL_VERSION))
 
     # ---------- справочники ----------
     D["ref_results"], map_result = build_ref(
@@ -277,9 +394,10 @@ def parse(path: Path):
             canon_roles.append(canon)
         role_rows[canon].append(r)
 
+    # Справочник ролей = строки матрицы сметы + роли из профилей инженеров (DA-25): отсутствие
+    # спроса на роль в нынешнем бэклоге не делает профиль ошибочным. Роли из профилей
+    # добавляются ниже, после чтения инженеров; role_id сметных ролей при этом не меняются.
     role_id = {name: i for i, name in enumerate(canon_roles, start=1)}
-    D["roles"] = [(role_id[n], n, C.ROLE_GROUPS.get(n, "other")) for n in canon_roles]
-    D["role_aliases"] = [(a, role_id[c]) for a, c in C.ROLE_ALIASES.items() if c in role_id]
 
     # ---------- задачи ----------
     t_title = sh.find_block(C.BLOCK_MARKERS["tasks"])
@@ -290,33 +408,51 @@ def parse(path: Path):
         c = tc.get(name)
         return sh.cell(row, c) if c else None
 
+    sh.require_columns(tc, t_hdr, ("task_id", "Номер инициативы", "parent_id", "team_id",
+                                   "status", "rung", "estimation_sp", "estimated_hh"))
+
     tasks, initiatives = [], {}
     for r in sh.data_rows(t_hdr):
         tid = norm_text(col(r, "task_id"))
         prodf = norm_text(col(r, "Номер инициативы"))
         br = norm_text(col(r, "parent_id"))
         summary = norm_text(col(r, "summary"))
-        rung = int(num(col(r, "rung"))) or None
+        rung_value = sh.number(r, tc["rung"], required=True, nonnegative=True, integer=True)
+        sp_value = sh.number(r, tc["estimation_sp"], required=True, nonnegative=True, integer=True)
+        declared_value = sh.number(r, tc["estimated_hh"], required=True, nonnegative=True,
+                                   decimal_places=2)
+        rung = int(rung_value) if rung_value is not None else None
+        for field, header, normalized in (
+            ("team_id", "team_id", norm_text(col(r, "team_id"))),
+            ("status", "status", norm_text(col(r, "status"))),
+            ("rung", "rung", rung),
+            ("estimation_sp", "estimation_sp", sp_value),
+            ("estimated_hh_declared", "estimated_hh", declared_value),
+        ):
+            record("tasks", tid, field, r, tc[header], normalized)
 
-        ini = initiatives.setdefault(prodf, {"br": br, "titles": [], "rungs": [], "sps": []})
+        ini = initiatives.setdefault(prodf, {"br": br, "first_row": r, "titles": [], "rungs": [], "sps": []})
         if ini["br"] != br:
             dq.add("initiatives", prodf, "PRODF_BR_NOT_1TO1", "error",
-                   f"У инициативы {prodf} два разных parent_id: {ini['br']} и {br}.")
+                   f"Строки Excel {ini['first_row']} и {r}: у инициативы {prodf} два разных parent_id: {ini['br']} и {br}.")
         ini["titles"].append(summary)
         ini["rungs"].append(rung or 0)
-        ini["sps"].append(num(col(r, "estimation_sp")))
+        ini["sps"].append(int(sp_value) if sp_value is not None else 0)
 
         tasks.append({
             "task_id": tid, "prodf_id": prodf, "team_id": norm_text(col(r, "team_id")),
             "summary": summary, "status": norm_text(col(r, "status")), "rung": rung,
-            "estimation_sp": int(num(col(r, "estimation_sp"))),
-            "declared": num(col(r, "estimated_hh")),
-            "spent_declared": (None if col(r, "spent_time") is None else num(col(r, "spent_time"))),
-            "created_at": as_date(col(r, "created_at")),
-            "planned_start": as_date(col(r, "planned_start")),
-            "planned_end": as_date(col(r, "planned_end")),
-            "actual_start": as_date(col(r, "actual_start")),
-            "actual_end": as_date(col(r, "actual_end")),
+            "estimation_sp": int(sp_value) if sp_value is not None else 0,
+            "declared": float(declared_value) if declared_value is not None else 0.0,
+            "spent_declared": (float(value) if "spent_time" in tc and
+                               (value := sh.number(r, tc["spent_time"], nonnegative=True,
+                                                   decimal_places=2)) is not None
+                               else None),
+            "created_at": sh.date(r, tc["created_at"]) if "created_at" in tc else None,
+            "planned_start": sh.date(r, tc["planned_start"]) if "planned_start" in tc else None,
+            "planned_end": sh.date(r, tc["planned_end"]) if "planned_end" in tc else None,
+            "actual_start": sh.date(r, tc["actual_start"]) if "actual_start" in tc else None,
+            "actual_end": sh.date(r, tc["actual_end"]) if "actual_end" in tc else None,
             "result_planned": map_result(col(r, "плановый результат")),
             "result_customer": map_result(col(r, "заказчик")),
             "result_executor": map_result(col(r, "исполнитель")),
@@ -336,16 +472,23 @@ def parse(path: Path):
     for tid, c in est_cols.items():
         if tid not in task_ids:
             dq.add("task_role_estimates", tid, "ESTIMATE_COLUMN_ORPHAN", "error",
-                   f"В матрице сметы есть столбец '{tid}', которого нет в таблице Tasks.")
+                   f"Колонка Excel {c}, строка заголовка {est_hdr}: задача '{tid}' отсутствует в Tasks.")
             continue
         total = 0.0
         for canon, rows in role_rows.items():
-            h = sum(num(sh.cell(rr, c)) for rr in rows)
+            h = Decimal(0)
+            for rr in rows:
+                component = sh.number(rr, c, nonnegative=True, decimal_places=2) or Decimal(0)
+                h += component
+                if component > 0:
+                    record("task_role_estimates", f"{tid}:{role_id[canon]}", "hours", rr, c,
+                           component)
             if h > 0:
-                estimates.append((tid, role_id[canon], h))
-                total += h
+                estimates.append((tid, role_id[canon], float(h)))
+                total += float(h)
         col_sum[tid] = total
-        matrix_total[tid] = num(sh.cell(est_total_row, c)) if est_total_row else None
+        matrix_total[tid] = (float(sh.number(est_total_row, c, nonnegative=True, decimal_places=2) or 0)
+                             if est_total_row else None)
     for tid in task_ids - set(est_cols):
         dq.add("tasks", tid, "TASK_WITHOUT_ESTIMATE", "error", f"У задачи {tid} нет столбца в матрице сметы.")
 
@@ -353,11 +496,12 @@ def parse(path: Path):
     sp_title = sh.find_block(C.BLOCK_MARKERS["spent"])
     sp_hdr = sh.header_row(sp_title)
     sp_cols = sh.columns(sp_hdr)
+    sh.require_columns(sp_cols, sp_hdr, ("task_id",))
     spent = []
     for r in sh.data_rows(sp_hdr):
         tid = norm_text(sh.cell(r, sp_cols["task_id"]))
         if tid not in task_ids:
-            dq.add("task_role_spent", tid, "SPENT_ORPHAN", "error", f"Факт по ролям для неизвестной задачи {tid}.")
+            dq.add("task_role_spent", tid, "SPENT_ORPHAN", "error", f"Строка Excel {r}: факт по ролям для неизвестной задачи {tid}.")
             continue
         for h, c in sp_cols.items():
             if h in ("task_id", "Исходное время"):
@@ -367,27 +511,25 @@ def parse(path: Path):
                 dq.add("task_role_spent", tid, "SPENT_UNKNOWN_ROLE", "warning",
                        f"Роль '{h}' из блока факта отсутствует в матрице сметы.")
                 continue
-            v = num(sh.cell(r, c))
+            v = sh.number(r, c, nonnegative=True, decimal_places=2) or Decimal(0)
             if v > 0:
-                spent.append((tid, role_id[canon], v))
+                spent.append((tid, role_id[canon], float(v)))
 
-    # ---------- трудозатраты: выбор истины (ADR-002) ----------
-    src = C.ESTIMATE_SOURCE
+    # ---------- трудозатраты: авторитетна ролевая матрица (ADR-002) ----------
     for t in tasks:
         tid = t["task_id"]
         cand = {"matrix_column_sum": col_sum.get(tid, 0.0),
                 "declared": t["declared"],
-                "matrix_total": matrix_total.get(tid) or 0.0}
-        eff = cand.get(src, 0.0)
-        if not eff:
-            eff = t["declared"]
-            dq.add("tasks", tid, "ESTIMATE_SOURCE_FALLBACK", "warning",
-                   f"Источник '{src}' дал 0 ЧЧ, взята declared-оценка {eff}.")
-        vals = {k: round(v, 2) for k, v in cand.items() if v}
+                "matrix_total": matrix_total.get(tid)}
+        eff = cand["matrix_column_sum"]
+        if eff == 0 and (t["declared"] > 0 or t["estimation_sp"] > 0):
+            dq.add("tasks", tid, "MISSING_ROLE_ESTIMATE", "error",
+                   "Ролевая смета пуста при ненулевой оценке: часы нельзя распределить по ролям.")
+        vals = {k: round(v, 2) for k, v in cand.items() if v is not None}
         if len(set(vals.values())) > 1:
             dq.add("tasks", tid, "ESTIMATE_SOURCES_DISAGREE", "warning",
                    "Расходятся оценки ЧЧ: " + ", ".join(f"{k}={v:g}" for k, v in vals.items()) +
-                   f". Выбрано {src}={eff:g}.")
+                   f". Выбрано matrix_column_sum={eff:g}.")
         t["effective"] = eff
         t["matrix_total"] = matrix_total.get(tid)
 
@@ -395,19 +537,15 @@ def parse(path: Path):
     d_title = sh.find_block(C.BLOCK_MARKERS["dependencies"])
     d_hdr = sh.header_row(d_title)
     dc = sh.columns(d_hdr)
-    deps, seen = [], set()
+    sh.require_columns(dc, d_hdr, ("blocking_task_id", "blocked_task_id", "dependency_type"))
+    deps, dep_source_rows = [], {}
     status = {t["task_id"]: t["status"] for t in tasks}
     for r in sh.data_rows(d_hdr):
         a = norm_text(sh.cell(r, dc["blocking_task_id"]))
         b = norm_text(sh.cell(r, dc["blocked_task_id"]))
         typ = norm_text(sh.cell(r, dc["dependency_type"]))
-        if a not in task_ids or b not in task_ids:
-            dq.add("task_dependencies", f"{a}->{b}", "DEP_ORPHAN", "error", "Связь ссылается на неизвестную задачу.")
-            continue
-        if a == b or (a, b) in seen:
-            dq.add("task_dependencies", f"{a}->{b}", "DEP_DUPLICATE_OR_SELF", "error", "Петля или дубль связи.")
-            continue
-        seen.add((a, b))
+        validate_dependency_edge(a, b, typ, r, task_ids, dep_source_rows)
+        dep_source_rows[a, b] = r
         if status.get(a) != "Done" and status.get(b) == "Done":
             dq.add("task_dependencies", f"{a}->{b}", "DEP_VIOLATED_IN_SOURCE", "warning",
                    f"{b} уже Done, хотя блокирующая {a} в статусе {status.get(a)}.")
@@ -417,61 +555,100 @@ def parse(path: Path):
     e_title = sh.find_block(C.BLOCK_MARKERS["engineers"])
     e_hdr = sh.header_row(e_title)
     ec = sh.columns(e_hdr)
+    sh.require_columns(ec, e_hdr, ("engineer_id", "team_id", "role", "grade",
+                                    "capacity_rate", "skills_declared"))
     engineers, orbits, skills_seen, eng_skills = {}, [], {}, set()
+    skill_declarations: list[tuple[str, str, int, int]] = []
+    engineer_rows = {}
     for r in sh.data_rows(e_hdr):
         eid = norm_text(sh.cell(r, ec["engineer_id"]))
         team = norm_text(sh.cell(r, ec["team_id"]))
         raw_role = norm_text(sh.cell(r, ec["role"]))
         canon = C.ROLE_ALIASES.get(raw_role, raw_role)
-        if canon not in role_id:
-            dq.add("engineers", eid, "ENGINEER_ROLE_UNKNOWN", "error",
-                   f"Роль '{raw_role}' отсутствует в матрице сметы — добавь алиас в config.ROLE_ALIASES.")
+        if not canon:
+            dq.add("engineers", eid, "ENGINEER_ROLE_EMPTY", "error",
+                   f"Строка Excel {r}: у инженера {eid} не указана роль.")
             continue
+        if canon not in role_id:
+            # Роль есть в профиле, но не в смете: сотрудник остаётся в штате, роль получает id
+            # после сметных. Разнописание, которое на самом деле та же роль, лечится алиасом.
+            role_id[canon] = len(role_id) + 1
+            canon_roles.append(canon)
+            dq.add("roles", canon, "ROLE_WITHOUT_ESTIMATE", "info",
+                   f"Роль '{canon}' есть в профиле {eid}, но не в матрице сметы: спроса на неё в бэклоге нет. "
+                   f"Если это разнописание сметной роли — добавьте алиас в config.ROLE_ALIASES.")
         if canon != raw_role:
             dq.add("engineers", eid, "ROLE_ALIAS_APPLIED", "info", f"Роль '{raw_role}' -> '{canon}'.")
         grade = norm_text(sh.cell(r, ec["grade"]))
-        rate = num(sh.cell(r, ec["capacity_rate"]))
+        rate = float(sh.number(r, ec["capacity_rate"], required=True, nonnegative=True) or 0)
+        for field, header, normalized in (
+            ("role", "role", canon), ("grade", "grade", grade),
+            ("team_id", "team_id", team), ("capacity_rate", "capacity_rate", rate),
+            ("skills_declared", "skills_declared", norm_text(sh.cell(r, ec["skills_declared"]))),
+        ):
+            record("engineers", eid, field, r, ec[header], normalized)
 
         if eid in engineers:
             prev = engineers[eid]
             if (prev["role"], prev["grade"]) != (canon, grade):
                 dq.add("engineers", eid, "PARTTIME_ATTRS_DIFFER", "error",
-                       f"У парттаймера {eid} атрибуты различаются между орбитами — беру первую строку.")
+                       f"Строки Excel {engineer_rows[eid]} и {r}: у парттаймера {eid} различаются роль или грейд.")
             prev["total"] += rate
         else:
             engineers[eid] = {"role": canon, "grade": grade, "total": rate}
+            engineer_rows[eid] = r
         orbits.append((eid, team, rate))
 
         for raw_skill in split_skills(sh.cell(r, ec["skills_declared"])):
             s = norm_text(raw_skill)
             if not s:
                 continue
-            key = s.lower()
-            if key not in skills_seen:
-                skills_seen[key] = (len(skills_seen) + 1, s)
-            eng_skills.add((eid, skills_seen[key][0]))
+            if s.casefold() == "core":
+                dq.add("engineer_skills", eid, "AMBIGUOUS_SKILL", "warning",
+                       f"Строка Excel {r}: «Core» требует ручной классификации.")
+            for canonical in canonical_skills(s):
+                key = canonical.casefold()
+                if key not in skills_seen:
+                    skills_seen[key] = (len(skills_seen) + 1, canonical)
+                skill_id = skills_seen[key][0]
+                eng_skills.add((eid, skill_id))
+                skill_declarations.append((eid, s, skill_id, r))
 
     for eid, e in engineers.items():
         if round(e["total"], 2) > 1.0:
             dq.add("engineers", eid, "CAPACITY_OVER_100", "error",
-                   f"Сумма ставок по орбитам = {e['total']} > 1.0.")
+                   f"Начиная со строки Excel {engineer_rows[eid]} сумма ставок по орбитам = {e['total']} > 1.0.")
 
     # ---------- история команд ----------
     h_title = sh.find_block(C.BLOCK_MARKERS["team_history"])
     h_hdr = sh.header_row(h_title)
     hc = sh.columns(h_hdr)
+    sh.require_columns(hc, h_hdr, ("team_id", "snapshot_date", "velocity_achieved", "planned_sp"))
     history, teams = [], set()
     for r in sh.data_rows(h_hdr):
         tm = norm_text(sh.cell(r, hc["team_id"]))
         teams.add(tm)
-        history.append((tm, as_date(sh.cell(r, hc["snapshot_date"])),
-                        num(sh.cell(r, hc["velocity_achieved"])), num(sh.cell(r, hc["planned_sp"]))))
+        velocity = float(sh.number(r, hc["velocity_achieved"], required=True, nonnegative=True) or 0)
+        record("team_history", tm, "velocity_achieved", r, hc["velocity_achieved"], velocity)
+        history.append((tm, sh.date(r, hc["snapshot_date"]), velocity,
+                        float(sh.number(r, hc["planned_sp"], required=True, nonnegative=True) or 0)))
 
     teams |= {t["team_id"] for t in tasks} | {o[1] for o in orbits}
     for tm in sorted(teams):
         if not any(h[0] == tm for h in history):
             dq.add("teams", tm, "TEAM_WITHOUT_HISTORY", "error",
                    f"У команды {tm} нет истории velocity — ёмкость в SP посчитать нельзя.")
+            continue
+        own = [h for h in history if h[0] == tm]
+        newest = max((h[1] for h in own if h[1]), default=None)
+        if newest is not None and (C.PI_START - newest).days > C.HISTORY_STALE_DAYS:
+            dq.add("teams", tm, "TEAM_HISTORY_STALE", "warning",
+                   f"Последнее наблюдение скорости команды {tm} — {newest}, за {(C.PI_START - newest).days} дн. "
+                   f"до начала PI: ёмкость в SP может не отражать нынешний состав и темп.")
+        if len(own) < C.HISTORY_MIN_POINTS:
+            dq.add("teams", tm, "TEAM_HISTORY_THIN", "info",
+                   f"Наблюдений скорости команды {tm}: {len(own)} (для устойчивого среднего нужно не меньше "
+                   f"{C.HISTORY_MIN_POINTS}); пересчёты добавляют закрытые спринты текущего PI.")
 
     # ---------- инициативы ----------
     agg = C.RUNG_AGGREGATION
@@ -494,10 +671,14 @@ def parse(path: Path):
         title = max(sorted(set(v["titles"])), key=v["titles"].count) if v["titles"] else None
         ini_rows.append((prodf, v["br"], title, pr))
 
+    D["roles"] = [(role_id[n], n, C.ROLE_GROUPS.get(n, "other")) for n in canon_roles]
+    D["role_aliases"] = [(a, role_id[c]) for a, c in C.ROLE_ALIASES.items() if c in role_id]
+
     D.update(tasks=tasks, initiatives=ini_rows, estimates=estimates, spent=spent,
-             deps=deps, engineers=engineers, orbits=orbits,
+             deps=deps, dep_source_rows=dep_source_rows, engineers=engineers, orbits=orbits,
              skills=[(i, s, k) for k, (i, s) in skills_seen.items()],
-             eng_skills=sorted(eng_skills), history=history, teams=sorted(teams),
+             eng_skills=sorted(eng_skills), skill_declarations=skill_declarations,
+             history=history, teams=sorted(teams), provenance=provenance,
              role_id=role_id)
     return D
 
@@ -505,41 +686,41 @@ def parse(path: Path):
 # ===================================================================== #
 #  календарь и граф                                                     #
 # ===================================================================== #
-def build_sprints():
-    """Сетка спринтов внутри ТОЧНЫХ границ PI (ADR-007 + ADR-017).
+def build_sprints(pi_id: str = C.PI_ID, pi_start: date = C.PI_START):
+    """Сетка спринтов внутри точных границ PI (ADR-025).
 
-    Спринты идут по 14 дней от `PI_START`; последний обрезается по `PI_END`
-    и потому может быть короче. Длина спринта — не косметика: фонд часов
-    масштабируется ею (`v_pi_fund_factor`), и на живых данных 7-й спринт
-    короче всех (23.09..30.09.2026 = 8 дней, множитель 0.5714).
+    Спринты идут по 14 дней от `PI_START`; длина определяет фонд часов.
+    В текущем PI все шесть спринтов полные.
 
     Guard: сетка обязана закрыть квартал ровно — без дыр и нахлёстов.
     Ошибка в `PI_START`/`PI_END`/`SPRINT_COUNT` не должна доехать до
     витрин, иначе фонд и календарь разъедутся молча.
     """
+    pi_end = (C.PI_END if pi_id == C.PI_ID and pi_start == C.PI_START
+              else pi_start + timedelta(days=C.SPRINT_COUNT * C.SPRINT_LENGTH_DAYS - 1))
     rows = []
     for n in range(1, C.SPRINT_COUNT + 1):
-        s = C.PI_START + timedelta(days=(n - 1) * C.SPRINT_LENGTH_DAYS)
-        if s > C.PI_END:
+        s = pi_start + timedelta(days=(n - 1) * C.SPRINT_LENGTH_DAYS)
+        if s > pi_end:
             raise ValueError(
-                f"календарь PI: спринт {n} начинается {s}, а квартал кончается "
-                f"{C.PI_END} — SPRINT_COUNT={C.SPRINT_COUNT} не влезает в границы"
+                f"календарь PI: спринт {n} начинается {s}, а PI кончается "
+                f"{pi_end} — SPRINT_COUNT={C.SPRINT_COUNT} не влезает в границы"
             )
-        e = min(s + timedelta(days=C.SPRINT_LENGTH_DAYS - 1), C.PI_END)
-        rows.append((C.PI_ID, n, s, e))
+        e = min(s + timedelta(days=C.SPRINT_LENGTH_DAYS - 1), pi_end)
+        rows.append((pi_id, n, s, e))
 
     covered = sum((e - s).days + 1 for _pi, _n, s, e in rows)
-    expected = (C.PI_END - C.PI_START).days + 1
+    expected = (pi_end - pi_start).days + 1
     if covered != expected:
         raise ValueError(
             f"календарь PI: спринты покрывают {covered} дней из {expected} "
-            f"({C.PI_START}..{C.PI_END}) — есть дыра или нахлёст"
+            f"({pi_start}..{pi_end}) — есть дыра или нахлёст"
         )
-    return (C.PI_ID, C.PI_START, C.PI_END, C.SPRINT_COUNT, C.SPRINT_LENGTH_DAYS,
+    return (pi_id, pi_start, pi_end, C.SPRINT_COUNT, C.SPRINT_LENGTH_DAYS,
             C.HOURS_PER_SPRINT_FTE), rows
 
 
-def build_sequence(tasks, deps):
+def build_sequence(tasks, deps, dep_source_rows=None):
     """Топологический порядок + самый ранний старт по живому подграфу."""
     status = {t["task_id"]: t["status"] for t in tasks}
     ids = [t["task_id"] for t in tasks]
@@ -563,10 +744,33 @@ def build_sequence(tasks, deps):
                 queue.append(m)
         queue.sort()
     if len(order) != len(ids):
-        cyc = sorted(set(ids) - set(order))
-        dq.add("task_dependencies", None, "DEPENDENCY_CYCLE", "error",
-               f"В графе зависимостей цикл, затронуты: {cyc}. Порядок посчитан частично.")
-        order += cyc
+        remaining = set(ids) - set(order)
+        visiting: dict[str, int] = {}
+        path: list[str] = []
+
+        def find_cycle(node):
+            visiting[node] = 1
+            path.append(node)
+            for successor in sorted(succ_all[node]):
+                if successor not in remaining:
+                    continue
+                if visiting.get(successor) == 1:
+                    return path[path.index(successor):] + [successor]
+                if successor not in visiting:
+                    found = find_cycle(successor)
+                    if found:
+                        return found
+            path.pop()
+            visiting[node] = 2
+            return None
+
+        cycle = next((found for node in sorted(remaining) if node not in visiting
+                      if (found := find_cycle(node))), None)
+        assert cycle is not None
+        source = dep_source_rows or {}
+        locations = [str(source[a, b]) for a, b in zip(cycle, cycle[1:]) if (a, b) in source]
+        suffix = f"; строки Excel: {', '.join(locations)}" if locations else ""
+        raise DependencyGraphError(f"цикл зависимостей: {' → '.join(cycle)}{suffix}")
     topo = {t: i + 1 for i, t in enumerate(order)}
 
     # живой подграф
@@ -605,9 +809,10 @@ def build_sequence(tasks, deps):
 # ===================================================================== #
 #  генерация seed.sql                                                   #
 # ===================================================================== #
-def emit(D, src_path: Path) -> str:
-    pi, sprints = build_sprints()
-    seq = build_sequence(D["tasks"], D["deps"])
+def emit(D, src_path: Path, *, pi_id: str = C.PI_ID,
+         pi_start: date = C.PI_START) -> str:
+    pi, sprints = build_sprints(pi_id, pi_start)
+    seq = build_sequence(D["tasks"], D["deps"], D.get("dep_source_rows"))
     sha = hashlib.sha256(src_path.read_bytes()).hexdigest()
 
     counts = {
@@ -617,6 +822,7 @@ def emit(D, src_path: Path) -> str:
         "tasks": len(D["tasks"]), "task_role_estimates": len(D["estimates"]),
         "task_role_spent": len(D["spent"]), "task_dependencies": len(D["deps"]),
         "team_history": len(D["history"]), "sprints": len(sprints), "dq_issues": len(dq.rows),
+        "source_provenance": len(D["provenance"]),
     }
 
     o: list[str] = []
@@ -624,16 +830,17 @@ def emit(D, src_path: Path) -> str:
     w("-- СГЕНЕРИРОВАНО etl/load.py — РУКАМИ НЕ ПРАВИТЬ.")
     w(f"-- Источник: {src_path.name}")
     w(f"-- sha256:   {sha}")
-    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={C.PI_START}   оценка={C.ESTIMATE_SOURCE}")
+    w(f"-- ETL:      v{C.ETL_VERSION}   PI_START={pi_start}   оценка=matrix_column_sum")
     w("BEGIN;")
     w("TRUNCATE plan_task_sp, task_actual_spent, task_actuals, actual_uploads,")
     w("         task_role_spent_seed, tasks_seed_state,")
     w("         kpi_snapshots, alerts, task_state, plan_assignments, plan_task_schedule,")
-    w("         plan_baseline, plan_runs, dq_issues, task_sequence, sprints, pi_periods,")
+    w("         plan_capacity_snapshot, plan_baseline, plan_runs, source_provenance, dq_issues, task_sequence, sprints, pi_periods,")
     w("         team_history, task_dependencies, task_role_spent, task_role_estimates,")
-    w("         tasks, initiatives, engineer_skills, engineer_orbits, engineers, teams,")
+    w("         tasks, initiatives, engineer_skill_declarations, engineer_skills,")
+    w("         engineer_orbits, engineers, teams,")
     w("         ref_closure_results, ref_mismatch_reasons, ref_result_options,")
-    w("         skills, role_aliases, roles, load_batches RESTART IDENTITY CASCADE;")
+    w("         skill_aliases, skills, role_aliases, roles, load_batches RESTART IDENTITY CASCADE;")
 
     def block(title, table, cols, rows):
         w(f"\n-- {title}: {len(rows)}")
@@ -644,12 +851,29 @@ def emit(D, src_path: Path) -> str:
 
     import json
     block("прогон ETL", "load_batches",
-          ["batch_id", "source_file", "source_sha256", "etl_version", "pi_start", "row_counts"],
-          [(1, src_path.name, sha, C.ETL_VERSION, C.PI_START, json.dumps(counts, ensure_ascii=False))])
+          ["batch_id", "source_file", "source_sha256", "config_sha256", "etl_version", "pi_start", "row_counts"],
+          [(1, src_path.name, sha,
+            hashlib.sha256((Path(__file__).parent / "config.py").read_bytes()).hexdigest(),
+            C.ETL_VERSION, pi_start, json.dumps(counts, ensure_ascii=False))])
+    block("происхождение значений", "source_provenance",
+          ["batch_id", "entity", "entity_id", "field_name", "source_sheet", "source_cell",
+           "raw_value", "normalized_value", "rule_version"], D["provenance"])
 
     block("роли", "roles", ["role_id", "canonical_name", "role_group"], D["roles"])
     block("алиасы ролей", "role_aliases", ["alias", "role_id"], D["role_aliases"])
     block("навыки", "skills", ["skill_id", "name", "normalized_name"], D["skills"])
+    skill_names = {row[0]: row[1] for row in D["skills"]}
+    aliases_by_key = {}
+    for _engineer_id, raw, skill_id, _source_row in D["skill_declarations"]:
+        if raw.casefold() != skill_names[skill_id].casefold() or len(canonical_skills(raw)) > 1:
+            aliases_by_key.setdefault(
+                (raw.casefold(), skill_id),
+                (raw.casefold(), skill_id, raw,
+                 "composite" if len(canonical_skills(raw)) > 1 else "synonym"),
+            )
+    aliases = sorted(aliases_by_key.values())
+    block("алиасы навыков", "skill_aliases",
+          ["alias_key", "skill_id", "alias_text", "rule"], aliases)
     block("справочник результатов", "ref_result_options", ["code", "ord", "label"], D["ref_results"])
     block("причины расхождений", "ref_mismatch_reasons", ["code", "ord", "label"], D["ref_mismatch"])
     block("результаты закрытия", "ref_closure_results", ["code", "ord", "label"], D["ref_closure"])
@@ -661,6 +885,8 @@ def emit(D, src_path: Path) -> str:
            for e, v in sorted(D["engineers"].items())])
     block("орбиты", "engineer_orbits", ["engineer_id", "team_id", "capacity_rate"], sorted(D["orbits"]))
     block("стек инженеров", "engineer_skills", ["engineer_id", "skill_id"], D["eng_skills"])
+    block("исходные написания навыков", "engineer_skill_declarations",
+          ["engineer_id", "raw_text", "skill_id", "source_row"], D["skill_declarations"])
     block("инициативы", "initiatives", ["prodf_id", "br_id", "title", "priority_rung"],
           sorted(D["initiatives"]))
     block("задачи", "tasks",
@@ -685,7 +911,7 @@ def emit(D, src_path: Path) -> str:
            "fte_hours_per_sprint"], [pi])
     block("спринты", "sprints", ["pi_id", "sprint_no", "start_date", "end_date"], sprints)
     block("порядок задач", "task_sequence",
-          ["task_id", "topo_order", "depth", "earliest_start_sprint", "on_critical_path"], seq)
+          ["task_id", "topo_order", "depth", "earliest_start_sprint", "on_longest_edge_chain"], seq)
     block("качество данных", "dq_issues",
           ["batch_id", "entity", "entity_id", "rule_code", "severity", "detail"],
           [(1, *r) for r in dq.rows])
@@ -707,7 +933,8 @@ def emit(D, src_path: Path) -> str:
     return "\n".join(o) + "\n", counts
 
 
-def build_seed_sql(src_path: Path) -> tuple[str, dict, dict]:
+def build_seed_sql(src_path: Path, *, pi_id: str = C.PI_ID,
+                   pi_start: date = C.PI_START) -> tuple[str, dict, dict]:
     """ETL целиком в памяти: xlsx -> текст seed.sql. Для сервера (загрузка датасета).
 
     Журнал качества — глобальный объект модуля; в долгоживущем процессе его
@@ -717,7 +944,11 @@ def build_seed_sql(src_path: Path) -> tuple[str, dict, dict]:
     """
     dq.rows = []
     D = parse(src_path)
-    text, counts = emit(D, src_path)
+    require_valid_quality()
+    if pi_id == C.PI_ID and pi_start == C.PI_START:
+        text, counts = emit(D, src_path)
+    else:
+        text, counts = emit(D, src_path, pi_id=pi_id, pi_start=pi_start)
     return text, counts, {
         "error": dq.count("error"), "warning": dq.count("warning"), "info": dq.count("info"),
     }
@@ -736,6 +967,10 @@ def main():
         raise SystemExit(f"[ОШИБКА] Не найден исходник: {src}")
 
     D = parse(src)
+    try:
+        require_valid_quality()
+    except DataQualityError as exc:
+        raise SystemExit("[ОШИБКА] " + str(exc) + "\n" + "\n".join(exc.problems)) from None
     text, counts = emit(D, src)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

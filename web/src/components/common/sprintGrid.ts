@@ -5,8 +5,8 @@
  */
 export function sprintGridTemplate(
   count: number,
-  labelWidth = '230px',
-  tailWidth = '34px',
+  labelWidth = 'minmax(260px, 340px)',
+  tailWidth = '64px',
 ): string {
-  return `${labelWidth} repeat(${Math.max(count, 1)}, minmax(58px, 1fr)) ${tailWidth}`
+  return `${labelWidth} repeat(${Math.max(count, 1)}, minmax(88px, 1fr)) ${tailWidth}`
 }

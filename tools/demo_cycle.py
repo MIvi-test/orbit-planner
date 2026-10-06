@@ -36,6 +36,8 @@ SCENARIO: dict[int, dict[str, list[str]]] = {
     2: {"slip": ["DB-203"]},
     3: {"slip": []},
 }
+# Служебные колонки шаблона факта; остальные колонки — часы по ролям.
+FIXED_COLUMNS = ("task_id", "status", "actual_start", "actual_end", "completed_sp", "comment")
 SLIP_RATIO = Decimal("0.6")  # сколько часов спринта успели по «просевшей» задаче
 
 PLAN_SQL = """
@@ -43,6 +45,14 @@ SELECT s.task_id, s.start_sprint, s.end_sprint
 FROM plan_task_schedule s
 WHERE s.run_id = %s AND s.decision = 'in_quarter'
 ORDER BY s.task_id
+"""
+NEEDED_SQL = """
+SELECT rm.task_id, r.canonical_name AS role_name
+FROM v_task_remaining_hh rm JOIN roles r ON r.role_id = rm.role_id
+WHERE rm.remaining_hours > 0
+"""
+SP_SQL = """
+SELECT task_id, sp FROM plan_task_sp WHERE run_id = %s AND sprint_no = %s
 """
 HOURS_SQL = """
 SELECT a.task_id, r.canonical_name AS role_name, SUM(a.hours) AS hours
@@ -62,10 +72,25 @@ def current_run() -> int:
 def build_csv(sprint_no: int, run_id: int) -> tuple[str, bytes]:
     """CSV факта спринта по плану, действующему в этом спринте."""
     _name, template = ingest.actuals_template(sprint_no)
-    header = next(csv.reader(io.StringIO(template.decode("utf-8-sig"))))
-    roles = header[5:]
+    template_rows = list(csv.reader(io.StringIO(template.decode("utf-8-sig"))))
+    header = template_rows[0]
+    # Полный отчёт обязан перечислить все живые задачи (DA-19): задачи, которых
+    # в этом спринте по плану нет, остаются в файле строкой шаблона без изменений.
+    idle = {row[0]: row for row in template_rows[1:] if row}
+    # Колонки берём по имени из шаблона: набор служебных колонок меняется
+    # (completed_sp, ETC…), а роли — всё остальное.
+    roles = [column for column in header if column not in FIXED_COLUMNS]
+
+    # Полный отчёт даёт явное число часов (в том числе 0) по каждой роли, где у
+    # задачи остался объём: пустая ячейка не равна нулю (DA-19).
+    needed: dict[str, set[str]] = {}
+    for row in db.query_dicts(NEEDED_SQL):
+        needed.setdefault(row["task_id"], set()).add(row["role_name"])
 
     plan = {row["task_id"]: row for row in db.query_dicts(PLAN_SQL, (run_id,))}
+    # Подтверждённый прогресс по SP за спринт: доля SP плана (DA-06/DA-27). Без него факт
+    # знал бы только о завершённых задачах, и наблюдаемая скорость была бы искусственно нулевой.
+    sp_plan = {row["task_id"]: Decimal(row["sp"]) for row in db.query_dicts(SP_SQL, (run_id, sprint_no))}
     hours: dict[tuple[str, str], Decimal] = {
         (row["task_id"], row["role_name"]): Decimal(row["hours"])
         for row in db.query_dicts(HOURS_SQL, (run_id, sprint_no))
@@ -87,28 +112,39 @@ def build_csv(sprint_no: int, run_id: int) -> tuple[str, bytes]:
         slipped = task_id in slip
         status = "Done" if finishing and not slipped else "InProgress"
         share = SLIP_RATIO if slipped else Decimal("1")
-        spent = [
-            str((hours.get((task_id, role), Decimal("0")) * share).quantize(Decimal("0.01")))
-            if hours.get((task_id, role))
-            else ""
+        spent = {
+            role: str((hours.get((task_id, role), Decimal("0")) * share).quantize(Decimal("0.01")))
             for role in roles
-        ]
+            if hours.get((task_id, role))
+        }
+        for role in needed.get(task_id, ()):
+            spent.setdefault(role, "0")
         comment = (
             "не успели закрыть в спринте — остаток переносится"
             if slipped
             else ("закрыта по плану" if finishing else "в работе по плану")
         )
+        fixed = {
+            "task_id": task_id,
+            "status": status,
+            "actual_start": dates["start_date"] if row["start_sprint"] == sprint_no else "",
+            "actual_end": dates["end_date"] if status == "Done" else "",
+            "comment": comment,
+            "completed_sp": str((sp_plan.get(task_id, Decimal("0")) * share).quantize(Decimal("0.01")))
+            if sp_plan.get(task_id) else "",
+        }
         writer.writerow(
-            [
-                task_id,
-                status,
-                dates["start_date"] if row["start_sprint"] == sprint_no else "",
-                dates["end_date"] if status == "Done" else "",
-                comment,
-                *spent,
-            ]
+            [fixed.get(column, "") if column in FIXED_COLUMNS else spent.get(column, "")
+             for column in header]
         )
+        idle.pop(task_id, None)
         rows += 1
+    for task_id in sorted(idle):
+        cells = list(idle[task_id])
+        for index, column in enumerate(header):
+            if column in needed.get(task_id, ()) and not cells[index]:
+                cells[index] = "0"
+        writer.writerow(cells)
     if not rows:
         raise SystemExit(f"[демо] в спринте {sprint_no} по плану нет активных задач")
     return f"actuals_sprint_{sprint_no}.csv", ("﻿" + out.getvalue()).encode("utf-8")
@@ -127,8 +163,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✓ demo/{name} ({len(body.splitlines()) - 1} задач)")
         if args.files_only:
             continue
-        result = ingest.load_actuals(body, name, sprint_no)
+        result = ingest.load_actuals(body, name, sprint_no, confirm_complete=True)
         plan = result["plan"]
+        if plan is None:  # отчёт сохранён как черновик/неполный: пересчёта не было
+            problems = result["summary"].get("warnings", [])
+            raise SystemExit(
+                f"[демо] факт спринта {sprint_no} не закрыл спринт "
+                f"({result.get('coverage_status')}): {problems[:3]}"
+            )
         print(
             f"  факт спринта {sprint_no}: выполнено {result['summary']['done']}, "
             f"в работе {result['summary']['in_progress']}, часов {result['summary']['hours']}"

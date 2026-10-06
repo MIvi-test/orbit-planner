@@ -5,7 +5,7 @@
     uv run python tools/run_planner.py --dry-run          # посчитать, но не писать
 
     # варианты правил (ADR-013); по умолчанию — как в приёмке M2:
-    uv run python tools/run_planner.py --dry-run --dependency-mode finish_start
+    uv run python tools/run_planner.py --dry-run --dependency-mode start_start
     uv run python tools/run_planner.py --dry-run --initiative-mode atomic
 
 Пишет контракт целиком одной транзакцией (`app.planner.write_plan`). Приёмка
@@ -16,7 +16,7 @@
     SELECT * FROM v_plan_violations WHERE run_id = <run_id> AND severity = 'error';
 
 **Заморозка.** После первого прогона базу не пересевать: `plan_runs` хранит
-историю пересчётов, а `build/seed.sql` её сносит (docs/RUNBOOK.md, разделы 3 и 6).
+историю пересчётов, а `build/seed.sql` её сносит (docs/RUNBOOK.md, разделы 3 и 7).
 """
 from __future__ import annotations
 
@@ -58,10 +58,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dependency-mode",
         choices=planner.DEPENDENCY_MODES,
-        default=planner.DEPENDENCY_MODE_START_START,
+        default=planner.DEFAULT_DEPENDENCY_MODE,
         help=(
-            "start_start (по умолчанию) — старт после СТАРТА блокирующей; "
-            "finish_start — старт после КОНЦА блокирующей (ADR-013)"
+            "finish_start (по умолчанию) — старт после КОНЦА блокирующей; "
+            "start_start — старт после СТАРТА блокирующей (ADR-013, ADR-028)"
         ),
     )
     parser.add_argument(
@@ -74,13 +74,32 @@ def main(argv: list[str] | None = None) -> int:
             "с откатом (ADR-013)"
         ),
     )
+    parser.add_argument(
+        "--priority-strategy",
+        choices=planner.PRIORITY_STRATEGIES,
+        default=planner.DEFAULT_PRIORITY_STRATEGY,
+        help=(
+            "max (по умолчанию) — приоритет инициативы = MAX(rung) её задач; task — по rung самой "
+            "задачи; weighted — средневзвешенный по SP; completion_first — при равном приоритете "
+            "раньше инициатива, которую дешевле завершить (ADR-032)"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # CLI и HTTP-загрузки используют один и тот же DB-lock и снимок входа.
+    # Проверка --if-empty тоже под блокировкой, иначе два писателя могут
+    # одновременно решить, что базового прогона ещё нет.
+    with db.atomic_transaction():
+        return _run_locked(args)
+
+
+def _run_locked(args: argparse.Namespace) -> int:
 
     print(f"dsn: {db.dsn()}")
     if args.if_empty:
         baselines = int(
             db.scalar(
-                "SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok'"
+                "SELECT COUNT(*) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible')"
             )
             or 0
         )
@@ -115,13 +134,14 @@ def main(argv: list[str] | None = None) -> int:
     baseline_starts = planner.load_baseline_starts() if args.as_of_sprint > 0 else {}
     load_baseline_seconds = time.perf_counter() - phase_started
     phase_started = time.perf_counter()
-    plan = planner.build_plan(
-        inputs,
-        as_of_sprint=args.as_of_sprint,
-        baseline_starts=baseline_starts,
-        dependency_mode=args.dependency_mode,
-        initiative_mode=args.initiative_mode,
-    )
+    options = {
+        "as_of_sprint": args.as_of_sprint,
+        "dependency_mode": args.dependency_mode,
+        "priority_strategy": args.priority_strategy,
+        "initiative_mode": args.initiative_mode,
+        "simulate_next_pi": True,
+    }
+    plan = planner.build_plan(inputs, baseline_starts=baseline_starts, **options)
     build_plan_seconds = time.perf_counter() - phase_started
     plan.params["observability"] = {
         "load_inputs_seconds": round(load_inputs_seconds, 6),
@@ -158,7 +178,13 @@ def main(argv: list[str] | None = None) -> int:
         print("--dry-run: в базу ничего не писали")
         return 0
 
-    run_id = planner.write_plan(plan)
+    try:
+        run_id = planner.write_plan(plan, inputs=inputs, baseline_starts=baseline_starts, options=options)
+    except planner.PlanValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        for row in exc.violations:
+            print(f"  {row['check_code']}: {row['entity']} — {row['detail']}", file=sys.stderr)
+        return 1
     print(
         f"записано: run_id = {run_id} "
         f"(as_of_sprint = {plan.as_of_sprint}, алгоритм {planner.ALGORITHM})"

@@ -1,7 +1,7 @@
 
 services:
   db:
-    image: postgres:17-bookworm
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
     restart: unless-stopped
     cpus: ${DB_CPU_LIMIT:-1.0}
     mem_limit: ${DB_MEMORY_LIMIT:-1g}
@@ -19,6 +19,7 @@ services:
       - ./db/03_substitutions.sql:/docker-entrypoint-initdb.d/04_substitutions.sql:ro
       - ./db/04_views.sql:/docker-entrypoint-initdb.d/05_views.sql:ro
       - ./db/05_invariants.sql:/docker-entrypoint-initdb.d/06_invariants.sql:ro
+      - ./db/06_migration_stamps.sql:/docker-entrypoint-initdb.d/07_migration_stamps.sql:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -31,6 +32,24 @@ services:
       timeout: 5s
       retries: 20
       start_period: 15s
+    networks:
+      - backend
+
+  ollama:
+    profiles: ["rag-local"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    mem_limit: ${OLLAMA_MEMORY_LIMIT:-12g}
+    pids_limit: 200
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,noexec,size=64m
+    volumes:
+      - ollama_data:/root/.ollama
     networks:
       - backend
 
@@ -48,6 +67,17 @@ services:
       APP_PORT: 8000
       PI_PLANNER_LOG_FORMAT: ${PI_PLANNER_LOG_FORMAT:-json}
       PI_PLANNER_METRICS_TTL: ${PI_PLANNER_METRICS_TTL:-15}
+      # Доступ (ADR-027): без токена API отвечает 401. Токен аварийного администратора
+      # обязателен; остальных пользователей создаёт tools/manage_users.py.
+      PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
+      PI_PLANNER_ADMIN_TOKEN: ${PI_PLANNER_ADMIN_TOKEN:?set PI_PLANNER_ADMIN_TOKEN in .env (openssl rand -hex 32)}
+      PI_PLANNER_INTERNAL_LLM_HOSTS: ${PI_PLANNER_INTERNAL_LLM_HOSTS:-ollama}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      PI_PLANNER_KB_EMBED_BASE_URL: ${PI_PLANNER_KB_EMBED_BASE_URL:-http://ollama:11434}
+      PI_PLANNER_KB_EMBED_MODEL: ${PI_PLANNER_KB_EMBED_MODEL:-embeddinggemma}
+      PI_PLANNER_ASSISTANT_MESSAGE_DEADLINE_SECONDS: ${PI_PLANNER_ASSISTANT_MESSAGE_DEADLINE_SECONDS:-30}
       PI_PLANNER_DSN: >-
         host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
         user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -69,6 +99,69 @@ services:
       - backend
       - frontend
       - monitoring
+
+  assistant-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.assistant.worker"]
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 120s
+    cpus: ${ASSISTANT_CPU_LIMIT:-0.5}
+    mem_limit: ${ASSISTANT_MEMORY_LIMIT:-1g}
+    pids_limit: 100
+    environment:
+      PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
+      PI_PLANNER_ASSISTANT_ENV_ADMIN_ENABLED: "true"
+      PI_PLANNER_INTERNAL_LLM_HOSTS: ${PI_PLANNER_INTERNAL_LLM_HOSTS:-ollama}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      PI_PLANNER_KB_EMBED_BASE_URL: ${PI_PLANNER_KB_EMBED_BASE_URL:-http://ollama:11434}
+      PI_PLANNER_KB_EMBED_MODEL: ${PI_PLANNER_KB_EMBED_MODEL:-embeddinggemma}
+      PI_PLANNER_DSN: >-
+        host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
+        user=pi_assistant_worker password=${ASSISTANT_DB_PASSWORD:?set ASSISTANT_DB_PASSWORD in .env}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      db:
+        condition: service_healthy
+      assistant-db-init:
+        condition: service_completed_successfully
+    networks:
+      - backend
+      - ai_egress
+
+  assistant-db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "tools/setup_assistant_role.py"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    environment:
+      ASSISTANT_DB_PASSWORD: ${ASSISTANT_DB_PASSWORD:?set ASSISTANT_DB_PASSWORD in .env}
+      PI_PLANNER_DSN: >-
+        host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
+        user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [backend]
+    depends_on:
+      bootstrap-plan:
+        condition: service_completed_successfully
 
   # seed.sql содержит исходный датасет, но не результат планировщика. Без этого
   # одноразового шага свежий контейнер показывает задачи и пустой экран KPI.
@@ -285,6 +378,7 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
   caddy_data:
   caddy_config:
   prometheus_data:
@@ -292,6 +386,7 @@ volumes:
 
 networks:
   frontend:
+  ai_egress:
   backend:
     internal: true
   monitoring:

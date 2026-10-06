@@ -75,7 +75,7 @@ export function ViolationsPanel({ rows }: { rows: PlanViolationRow[] }) {
                         background: row.severity === 'error' ? 'var(--stamp)' : 'var(--wax)',
                       }}
                     />
-                    <Text size="xs">{row.severity === 'error' ? 'ошибка' : 'предупреждение'}</Text>
+                    <Text size="xs">{row.severity === 'error' ? 'Ошибка' : 'Предупреждение'}</Text>
                   </Group>
                 </Table.Td>
                 <Table.Td className="mono">{row.entity}</Table.Td>

@@ -25,6 +25,7 @@ npm-debug.log*
 .vite/
 
 # --- Локальные секреты и рабочие каталоги ---
+.run-admin-token
 dsn.json
 .env
 .env.*

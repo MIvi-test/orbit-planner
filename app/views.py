@@ -24,10 +24,12 @@
 параметризации SQL под каждый экран. Появится нужда — добавим `where` по тому же
 белому списку колонок, а не «универсальный» фильтр.
 
-Внутренняя кухня ETL (`load_batches`, `dq_issues`, `role_aliases`,
+Внутренняя кухня ETL (`load_batches`, `role_aliases`,
 `task_sequence`, оценки, `pi_periods`) в белый список не входит: наружу ей нечего
 отдавать (docs/SCHEMA.md §3). Промежуточные вьюхи (`v_role_supply_hh`,
 `v_backlog_demand`) тоже не отдаются — у экранов есть готовые витрины с вердиктом.
+Находки ETL доступны через `v_dq_issue_worklist`, а история их разбора — через
+`dq_issue_reviews`.
 """
 from __future__ import annotations
 
@@ -43,15 +45,16 @@ from app import db
 LIMIT_DEFAULT = 500
 LIMIT_MAX = 5000
 
-# Прогон по умолчанию — последний удачный: «текущий» в терминах docs/SCHEMA.md §2.
-LAST_OK_RUN_SQL = "SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status = 'ok'"
+# Старые версии помечали корректно рассчитанный пустой план как infeasible.
+# Его тоже надо показывать, пока история не пересчитана новым планировщиком.
+LAST_OK_RUN_SQL = "SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status IN ('ok', 'infeasible')"
 
 # Колонки витрины — для пустого результата: у пустого списка строк нет ключей,
 # а фронт должен знать форму ответа и в этом случае.
 COLUMNS_SQL = """
 SELECT column_name
 FROM information_schema.columns
-WHERE table_schema = 'public' AND table_name = %s
+WHERE table_schema = current_schema() AND table_name = %s
 ORDER BY ordinal_position
 """
 
@@ -120,7 +123,7 @@ SOURCES: tuple[Source, ...] = (
             "rung", "estimation_sp", "estimated_hh_effective", "estimated_hh_declared",
             "estimated_hh_matrix_total", "remaining_hh", "estimate_disputed",
             "planned_start", "planned_end", "actual_start", "actual_end",
-            "topo_order", "depth", "earliest_start_sprint", "on_critical_path",
+            "topo_order", "edge_depth_at_load", "earliest_start_sprint_at_load", "on_longest_edge_chain",
         ),
         note="Денормализована: задача + инициатива + приоритет + остаток часов + место в графе.",
     ),
@@ -138,11 +141,60 @@ SOURCES: tuple[Source, ...] = (
         "(заполнен только у 8 задач Done — ADR-004, знаменатель KPI берётся не отсюда).",
     ),
     _source(
+        "task_state",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "as_of_sprint", "status", "remaining_hh", "remaining_sp", "forecast_end_sprint"),
+        run_column="run_id",
+        note="Исторический остаток и статус задачи в выбранном прогоне.",
+    ),
+    _source(
+        "plan_dependency_bounds",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "earliest_start_sprint"),
+        run_column="run_id",
+        note="Допустимый ранний старт по живому графу и фактическим датам выбранного прогона.",
+    ),
+    _source(
+        "v_plan_goal_outcome",
+        screen="План квартала",
+        order="task_id",
+        orderable=("run_id", "task_id", "prodf_id", "decision", "proposal_action",
+                   "proposed_goal_code", "confirmed_closure_code", "confirmation_state"),
+        run_column="run_id",
+        note="Исходная цель, предложение планировщика и подтверждённый бизнес результат отдельно.",
+    ),
+    _source(
+        "v_initiative_goal_progress",
+        screen="План квартала",
+        order="prodf_id",
+        orderable=("run_id", "prodf_id", "task_count", "confirmed_target_count", "quarter_goal_status"),
+        run_column="run_id",
+        note="Цель инициативы достигнута только при подтверждении целевого результата каждой задачи.",
+    ),
+    _source(
+        "v_plan_role_demand_snapshot",
+        screen="План квартала",
+        order="task_id,role_id",
+        orderable=("run_id", "task_id", "role_id", "role_name", "needed_hours"),
+        run_column="run_id",
+        note="Остаток часов по ролям на момент выбранного прогона.",
+    ),
+    _source(
+        "v_plan_task_progress",
+        screen="План квартала",
+        order="task_id,sprint_no",
+        orderable=("run_id", "task_id", "sprint_no", "assigned_hours", "work_hours", "sp", "progress_basis"),
+        run_column="run_id",
+        note="Два независимых бюджета по спринтам: часы инженеров и SP команды; без перевода SP в часы.",
+    ),
+    _source(
         "v_task_remaining_hh",
         screen="Доска задач",
         order="task_id,role_id",
         orderable=("task_id", "role_id", "estimated_hours", "spent_hours", "remaining_hours"),
-        note="Строка на «задача × роль»: это не сумма часов задачи (ADR-002), часы ролей не складывать.",
+        note="Строка на «задача × роль»: человеко-часы ролей можно суммировать для трудозатрат задачи, но не для календарной длительности.",
     ),
     _source(
         "v_orbit_map",
@@ -185,10 +237,47 @@ SOURCES: tuple[Source, ...] = (
         order="team_id",
         orderable=(
             "team_id", "history_points", "avg_velocity", "focus_factor",
-            "available_sp_per_sprint", "available_sp_per_pi",
+            "available_sp_per_sprint", "available_sp_per_pi", "velocity_min", "velocity_max",
+            "velocity_stddev", "history_from", "history_to", "history_age_days",
         ),
-        note="Ёмкость команды в SP. Для короткого спринта умножать на `v_sprint_fund_factor`, "
-        "а не на число спринтов (ADR-017).",
+        note="НОРМАТИВНАЯ ёмкость команды в SP по истории × 0.8 (с неё строится базовый план); "
+        "метаданные выборки: число точек, разброс, давность. Ёмкость конкретного прогона — "
+        "`plan_team_capacity`. Для спринта иной длины умножать на `v_sprint_fund_factor` (ADR-017).",
+    ),
+    _source(
+        "dq_issues",
+        screen="Данные",
+        order="severity,rule_code,entity_id",
+        orderable=("issue_id", "entity", "entity_id", "rule_code", "severity"),
+        note="Полный журнал находок качества данных ETL (NEW-06): сущность, правило, серьёзность, подробности. "
+        "error блокирует загрузку, warning и info — материал для разбора.",
+    ),
+    _source(
+        "v_sprint_forecast_accuracy",
+        screen="KPI",
+        order="sprint_no",
+        orderable=("sprint_no", "planned_sp", "forecast_done_sp", "actual_done_sp", "forecast_value", "actual_value"),
+        note="Прогноз выполнения плана спринта, сделанный ПЕРЕД спринтом, против факта (DA-32). "
+        "Пересчёт позже прошлое обещание не меняет.",
+        run_column="run_id",
+    ),
+    _source(
+        "plan_team_capacity",
+        screen="Профили",
+        order="team_id",
+        orderable=("team_id", "history_points", "observed_points", "avg_velocity", "focus_factor",
+                   "available_sp_per_sprint", "observed_through_sprint"),
+        note="Ёмкость команды в SP, с которой построен прогон (ADR-030): история плюс закрытые спринты "
+        "текущего PI. Показывать вместе с `observed_points`: основание ёмкости видно в самом числе.",
+        run_column="run_id",
+    ),
+    _source(
+        "v_team_velocity_observed",
+        screen="Профили",
+        order="sprint_no,team_id",
+        orderable=("pi_id", "sprint_no", "team_id", "delivered_sp"),
+        note="Скорость команды по закрытым спринтам текущего PI: подтверждённый прогресс SP плюс остаток "
+        "SP завершённых задач. Спринт без поставки — наблюдение 0 (только у команд с невыполненным бэклогом).",
     ),
     _source(
         "teams",
@@ -202,7 +291,7 @@ SOURCES: tuple[Source, ...] = (
         screen="Роли и ёмкость",
         order="team_id,role_name",
         orderable=("team_id", "role_name", "demand_hh", "supply_hh", "gap_hh", "verdict"),
-        note="Главная аналитическая витрина: дефицит по «команда × роль» с вердиктом, 76 строк.",
+        note="Остаток живого бэклога против фонда незакрытых спринтов по команде и роли.",
     ),
     _source(
         "v_role_deficit_effective",
@@ -223,8 +312,7 @@ SOURCES: tuple[Source, ...] = (
             "role_name", "demand_hh", "native_people", "people_incl_substitution",
             "supply_hh", "gap_hh", "verdict",
         ),
-        note="Срез по компании: где нужен НАЁМ, а где хватит займов. Сейчас НАЙМ = 665 ЧЧ "
-        "на 6 ролях (РП 449 + четыре 1С-роли 132 + поддержка 84).",
+        note="Срез по компании на остаток PI: где нужен наём, а где возможен заём.",
     ),
     _source(
         "v_bus_factor",
@@ -240,28 +328,28 @@ SOURCES: tuple[Source, ...] = (
         screen="Календарь и фонд",
         order="sprint_no",
         orderable=("pi_id", "sprint_no", "start_date", "end_date", "length_days", "factor"),
-        note="Множитель фонда спринта: спринты 1–6 — 1.0000, 7-й (23–30.09, 8 дней) — 0.5714.",
+        note="Множитель фонда спринта: шесть двухнедельных спринтов, каждый 1.0000.",
     ),
     _source(
         "v_pi_fund_factor",
         screen="Календарь и фонд",
         order="pi_id",
         orderable=("pi_id", "sprint_length_days", "days_total", "factor"),
-        note="Фонд всего PI: 6.5714 при 92 днях. Единственный источник правды для фонда — "
-        "эта витрина и v_sprint_fund_factor, «92 / 14» не считать (ADR-017).",
+        note="Фонд всего PI: 6.0000 при 84 днях. Единственный источник правды для фонда — "
+        "эта витрина и v_sprint_fund_factor, множитель не дублировать (ADR-017).",
     ),
     _source(
         "sprints",
         screen="Календарь и фонд",
         order="sprint_no",
         orderable=("pi_id", "sprint_no", "start_date", "end_date", "length_days"),
-        note="Сетка квартала: 7 спринтов, `length_days` — генерируемая колонка (у 7-го 8 дней).",
+        note="Сетка PI: шесть двухнедельных спринтов; `length_days` вычисляется из дат.",
     ),
     _source(
         "initiatives",
         screen="Справочники",
         order="priority_rung,prodf_id",
-        orderable=("prodf_id", "br_id", "title", "priority_rung"),
+        orderable=("prodf_id", "br_id", "title", "priority_rung", "business_priority"),
         note="Инициативы заказчика со скорингом. PRODF ↔ BR строго 1:1 (15 инициатив).",
     ),
     _source(
@@ -279,13 +367,28 @@ SOURCES: tuple[Source, ...] = (
         note="Сводка по качеству исходных данных: 6 правил, материал для слайда "
         "«что не так с исходными данными».",
     ),
+    _source(
+        "v_dq_issue_worklist",
+        screen="Диагностика",
+        order="-is_blocking,-issue_id",
+        orderable=("issue_id", "batch_id", "entity", "entity_id", "rule_code",
+                   "severity", "review_status", "is_blocking"),
+        note="Каждая находка ETL, текущее решение и блокирующий статус.",
+    ),
+    _source(
+        "dq_issue_reviews",
+        screen="Диагностика",
+        order="-review_id",
+        orderable=("review_id", "issue_id", "decision", "reviewer", "reviewed_at"),
+        note="История рассмотрения находок; исходные находки не перезаписываются.",
+    ),
     # ------------------------------------------- контракт прогона (SCHEMA.md §2)
     _source(
         "plan_runs",
         screen="KPI",
         order="-run_id",
         orderable=("run_id", "pi_id", "as_of_sprint", "algorithm", "status", "created_at"),
-        note="Список прогонов для выбора `run_id`; `params` несёт границы календаря прогона. "
+        note="Список прогонов для выбора `run_id`; `params` несёт календарь и business_outcome. "
         "Витрина не фильтруется по `run_id` — она для того и нужна, чтобы выбрать прогон.",
     ),
     _source(
@@ -357,10 +460,10 @@ SOURCES: tuple[Source, ...] = (
         screen="Звёздная карта",
         order="bus_factor,skill_name",
         orderable=("skill_id", "skill_name", "bus_factor", "roles_demand_hh", "in_demand",
-                   "sole_in_role", "risk"),
-        note="Bus Factor ПО КОМПЕТЕНЦИЯМ — то, что требует ТЗ. `risk` = «критично» у навыка, "
-        "чей единственный носитель ещё и единственный специалист своей роли. Покрытие ролей "
-        "(роли без людей в штате) — отдельная витрина v_bus_factor.",
+                   "sole_in_role", "critical", "demand_source", "risk"),
+        note="Bus Factor по компетенциям: confirmed — требование задачи, role_proxy — "
+        "приближение по роли для непроверенной работы. Критичен востребованный навык "
+        "с одним носителем; число коллег без навыка не снимает риск.",
     ),
     _source(
         "v_engineer_absence_risk",
@@ -368,8 +471,8 @@ SOURCES: tuple[Source, ...] = (
         order="engineer_id",
         orderable=("engineer_id", "role_name", "grade", "role_bus_factor", "planned_hours",
                    "hours_without_backup", "risk"),
-        note="Профиль инженера и ответ на вопрос ТЗ «где отсутствие одного сотрудника создаёт "
-        "риск»: `tasks_without_backup` — задачи прогона, которые встанут, если он выпадет.",
+        note="Прямая замена проверяется по подтверждённому стеку и свободным часам спринта; "
+        "непроверенный стек показан отдельно. Пересчёт последствий — /api/scenarios/absence.",
         run_column="run_id",
     ),
     _source(
@@ -386,9 +489,16 @@ SOURCES: tuple[Source, ...] = (
         "actual_uploads",
         screen="Загрузка факта",
         order="-sprint_no",
-        orderable=("upload_id", "sprint_no", "source_file", "uploaded_at"),
-        note="Журнал загрузок факта спринтов. Загрузка делается через POST /api/actuals?sprint=N, "
+        orderable=("upload_id", "sprint_no", "source_file", "uploaded_at", "coverage_status"),
+        note="Журнал отчётов: только coverage_status=complete закрывает спринт. Загрузка делается через POST /api/actuals?sprint=N, "
         "шаблон — GET /api/actuals/template?sprint=N.",
+    ),
+    _source(
+        "actual_report_issues",
+        screen="Загрузка факта",
+        order="upload_id,task_id",
+        orderable=("upload_id", "task_id", "role_id", "issue_code", "detail", "reason", "resolved_revision_id"),
+        note="Подтверждённые исключения факта: незапланированная роль, перерасход, несогласованный статус.",
     ),
     _source(
         "v_plan_diff",
@@ -407,8 +517,9 @@ SOURCES: tuple[Source, ...] = (
         order="sprint_no,task_id",
         orderable=("upload_id", "sprint_no", "task_id", "team_id", "reported_status",
                    "deviation", "planned_hours", "spent_hours"),
-        note="Факт спринта против плана, который в этом спринте действовал: «в срок», "
-        "«не закрыта в срок», «раньше плана». Витрина по загрузкам, а не по прогонам.",
+        note="Факт спринта против закреплённого при загрузке плана: «в срок», "
+        "«не закрыта в срок», «завершена с опозданием», «вне плана», «нет данных по задаче». "
+        "Статус берётся из истории до отчётного спринта.",
     ),
     _source(
         "plan_task_sp",
@@ -447,6 +558,23 @@ class UnknownView(ValueError):
             "known": [source.name for source in SOURCES],
             "hint": "справочник витрин: GET /api/views",
         }
+
+
+class RunUnavailable(ValueError):
+    """Для витрины прогона нет выбранного существующего плана."""
+
+    def __init__(self, run_id: int | None = None) -> None:
+        self.run_id = run_id
+        super().__init__("нет активного прогона" if run_id is None else f"прогон {run_id} не найден")
+
+    def payload(self) -> dict[str, Any]:
+        if self.run_id is None:
+            return {
+                "error": "no_active_run",
+                "message": "Нет активного успешного прогона плана",
+                "hint": "Список доступных прогонов: GET /api/views/plan_runs",
+            }
+        return {"error": "run_not_found", "message": f"Прогон {self.run_id} не найден"}
 
 
 class BadRequest(ValueError):
@@ -532,7 +660,7 @@ def catalog() -> dict[str, Any]:
 
 
 def last_ok_run_id() -> int | None:
-    """Прогон по умолчанию: последний удачный (`MAX(run_id) WHERE status = 'ok'`).
+    """Прогон по умолчанию: последний опубликованный расчёт.
 
     Тот же предикат, что у KPI и проверки `BASELINE_MUTATED` (SCHEMA.md §2): фронт,
     бэкенд и приёмка не могут разойтись в том, какой прогон «текущий».
@@ -590,13 +718,18 @@ def fetch(
 
     run_default = False
     if source.run_column is not None and run_id is None:
-        run_id = last_ok_run_id()  # None — удачных прогонов ещё нет, фильтра не будет
+        run_id = last_ok_run_id()
         run_default = True
+        if run_id is None:
+            raise RunUnavailable()
+    elif source.run_column is not None:
+        if db.query_one("SELECT run_id FROM plan_runs WHERE run_id = %s::int", [run_id]) is None:
+            raise RunUnavailable(run_id)
 
     pairs = parse_order(order, source)
     where = ""
     where_params: list[Any] = []
-    if source.run_column is not None and run_id is not None:
+    if source.run_column is not None:
         where = f" WHERE {source.run_column} = %s::int"
         where_params.append(int(run_id))
 
@@ -604,11 +737,14 @@ def fetch(
     # всплывали бы наверх при DESC — первое, что видит заказчик, было бы «не
     # запланировано» вместо плана.
     order_sql = ", ".join(f"{col} {'DESC' if desc else 'ASC'} NULLS LAST" for col, desc in pairs)
-    sql = f"SELECT * FROM {source.name}{where} ORDER BY {order_sql} LIMIT %s::int OFFSET %s::int"
+    # Даже если выбранные колонки совпадают, разные строки должны иметь
+    # устойчивый порядок между страницами.
+    order_sql += ", to_jsonb(src)::text ASC"
+    sql = f"SELECT * FROM {source.name} src{where} ORDER BY {order_sql} LIMIT %s::int OFFSET %s::int"
     items = db.query_dicts(sql, [*where_params, limit, offset])
 
-    truncated = len(items) == limit
-    if offset or truncated:
+    full_page = len(items) == limit
+    if offset or full_page:
         total = int(db.scalar(f"SELECT COUNT(*) FROM {source.name}{where}", where_params) or 0)
     else:
         total = len(items)  # страница не полная и это её начало: больше строк нет
@@ -627,9 +763,8 @@ def fetch(
         "offset": offset,
         "count": total,
         "returned": len(items),
-        "truncated": truncated,
+        "truncated": offset + len(items) < total,
         "has_more": offset + len(items) < total,
         "columns": list(items[0]) if items else _relation_columns(source.name),
         "items": items,
     }
-

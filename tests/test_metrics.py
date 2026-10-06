@@ -24,6 +24,7 @@ SNAPSHOT = {
         "run_id": 2,
         "as_of_sprint": 3,
         "status": "ok",
+        "active_run_id": 2,
         "created_epoch": Decimal("1789996748.323258"),
         "errors": 0,
         "warnings": 12,
@@ -51,6 +52,7 @@ SNAPSHOT = {
         {
             "sprint_no": 3,
             "kpi_code": "say_do_ratio",
+            "kind": "forecast",
             "value": Decimal("92.5"),
             "target_min": Decimal("90"),
             "target_max": Decimal("105"),
@@ -117,7 +119,8 @@ def test_render_reports_the_last_run_and_the_calendar() -> None:
     assert parsed["pi_planner_plan_loan_hours"] == 40.0
     assert parsed['pi_planner_plan_tasks{decision="deferred_next_pi",reason="M2"}'] == 4.0
     assert parsed['pi_planner_plan_alerts{level="orange",type="role_deficit"}'] == 4.0
-    assert parsed['pi_planner_plan_kpi_value{kpi="say_do_ratio",sprint="3"}'] == 92.5
+    assert parsed['pi_planner_plan_kpi_value{kpi="say_do_ratio",sprint="3",kind="forecast"}'] == 92.5
+    assert parsed["pi_planner_plan_active_run_id"] == 2.0
     assert parsed['pi_planner_data_quality_issues{severity="warning"}'] == 35.0
     assert parsed['pi_planner_job_last_duration_seconds{phase="build_plan"}'] == 0.34
     assert parsed["pi_planner_migrations_applied"] == 2.0
@@ -126,6 +129,59 @@ def test_render_reports_the_last_run_and_the_calendar() -> None:
         'pi_planner_calendar_info{pi_id="PI-2026-Q3",pi_start="2026-07-01",'
         'pi_end="2026-09-30",sprint_count="7",fund_factor="6.5714"} 525.71' in registry().render()
     )
+
+
+def test_forecast_and_actual_kpi_samples_are_distinct() -> None:
+    snapshot = dict(SNAPSHOT)
+    snapshot["kpis"] = [
+        {"sprint_no": 6, "kpi_code": "pi_predictability", "kind": kind,
+         "value": Decimal(value), "target_min": Decimal("80"), "target_max": Decimal("100")}
+        for kind, value in (("forecast", "100"), ("actual", "0"))
+    ]
+
+    body = registry(collector=lambda: snapshot).render()
+    samples = [line for line in body.splitlines() if line.startswith("pi_planner_plan_kpi_")]
+    labels = [line.rpartition(" ")[0] for line in samples]
+
+    assert len(labels) == len(set(labels))  # значения и оба порога имеют уникальные серии
+    parsed = parse(body)
+    assert parsed['pi_planner_plan_kpi_value{kpi="pi_predictability",sprint="6",kind="forecast"}'] == 100
+    assert parsed['pi_planner_plan_kpi_value{kpi="pi_predictability",sprint="6",kind="actual"}'] == 0
+    assert parsed['pi_planner_plan_kpi_target_min{kpi="pi_predictability",sprint="6",kind="actual"}'] == 80
+    assert parsed['pi_planner_plan_kpi_target_max{kpi="pi_predictability",sprint="6",kind="forecast"}'] == 100
+
+
+def test_plan_metrics_use_the_same_active_run_as_ui() -> None:
+    for sql in (metrics.DECISIONS_SQL, metrics.ALERTS_SQL, metrics.KPI_SQL):
+        assert "MAX(run_id)" in sql
+        assert "status = 'ok'" in sql
+    assert "k.kind" in metrics.KPI_SQL
+    assert "active_run_id" in metrics.BUSINESS_SQL
+
+
+def test_no_active_run_has_zero_id_and_keeps_last_attempt_visible() -> None:
+    snapshot = dict(SNAPSHOT)
+    snapshot["run"] = {**SNAPSHOT["run"], "status": "failed", "active_run_id": None}
+    snapshot["kpis"] = []
+    snapshot["decisions"] = []
+    snapshot["alerts"] = []
+
+    parsed = parse(registry(collector=lambda: snapshot).render())
+
+    assert parsed["pi_planner_plan_active_run_id"] == 0
+    assert parsed['pi_planner_plan_last_run_info{run_id="2",as_of_sprint="3",status="failed"}'] == 1
+    assert not any(name.startswith("pi_planner_plan_kpi_value") for name in parsed)
+
+
+def test_empty_plan_history_reports_zero_without_phantom_run() -> None:
+    snapshot = {**SNAPSHOT, "runs_total": 0, "run": {"run_id": None, "active_run_id": None},
+                "kpis": [], "decisions": [], "alerts": []}
+
+    parsed = parse(registry(collector=lambda: snapshot).render())
+
+    assert parsed["pi_planner_plan_runs_total"] == 0
+    assert parsed["pi_planner_plan_active_run_id"] == 0
+    assert not any(name.startswith("pi_planner_plan_last_run_info") for name in parsed)
 
 
 def test_known_api_routes_are_frozen() -> None:
@@ -139,11 +195,29 @@ def test_known_api_routes_are_frozen() -> None:
         "/api/livez",
         "/api/version",
         "/api/views",
+        # Текущий пользователь и роль (ADR-026).
+        "/api/me",
         # Загрузки (ADR-021): ТЗ требует, чтобы датасет и факт спринтов
         # загружал пользователь, а не оператор из командной строки.
         "/api/dataset",
         "/api/actuals",
         "/api/actuals/template",
+        "/api/actuals/role-review",
+        "/api/scenarios/absence",
+        "/api/scenarios/sensitivity",
+        "/api/scenarios/workforce",
+        "/api/tasks/goal-confirmation",
+        "/api/tasks/skill-review",
+        "/api/initiatives/priority",
+        "/api/engineers/availability",
+        "/api/engineers/qualifications",
+        "/api/upload-revisions",
+        "/api/upload-revisions/file",
+        "/api/upload-revisions/snapshot",
+        "/api/dq-issues/review",
+        "/api/plan-quality",
+        "/api/tasks/trace",
+        "/api/pi-contexts",
         "/metrics",
     )
 

@@ -8,7 +8,8 @@ BEGIN;
 
 -- ---------------------------------------------------------------------
 --  Прогон планировщика. Каждый пересчёт (раз в 2 недели) = новая строка.
---  Ничего не перезаписывается: история пересчётов видна целиком.
+--  Прогоны сохраняются до явной коррекции отчёта или замены датасета;
+--  при коррекции зависимые прогоны строятся заново.
 -- ---------------------------------------------------------------------
 CREATE TABLE plan_runs (
     run_id       SERIAL PRIMARY KEY,
@@ -21,11 +22,21 @@ CREATE TABLE plan_runs (
     actuals_upload_id INT REFERENCES actual_uploads(upload_id) ON DELETE SET NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE plan_capacity_snapshot (
+    run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    engineer_id TEXT NOT NULL REFERENCES engineers(engineer_id),
+    team_id TEXT NOT NULL REFERENCES teams(team_id),
+    sprint_no SMALLINT NOT NULL,
+    available_hours NUMERIC(12,4) NOT NULL CHECK (available_hours >= 0),
+    PRIMARY KEY (run_id, engineer_id, team_id, sprint_no)
+);
+ALTER TABLE actual_uploads ADD CONSTRAINT actual_uploads_plan_run_fk
+    FOREIGN KEY (plan_run_id) REFERENCES plan_runs(run_id) ON DELETE SET NULL;
 COMMENT ON COLUMN plan_runs.actuals_upload_id IS
  'На каком факте построен пересчёт (ADR-021). NULL — базовый план по датасету. '
  'По этой ссылке UI показывает, «какие отклонения вызвали изменения».';
 COMMENT ON COLUMN plan_runs.as_of_sprint IS '0 = базовый план на Неделе 0; k = пересчёт на начало спринта k после факта спринта k-1; sprint_count+1 = итог квартала.';
-COMMENT ON COLUMN plan_runs.status IS 'infeasible = алгоритм не смог уложить бэклог даже с переносами. Фронту показывать явно, а не молча.';
+COMMENT ON COLUMN plan_runs.status IS 'Технический статус расчёта: ok означает опубликованный результат. Бизнес-результат (completed/planned/partial/nothing_scheduled) находится в params.business_outcome.';
 
 -- ---------------------------------------------------------------------
 --  Базовая линия Недели 0. Нужна для обоих KPI-числителей.
@@ -83,8 +94,42 @@ CREATE TABLE plan_task_sp (
     sp        NUMERIC(6,2) NOT NULL CHECK (sp > 0),
     PRIMARY KEY (run_id, task_id, sprint_no)
 );
+
+-- Потребность по ролям на момент расчёта: старые прогоны не зависят от
+-- последующих загрузок факта и изменений текущей сметы.
+CREATE TABLE plan_role_demand_snapshot (
+    run_id       INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    task_id      TEXT NOT NULL REFERENCES tasks(task_id),
+    role_id      SMALLINT NOT NULL REFERENCES roles(role_id),
+    needed_hours NUMERIC(12,4) NOT NULL CHECK (needed_hours > 0),
+    PRIMARY KEY (run_id, task_id, role_id)
+);
+CREATE TABLE plan_team_capacity (
+    run_id                  INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    team_id                 TEXT NOT NULL REFERENCES teams(team_id),
+    history_points          INT NOT NULL CHECK (history_points >= 0),
+    observed_points         INT NOT NULL CHECK (observed_points >= 0),
+    avg_velocity            NUMERIC(8,2) NOT NULL CHECK (avg_velocity >= 0),
+    focus_factor            NUMERIC(3,2) NOT NULL,
+    available_sp_per_sprint NUMERIC(8,2) NOT NULL CHECK (available_sp_per_sprint >= 0),
+    observed_through_sprint SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, team_id),
+    CHECK (history_points + observed_points > 0)
+);
+COMMENT ON TABLE plan_team_capacity IS
+ 'Ёмкость команд, с которой построен прогон (DA-27): среднее по истории и закрытым спринтам '
+ 'до as_of_sprint × focus_factor. SP_OVERFLOW сверяет план с ней, а не с сегодняшней витриной.';
+CREATE TABLE plan_dependency_bounds (
+    run_id INT NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    earliest_start_sprint SMALLINT NOT NULL CHECK (earliest_start_sprint >= 1),
+    PRIMARY KEY (run_id, task_id)
+);
+COMMENT ON TABLE plan_dependency_bounds IS
+ 'Нижняя граница старта из живого графа и фактических дат на момент конкретного прогона.';
 COMMENT ON TABLE plan_task_sp IS
- 'Сумма долей по задаче = её estimation_sp. Инвариант SP_OVERFLOW суммирует доли по команде и спринту.';
+ 'Сумма долей по задаче = remaining_sp в снимке прогона; исходная estimation_sp не тратится повторно. '
+ 'Инвариант SP_OVERFLOW суммирует доли по команде и спринту.';
 
 -- ---------------------------------------------------------------------
 --  Назначения: кто, на что, в каком спринте, сколько часов.
@@ -97,10 +142,11 @@ CREATE TABLE plan_assignments (
     engineer_id     TEXT         NOT NULL REFERENCES engineers(engineer_id),
     role_id         SMALLINT     NOT NULL REFERENCES roles(role_id),
     hours           NUMERIC(8,2) NOT NULL CHECK (hours > 0),
+    work_hours      NUMERIC(12,4) NOT NULL CHECK (work_hours > 0),
     home_team_id    TEXT         NOT NULL REFERENCES teams(team_id),
     serving_team_id TEXT         NOT NULL REFERENCES teams(team_id),
     is_loan         BOOLEAN      GENERATED ALWAYS AS (home_team_id IS DISTINCT FROM serving_team_id) STORED,
-    PRIMARY KEY (run_id, task_id, sprint_no, engineer_id, role_id)
+    PRIMARY KEY (run_id, task_id, sprint_no, engineer_id, role_id, home_team_id)
 );
 COMMENT ON COLUMN plan_assignments.home_team_id    IS 'Ядро, на орбите которого инженер отдал эти часы.';
 COMMENT ON COLUMN plan_assignments.serving_team_id IS 'Ядро, которому принадлежит задача. Отличается от home → это заём (ADR-001).';
@@ -155,11 +201,18 @@ CREATE TABLE kpi_snapshots (
     run_id     INT      NOT NULL REFERENCES plan_runs(run_id) ON DELETE CASCADE,
     sprint_no  SMALLINT NOT NULL,
     kpi_code   TEXT     NOT NULL CHECK (kpi_code IN ('pi_predictability','say_do_ratio','bus_factor')),
-    value      NUMERIC(8,2) NOT NULL,
+    value      NUMERIC(8,2),
     target_min NUMERIC(8,2),
     target_max NUMERIC(8,2),
     details    JSONB    NOT NULL DEFAULT '{}'::jsonb,
     kind       TEXT     NOT NULL DEFAULT 'forecast' CHECK (kind IN ('forecast','actual')),
+    calculation_status TEXT NOT NULL DEFAULT 'calculated'
+        CONSTRAINT kpi_calculation_status_check
+        CHECK (calculation_status IN ('calculated','no_commitment','no_plan','no_relevant_skills')),
+    CONSTRAINT kpi_calculation_value_check CHECK (
+        (calculation_status = 'calculated' AND value IS NOT NULL)
+        OR (calculation_status <> 'calculated' AND value IS NULL)
+    ),
     PRIMARY KEY (run_id, sprint_no, kpi_code, kind)
 );
 COMMENT ON TABLE kpi_snapshots IS

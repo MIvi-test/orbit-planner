@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import defaultdict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -28,6 +30,7 @@ DSN_FILE = ROOT / "dsn.json"
 
 DEFAULT_DSN = "host=127.0.0.1 port=5432 dbname=pi_planner user=postgres password=postgres"
 DEFAULT_STATEMENT_TIMEOUT_MS = 15_000
+DB_WRITE_LOCK_KEY = 5_427_001  # тот же ключ, что у tools/migrate.py
 DB_DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0)
 
 
@@ -111,6 +114,53 @@ class _DbTelemetry:
 
 
 _TELEMETRY = _DbTelemetry()
+_ATOMIC_CONNECTION: ContextVar[psycopg.Connection | None] = ContextVar(
+    "pi_planner_atomic_connection", default=None
+)
+_SCHEMA: ContextVar[str] = ContextVar("pi_planner_schema", default="public")
+SCHEMA_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+class UnknownPIContext(ValueError):
+    pass
+
+
+def current_schema() -> str:
+    return _SCHEMA.get()
+
+
+@contextmanager
+def use_schema(schema: str) -> Iterator[None]:
+    """Select an isolated PI schema for every connection in this request."""
+    if not SCHEMA_NAME.fullmatch(schema):
+        raise ValueError("invalid PI schema")
+    previous = _SCHEMA.get()
+    token = _SCHEMA.set(schema)
+    active = _ATOMIC_CONNECTION.get()
+    if active is not None:
+        active.execute(f"SET LOCAL search_path TO {schema}")
+    try:
+        yield
+    finally:
+        if active is not None:
+            active.execute(f"SET LOCAL search_path TO {previous}")
+        _SCHEMA.reset(token)
+
+
+@contextmanager
+def use_pi_context(pi_id: str | None, scenario_id: str | None = None) -> Iterator[None]:
+    if not pi_id:
+        with use_schema("public"):
+            yield
+        return
+    row = query_one(
+        "SELECT schema_name FROM public.pi_contexts WHERE pi_id = %s AND scenario_id = %s",
+        (pi_id, scenario_id or "main"),
+    )
+    if row is None:
+        raise UnknownPIContext(f"PI {pi_id} / {scenario_id or 'main'} не найден")
+    with use_schema(row["schema_name"]):
+        yield
 
 
 def metrics_snapshot() -> dict[str, Any]:
@@ -166,10 +216,18 @@ def connection(read_only: bool | None = None) -> Iterator[psycopg.Connection]:
     `SET default_transaction_read_only` её уже не меняет — `CREATE TABLE`
     внутри той же транзакции проходил (проверено на этой базе).
     """
+    active = _ATOMIC_CONNECTION.get()
+    if active is not None:
+        # Все чтения и записи одного приёма видят один набор данных. Управлять
+        # commit/rollback вправе только владелец atomic_transaction().
+        yield active
+        return
+
     cfg = load_config()
     effective_read_only = cfg["read_only"] if read_only is None else read_only
 
-    opts = [f"statement_timeout={int(cfg['statement_timeout_ms'])}"]
+    opts = [f"statement_timeout={int(cfg['statement_timeout_ms'])}",
+            f"search_path={_SCHEMA.get()}"]
     if effective_read_only:
         opts.append("default_transaction_read_only=on")
 
@@ -192,6 +250,26 @@ def connection(read_only: bool | None = None) -> Iterator[psycopg.Connection]:
     finally:
         with _TELEMETRY.lock:
             _TELEMETRY.connections -= 1
+
+
+@contextmanager
+def atomic_transaction() -> Iterator[psycopg.Connection]:
+    """Единая транзакция для приёма данных, пересчёта и публикации плана."""
+    if _ATOMIC_CONNECTION.get() is not None:
+        raise RuntimeError("вложенный атомарный приём данных не поддерживается")
+    with connection(read_only=False) as conn:
+        # Блокировка берётся ВНЕ транзакции. Иначе REPEATABLE READ захватит
+        # снимок до ожидания другого писателя и прочитает устаревший вход.
+        conn.autocommit = True
+        conn.execute("SELECT pg_advisory_lock(%s)", (DB_WRITE_LOCK_KEY,))
+        conn.autocommit = False
+        token = _ATOMIC_CONNECTION.set(conn)
+        try:
+            with conn.transaction():
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                yield conn
+        finally:
+            _ATOMIC_CONNECTION.reset(token)
 
 
 def _finish_operation(operation: str, started: float, outcome: str, rows: int = 0) -> None:
@@ -328,8 +406,9 @@ def transaction(*, operation: str = "transaction") -> Iterator[psycopg.Cursor]:
     _TELEMETRY.operation_enter()
     try:
         with connection(read_only=False) as conn:
-            with conn.cursor() as cur:
-                yield cur
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    yield cur
     except Exception:
         _finish_operation(operation, started, "rollback")
         raise
@@ -353,7 +432,7 @@ def health() -> dict[str, Any]:
                 """
                 SELECT COUNT(*) AS tables
                 FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'
                 """
             )
             tables = cur.fetchone() or {}
@@ -361,7 +440,7 @@ def health() -> dict[str, Any]:
                 """
                 SELECT COUNT(*) AS views
                 FROM information_schema.views
-                WHERE table_schema = 'public'
+                WHERE table_schema = current_schema()
                 """
             )
             views = cur.fetchone() or {}

@@ -49,6 +49,8 @@ interface Props {
   /** Верхняя граница шкалы — 100 для процентов «до 100», больше для say_do (может расти за 100%). */
   domainMax?: number
   caption?: string
+  /** Промежуточный факт: рисуется нейтрально, итоговая норма к нему не применяется (DA-30). */
+  neutralActual?: boolean
 }
 
 export function KpiStamp({
@@ -60,9 +62,10 @@ export function KpiStamp({
   targetMax,
   domainMax = 100,
   caption,
+  neutralActual = false,
 }: Props) {
-  const shown = actual ?? forecast ?? 0
-  const tone = toneOf(shown, targetMin, targetMax)
+  const shown = actual ?? forecast
+  const tone = shown !== null ? toneOf(shown, targetMin, targetMax) : 'ok'
   // У прогноза и факта свой тон: прогноз в норме и факт ниже нормы — разные сигналы.
   const forecastTone = forecast !== null ? toneOf(forecast, targetMin, targetMax) : tone
   const forecastRing = forecast !== null ? ringOffset(R_OUTER, forecast / domainMax) : null
@@ -73,7 +76,7 @@ export function KpiStamp({
 
   return (
     <Stack align="center" gap={6}>
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label={`${title}: ${shown}${unit}`}>
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label={`${title}: ${shown === null ? 'не определено' : `${shown}${unit}`}`}>
         <circle cx={CENTER} cy={CENTER} r={R_OUTER} fill="none" stroke="var(--line)" strokeWidth={2} />
         <circle cx={CENTER} cy={CENTER} r={R_INNER} fill="none" stroke="var(--line)" strokeWidth={1} />
 
@@ -112,7 +115,7 @@ export function KpiStamp({
             cy={CENTER}
             r={R_INNER}
             fill="none"
-            stroke={toneColor(tone)}
+            stroke={neutralActual ? 'var(--muted)' : toneColor(tone)}
             strokeWidth={9}
             strokeLinecap="round"
             strokeDasharray={actualRing.circumference}
@@ -130,11 +133,11 @@ export function KpiStamp({
           fontFamily="var(--font-mono)"
           fill="var(--ink)"
         >
-          {shown.toFixed(shown % 1 === 0 ? 0 : 1)}
-          {unit}
+          {shown === null ? 'н/д' : shown.toFixed(shown % 1 === 0 ? 0 : 1)}
+          {shown === null ? '' : unit}
         </text>
         <text x={CENTER} y={CENTER + 16} textAnchor="middle" fontSize={10} fill="var(--muted)">
-          {actual !== null ? 'факт' : 'прогноз'}
+          {shown === null ? 'не определено' : actual !== null ? 'факт' : 'прогноз'}
         </text>
       </svg>
       <Text fw={500} size="sm" ta="center">

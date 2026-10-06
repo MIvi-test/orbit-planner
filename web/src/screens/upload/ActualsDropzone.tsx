@@ -6,21 +6,31 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Dropzone } from '@mantine/dropzone'
-import { Alert, Anchor, Group, List, Paper, Skeleton, Stack, Text, Title } from '@mantine/core'
-import { notifications } from '@mantine/notifications'
-import { useActualUploads, useSprints } from '../../hooks/useViews'
-import { templateUrl, uploadActuals } from '../../api/uploads'
+import { Alert, Anchor, Button, Checkbox, Group, List, Paper, Select, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core'
+import { notifications } from '../../utils/notify'
+import { useActualReportIssues, useActualUploads, useSprints } from '../../hooks/useViews'
+import { reviewActualRole, uploadActuals } from '../../api/uploads'
+import { downloadTemplate } from '../../api/client'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
+import { useImperium } from '../../theme/appTheme'
 
-export function ActualsDropzone({ onDone }: { onDone: () => void }) {
+export function ActualsDropzone({ onDone }: { onDone: (runId: number) => void }) {
+  const imperium = useImperium()
   const [busy, setBusy] = useState(false)
+  const [selectedSprint, setSelectedSprint] = useState<number | null>(null)
+  const [confirmComplete, setConfirmComplete] = useState(false)
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false)
+  const [reviewTarget, setReviewTarget] = useState<string | null>(null)
+  const [reviewHours, setReviewHours] = useState('0')
+  const [reviewReason, setReviewReason] = useState('')
   const [problems, setProblems] = useState<string[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   const sprints = useSprints()
   const uploads = useActualUploads()
+  const issues = useActualReportIssues()
   const sprintRows = sprints.data?.items ?? []
   const uploadRows = uploads.data?.items ?? []
 
@@ -46,23 +56,44 @@ export function ActualsDropzone({ onDone }: { onDone: () => void }) {
   }
 
   const sprintCount = sprintRows.length
-  const lastUploaded = Math.max(0, ...uploadRows.map((u) => u.sprint_no))
+  const lastUploaded = Math.max(0, ...uploadRows.filter((u) => u.coverage_status === 'complete').map((u) => u.sprint_no))
   const nextSprint = Math.min(lastUploaded + 1, sprintCount)
-  const quarterClosed = lastUploaded >= sprintCount
+  const reportSprint = selectedSprint !== null && selectedSprint <= nextSprint
+    ? selectedSprint : nextSprint
+  const replacing = uploadRows.some((u) => u.sprint_no === reportSprint)
+  const currentUpload = uploadRows.find((u) => u.sprint_no === reportSprint)
+  const reportIssues = (issues.data?.items ?? []).filter((issue) => issue.upload_id === currentUpload?.upload_id)
 
   async function handleFile(file: File) {
     setBusy(true)
     setProblems([])
     setErrorMessage(null)
     try {
-      const result = await uploadActuals(file, nextSprint)
+      const result = await uploadActuals(file, reportSprint, confirmComplete, confirmDuplicate)
       await queryClient.invalidateQueries()
       notifications.show({
-        color: 'teal',
-        title: `Факт спринта ${nextSprint} загружен`,
-        message: `План пересчитан: ${result.plan.in_quarter} задач в квартале, ${result.plan.alerts} алертов`,
+        color: result.plan?.status !== 'ok' || result.summary.warnings.length ? 'yellow' : 'teal',
+        title: result.plan
+          ? `Факт спринта ${reportSprint} закрыт · прогон ${result.plan.run_id}`
+          : `Отчёт спринта ${reportSprint} сохранён · спринт не закрыт`,
+        message: (
+          <Stack gap={2}>
+            {result.plan && <Text size="sm">План: {result.plan.status}; {result.plan.in_quarter} задач в квартале,
+              {' '}{result.plan.alerts} алертов, ошибок приёмки {result.plan.violations_error}.</Text>}
+            {result.summary.coverage_status === 'incomplete' && <Text size="sm">
+              Нет {result.summary.missing_tasks.length} задач и {result.summary.missing_role_cells.length} ячеек часов по ролям.
+            </Text>}
+            {result.replaced_sprints.length > 0 && (
+              <Text size="sm">Заменён факт спринтов: {result.replaced_sprints.join(', ')}.</Text>
+            )}
+            {result.summary.warnings.map((warning, index) => (
+              <Text size="sm" key={index}>{warning}</Text>
+            ))}
+          </Stack>
+        ),
+        autoClose: 12000,
       })
-      onDone()
+      if (result.plan) onDone(result.plan.run_id)
     } catch (err) {
       if (err instanceof ApiError && err.body) {
         const body = err.body as Partial<UploadErrorPayload>
@@ -76,25 +107,76 @@ export function ActualsDropzone({ onDone }: { onDone: () => void }) {
     }
   }
 
+  async function handleReview(taskId: string, roleId: number) {
+    setBusy(true)
+    setErrorMessage(null)
+    try {
+      const result = await reviewActualRole(taskId, roleId, Number(reviewHours), reviewReason)
+      await queryClient.invalidateQueries()
+      notifications.show({ color: 'teal', title: `Остаток роли подтверждён · прогон ${result.plan.run_id}`,
+        message: 'План пересчитан с подтверждённым остатком часов.' })
+      setReviewTarget(null)
+      setReviewReason('')
+      onDone(result.plan.run_id)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Paper p="lg" withBorder>
       <Stack gap="sm">
         <Title order={3}>Факт спринта</Title>
-        {quarterClosed ? (
-          <Text size="sm" c="dimmed">
-            Факт загружен за все {sprintCount} спринтов квартала. Новый цикл начинается с
-            загрузки следующего датасета.
-          </Text>
-        ) : (
-          <>
+        <>
+            <Select
+              label="Отчётный спринт"
+              description={replacing
+                ? 'Исправление заменит активные отчёты и прогоны этого и более поздних спринтов; исходные файлы сохраняются в истории редакций.'
+                : 'Следующий спринт для нового отчёта; прошлые спринты доступны для исправления.'}
+              data={Array.from({ length: nextSprint }, (_, index) => ({
+                value: String(index + 1), label: `Спринт ${index + 1}`,
+              }))}
+              value={String(reportSprint)}
+              onChange={(value) => setSelectedSprint(value ? Number(value) : null)}
+              allowDeselect={false}
+            />
             <Group justify="space-between" wrap="wrap">
               <Text size="sm">
-                Следующий: <b className="mono">спринт {nextSprint}</b> из {sprintCount}
+                {replacing ? 'Исправление' : 'Следующий отчёт'}: <b className="mono">спринт {reportSprint}</b> из {sprintCount}
               </Text>
-              <Anchor href={templateUrl(nextSprint)} download size="sm">
+              <Anchor
+                component="button"
+                type="button"
+                size="sm"
+                onClick={() => {
+                  downloadTemplate(reportSprint).catch((err: unknown) =>
+                    setErrorMessage(err instanceof Error ? err.message : String(err)),
+                  )
+                }}
+              >
                 Скачать шаблон
               </Anchor>
             </Group>
+            <Text size="xs" c="dimmed">
+              completed_sp — новые подтверждённые SP только за этот спринт. Пусто означает,
+              что прогресс по SP не подтверждён; часы не заменяют эту оценку.
+            </Text>
+            <Text size="xs" c="dimmed">
+              В колонках дат пустая ячейка сохраняет прежнюю дату; CLEAR очищает её.
+              Новая дата исправляет запись. Для повторного Done оставьте конец пустым,
+              чтобы сохранить дату первого завершения.
+            </Text>
+            <Checkbox
+              checked={confirmComplete}
+              onChange={(event) => setConfirmComplete(event.currentTarget.checked)}
+              label="Подтверждаю полноту отчёта и закрытие спринта"
+              description="Для каждой активной задачи укажите статус, а для каждой требуемой роли — часы или явный 0. Без подтверждения файл сохраняется как черновик."
+            />
+            <Checkbox checked={confirmDuplicate} onChange={(event) => setConfirmDuplicate(event.currentTarget.checked)}
+              label="Это отдельный отчёт, даже если файл совпадает с другим спринтом"
+              description="Отметьте только после предупреждения о повторе: одинаковые файлы за разные периоды иногда допустимы." />
             <Dropzone
               onDrop={(files) => files[0] && handleFile(files[0])}
               accept={['text/csv', '.csv', '.xlsx']}
@@ -103,19 +185,49 @@ export function ActualsDropzone({ onDone }: { onDone: () => void }) {
               multiple={false}
             >
               <Stack align="center" gap={4} py="md" style={{ pointerEvents: 'none' }}>
-                <Text fw={500}>Перетащите файл .csv или .xlsx сюда или нажмите</Text>
+                <Text fw={500}>{imperium ? 'ПОМЕСТИТЕ СВИТОК ЗДЕСЬ ВО СЛАВУ ИМПЕРАТОРА · .csv / .xlsx' : 'Перетащите файл .csv или .xlsx сюда или нажмите'}</Text>
                 <Text size="sm" c="dimmed">
-                  заполненный шаблон факта спринта {nextSprint}
+                  заполненный шаблон факта спринта {reportSprint}
                 </Text>
               </Stack>
             </Dropzone>
-            {lastUploaded >= nextSprint && (
+            {replacing && (
               <Text size="xs" c="var(--wax-text)">
-                Загрузка заменит факт спринта {nextSprint} и все более поздние.
+                Загрузка заменит факт спринта {reportSprint} и удалит все более поздние отчёты и прогоны.
               </Text>
             )}
+            {reportIssues.length > 0 && (
+              <Alert color="yellow" variant="light" title="Исключения в сохранённом отчёте">
+                <List size="sm">
+                  {reportIssues.map((issue, index) => (
+                    <List.Item key={index}>
+                      {issue.task_id}: {issue.detail}. Причина: {issue.reason}.
+                      {issue.resolved_revision_id !== null && ' Остаток роли подтверждён.'}
+                      {issue.role_id !== null && issue.resolved_revision_id === null
+                        && (issue.issue_code === 'UNPLANNED_ROLE' || issue.issue_code === 'ROLE_OVERRUN') && (
+                          <Button size="xs" variant="subtle" disabled={busy}
+                            onClick={() => { setReviewTarget(`${issue.task_id}:${issue.role_id}`); setReviewHours('0') }}>
+                            Уточнить остаток роли
+                          </Button>
+                        )}
+                      {reviewTarget === `${issue.task_id}:${issue.role_id}` && issue.role_id !== null && (
+                        <Stack gap="xs" mt={4}>
+                          <TextInput label="Остаток часов по роли" value={reviewHours}
+                            onChange={(event) => setReviewHours(event.currentTarget.value)} />
+                          <TextInput label="Причина пересмотра оценки" value={reviewReason}
+                            onChange={(event) => setReviewReason(event.currentTarget.value)} />
+                          <Button size="xs" loading={busy} onClick={() => handleReview(issue.task_id, issue.role_id!)}>
+                            Подтвердить и пересчитать план
+                          </Button>
+                        </Stack>
+                      )}
+                    </List.Item>
+                  ))}
+                </List>
+                <Text size="xs" mt={6}>Часы факта сообщены по роли; нагрузка конкретного инженера этим файлом не подтверждается.</Text>
+              </Alert>
+            )}
           </>
-        )}
         {errorMessage && (
           <Alert color="red" variant="light" title="Факт не принят">
             <Text size="sm">{errorMessage}</Text>

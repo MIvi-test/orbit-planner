@@ -3,7 +3,7 @@
  * (docs/UI_SPEC.md §3: «Считать фонд квартала арифметикой в коде фронта» —
  * запрещено).
  */
-import { Skeleton, Text } from '@mantine/core'
+import { Badge, Group, Skeleton, Text } from '@mantine/core'
 import { usePiFundFactor, useSprints } from '../../hooks/useViews'
 import { fmtDate } from '../../api/wire'
 
@@ -21,8 +21,10 @@ export function PiBadge() {
   const end = rows[rows.length - 1]?.end_date
 
   return (
-    <Text size="sm" c="dimmed" className="mono">
-      {fund.pi_id} · {fmtDate(start)}—{fmtDate(end)} · {rows.length} спринтов
-    </Text>
+    <Group gap={8} wrap="nowrap" style={{ whiteSpace: 'nowrap' }}>
+      <Text size="sm" fw={600} className="mono">{fund.pi_id}</Text>
+      <Text size="sm" c="dimmed" className="mono">{fmtDate(start)} – {fmtDate(end)}</Text>
+      <Badge variant="light" color="gray" style={{ textTransform: 'none' }}>{rows.length} спр.</Badge>
+    </Group>
   )
 }

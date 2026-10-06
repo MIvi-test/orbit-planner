@@ -5,6 +5,8 @@
  */
 import { Fragment } from 'react'
 import { Badge, Text } from '@mantine/core'
+import { useAuth } from '../../hooks/useAuth'
+import { InitiativePriority } from './InitiativePriority'
 import { sprintGridTemplate } from '../../components/common/sprintGrid'
 import { fmtDateShort, num } from '../../api/wire'
 import type {
@@ -41,6 +43,7 @@ export function GanttGrid({
   assignmentsByTask: Map<string, PlanAssignmentDetailRow[]>
   onSelect: (task: TaskRow) => void
 }) {
+  const { can } = useAuth()
   const n = sprints.length
   const template = sprintGridTemplate(n)
 
@@ -56,16 +59,16 @@ export function GanttGrid({
     >
       {/* --- заголовок: номера и даты спринтов --------------------------- */}
       <div style={{ display: 'contents' }}>
-        <HeaderCell>Инициатива / задача</HeaderCell>
+        <HeaderCell>Задача</HeaderCell>
         {sprints.map((s) => (
           <HeaderCell key={s.sprint_no} center>
-            <div>{s.sprint_no}</div>
-            <Text size="10px" c="dimmed">
-              {fmtDateShort(s.start_date)}–{fmtDateShort(s.end_date)}
+            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>Спринт {s.sprint_no}</div>
+            <Text size="xs" c="dimmed" className="mono">
+              {fmtDateShort(s.start_date)} – {fmtDateShort(s.end_date)}
             </Text>
           </HeaderCell>
         ))}
-        <HeaderCell />
+        <HeaderCell center>Итог</HeaderCell>
       </div>
 
       {groups.map((group) => (
@@ -83,18 +86,22 @@ export function GanttGrid({
                 alignItems: 'center',
               }}
             >
-              <Badge variant="outline" color="post" size="sm" className="mono">
-                {group.priority_rung ?? '—'}
+              <Badge variant="outline" color={group.business_priority !== null ? 'orange' : 'post'} size="sm" className="mono"
+                title={group.business_priority !== null ? `Задан бизнесом (датасет: ${group.priority_rung ?? '—'})` : 'Приоритет из датасета'}>
+                {group.business_priority ?? group.priority_rung ?? '—'}
               </Badge>
-              <Text size="sm" fw={500} className="mono">
+              {can('planner') && (
+                <InitiativePriority prodfId={group.prodf_id} datasetRung={group.priority_rung} business={group.business_priority} />
+              )}
+              <Text fw={700} className="mono">
                 {group.prodf_id}
               </Text>
-              <Text size="sm" c="dimmed" truncate>
+              <Text fw={500} truncate>
                 {group.title}
               </Text>
-              <Text size="xs" c="dimmed" ml="auto">
+              <span className="team-chip" style={{ marginLeft: 'auto', flexShrink: 0 }}>
                 {group.team_id}
-              </Text>
+              </span>
             </div>
           </div>
 
@@ -108,10 +115,10 @@ export function GanttGrid({
             return (
               <div style={{ display: 'contents' }} key={task.task_id}>
                 <RowCell onClick={() => onSelect(task)}>
-                  <Text size="sm" fw={500} className="mono">
+                  <Text size="sm" fw={700} className="mono">
                     {task.task_id}
                   </Text>
-                  <Text size="xs" c="dimmed" truncate>
+                  <Text size="sm" c="dimmed" lineClamp={2} title={task.summary ?? undefined} style={{ lineHeight: 1.3 }}>
                     {task.summary}
                   </Text>
                 </RowCell>
@@ -131,17 +138,23 @@ export function GanttGrid({
                     s.sprint_no >= baseline.start_sprint &&
                     s.sprint_no <= baseline.end_sprint
                   const sp = spRows.find((r) => r.sprint_no === s.sprint_no)
-                  const hasLoan = assignments.some((a) => a.sprint_no === s.sprint_no && a.is_loan)
+                  const sprintAssignments = assignments.filter((a) => a.sprint_no === s.sprint_no)
+                  const hasLoan = sprintAssignments.some((a) => a.is_loan)
                   const isDeferredGhost = schedule && schedule.decision !== 'in_quarter'
+                  const doneSprint = task.status === 'Done' && task.actual_end
+                    ? s.start_date <= task.actual_end && task.actual_end <= s.end_date
+                    : false
 
                   return (
                     <BarCell
                       key={s.sprint_no}
                       onClick={() => onSelect(task)}
-                      inQuarter={Boolean(inQuarter)}
+                      working={sprintAssignments.length > 0}
+                      waiting={Boolean(inQuarter) && sprintAssignments.length === 0}
+                      done={Boolean(doneSprint)}
                       isBaselineSprint={Boolean(isBaselineSprint)}
                       hasLoan={hasLoan}
-                      spLabel={spRows.length > 1 && sp ? num(sp.sp).toFixed(1).replace(/\.0$/, '') : null}
+                      spLabel={sp ? num(sp.sp).toFixed(1).replace(/\.0$/, '') : null}
                       ghost={Boolean(isDeferredGhost)}
                     />
                   )
@@ -149,7 +162,7 @@ export function GanttGrid({
 
                 <RowCell onClick={() => onSelect(task)} center>
                   {flag && (
-                    <span title={flag.title} style={{ color: flag.color, fontSize: 13 }}>
+                    <span title={flag.title} style={{ color: flag.color, fontSize: 18 }}>
                       {flag.glyph}
                     </span>
                   )}
@@ -167,12 +180,17 @@ function HeaderCell({ children, center }: { children?: React.ReactNode; center?:
   return (
     <div
       style={{
-        padding: '8px 10px',
+        padding: '10px 12px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: center ? 'center' : 'flex-start',
+        gap: 2,
         borderBottom: '2px solid var(--ink)',
         borderRight: '1px solid var(--line)',
         textAlign: center ? 'center' : 'left',
-        fontSize: 12,
-        fontWeight: 500,
+        fontSize: 13,
+        fontWeight: 600,
         color: 'var(--muted)',
         background: 'var(--surface)',
       }}
@@ -197,8 +215,12 @@ function RowCell({
       style={{
         all: 'unset',
         cursor: 'pointer',
-        display: 'block',
-        padding: '5px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: center ? 'center' : 'stretch',
+        gap: 1,
+        padding: '8px 12px',
         borderBottom: '1px solid var(--line)',
         borderRight: '1px solid var(--line)',
         background: 'var(--surface)',
@@ -213,14 +235,18 @@ function RowCell({
 
 function BarCell({
   onClick,
-  inQuarter,
+  working,
+  waiting,
+  done,
   isBaselineSprint,
   hasLoan,
   spLabel,
   ghost,
 }: {
   onClick: () => void
-  inQuarter: boolean
+  working: boolean
+  waiting: boolean
+  done: boolean
   isBaselineSprint: boolean
   hasLoan: boolean
   spLabel: string | null
@@ -236,7 +262,8 @@ function BarCell({
         display: 'flex',
         alignItems: 'flex-end',
         justifyContent: 'center',
-        height: 34,
+        height: '100%',
+        minHeight: 52,
         borderBottom: '1px solid var(--line)',
         borderRight: '1px solid var(--line)',
         background: 'var(--surface)',
@@ -253,7 +280,10 @@ function BarCell({
           }}
         />
       )}
-      {inQuarter && (
+      {waiting && (
+        <div title="Ожидание без назначений" style={{ position: 'absolute', left: 2, right: 2, top: 6, bottom: 4, background: 'repeating-linear-gradient(90deg, var(--line) 0, var(--line) 3px, transparent 3px, transparent 7px)' }} />
+      )}
+      {working && (
         <div
           style={{
             position: 'absolute',
@@ -268,6 +298,9 @@ function BarCell({
           }}
         />
       )}
+      {done && (
+        <span title="Завершена по факту" style={{ position: 'absolute', right: 4, top: 3, zIndex: 2, color: 'var(--flare)', fontWeight: 700 }}>✓</span>
+      )}
       {isBaselineSprint && (
         <div
           style={{
@@ -281,7 +314,7 @@ function BarCell({
         />
       )}
       {spLabel && (
-        <Text size="9px" className="mono tabular" style={{ position: 'relative', color: '#fff', zIndex: 1, marginBottom: 8 }}>
+        <Text size="9px" className="mono tabular" style={{ position: 'relative', color: 'var(--bar-text)', zIndex: 1, marginBottom: 8 }}>
           {spLabel}
         </Text>
       )}

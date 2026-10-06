@@ -4,18 +4,18 @@
 -- =====================================================================
 BEGIN;
 
-DROP VIEW IF EXISTS v_dq_summary, v_orbit_map, v_task_board, v_bus_factor,
+DROP VIEW IF EXISTS v_dq_issue_worklist, v_dq_summary, v_orbit_map, v_task_board, v_bus_factor,
      v_role_deficit, v_backlog_demand, v_role_supply_hh, v_satellite_capacity,
-     v_task_remaining_hh, v_team_capacity_sp CASCADE;
+     v_task_remaining_hh, v_team_capacity_sp, v_team_velocity_observed, v_task_done_sprint CASCADE;
 
-DROP VIEW IF EXISTS v_sprint_fund_factor, v_pi_fund_factor CASCADE;
+DROP VIEW IF EXISTS v_remaining_pi_fund_factor, v_sprint_fund_factor, v_pi_fund_factor CASCADE;
 
 -- --------------------------------------------------------------------
 --  МНОЖИТЕЛЬ ФОНДА. Единственный источник ответа «сколько ЧЧ даёт
 --  ставка в этом спринте / за весь PI». Полный спринт — 1.0000,
---  короткий 7-й (23.09..30.09.2026) — 8/14 = 0.5714 (ADR-017).
+--  сейчас все шесть спринтов полные и имеют factor = 1.0000 (ADR-025).
 --  Дублировать эту арифметику по пяти вьюхам нельзя: разъедется, и
---  короткий спринт молча получит полный фонд.
+--  фонд не совпадёт с календарём.
 -- --------------------------------------------------------------------
 CREATE VIEW v_sprint_fund_factor AS
 SELECT s.pi_id, s.sprint_no, s.start_date, s.end_date, s.length_days,
@@ -23,8 +23,8 @@ SELECT s.pi_id, s.sprint_no, s.start_date, s.end_date, s.length_days,
 FROM sprints s
 JOIN pi_periods p ON p.pi_id = s.pi_id;
 COMMENT ON VIEW v_sprint_fund_factor IS
- 'Фонд спринта = rate × fte_hours_per_sprint × factor. Короткий спринт даёт МЕНЬШЕ часов, '
- 'а не «те же 80»: иначе фонд квартала вылез бы за 92 дня календаря. Проверки ENGINEER_OVERLOAD '
+ 'Фонд спринта = rate × fte_hours_per_sprint × factor. В текущем PI все шесть спринтов полные; '
+ 'для спринта иной длины factor изменит доступные часы. Проверки ENGINEER_OVERLOAD '
  'и ORBIT_OVERLOAD берут фонд именно отсюда.';
 
 CREATE VIEW v_pi_fund_factor AS
@@ -37,8 +37,20 @@ JOIN sprints s ON s.pi_id = p.pi_id
 GROUP BY p.pi_id, p.sprint_length_days;
 COMMENT ON VIEW v_pi_fund_factor IS
  'Фонд ставки за весь PI, выраженный в «полных спринтах»: 1.0000 ставки × 80 ЧЧ × factor. '
- 'На Q3-2026: 92 дня / 14 = 6.5714, то есть 525.71 ЧЧ за квартал (при 6 спринтах × 14 было 480). '
+ 'На Q3-2026: 84 дня / 14 = 6.0000, то есть 480 ЧЧ за PI на полную ставку. '
  'Используется вместо `sprint_count` везде, где считается фонд за квартал.';
+
+CREATE VIEW v_remaining_pi_fund_factor AS
+SELECT p.pi_id, COALESCE(u.last_reported_sprint, 0) AS last_reported_sprint,
+       COALESCE(SUM(f.factor) FILTER (
+           WHERE f.sprint_no > COALESCE(u.last_reported_sprint, 0)), 0) AS factor
+FROM pi_periods p
+LEFT JOIN (SELECT pi_id, MAX(sprint_no) AS last_reported_sprint
+           FROM actual_uploads WHERE coverage_status = 'complete' GROUP BY pi_id) u ON u.pi_id = p.pi_id
+JOIN v_sprint_fund_factor f ON f.pi_id = p.pi_id
+GROUP BY p.pi_id, u.last_reported_sprint;
+COMMENT ON VIEW v_remaining_pi_fund_factor IS
+ 'Фонд только ещё не закрытых спринтов. Остаток работ нельзя сравнивать с фондом всего PI.';
 
 -- --------------------------------------------------------------------
 --  Ёмкость ядра в SP. Velocity × Focus Factor (онбординг, раздел 3А).
@@ -50,14 +62,86 @@ SELECT t.team_id,
        t.focus_factor,
        ROUND(AVG(h.velocity_achieved) * t.focus_factor, 2)   AS available_sp_per_sprint,
        ROUND(AVG(h.velocity_achieved) * t.focus_factor
-             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2) AS available_sp_per_pi
+             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2) AS available_sp_per_pi,
+       MIN(h.velocity_achieved)                              AS velocity_min,
+       MAX(h.velocity_achieved)                              AS velocity_max,
+       ROUND(STDDEV_SAMP(h.velocity_achieved), 2)            AS velocity_stddev,
+       MIN(h.snapshot_date)                                  AS history_from,
+       MAX(h.snapshot_date)                                  AS history_to,
+       (SELECT p.start_date FROM pi_periods p ORDER BY p.pi_id LIMIT 1) - MAX(h.snapshot_date)
+                                                             AS history_age_days
 FROM teams t
 LEFT JOIN team_history h ON h.team_id = t.team_id
 GROUP BY t.team_id, t.focus_factor;
 COMMENT ON VIEW v_team_capacity_sp IS
- 'history_points = 2 на команду: среднее шаткое, на защите оговорить. '
- 'available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта; для короткого умножать на '
- 'v_sprint_fund_factor.factor (так делает проверка SP_OVERFLOW).';
+ 'НОРМАТИВНАЯ ёмкость по истории (ТЗ: средняя фактическая производительность × 0.8): ровно та, с которой '
+ 'строится базовый план. history_points — число наблюдений (по 2 на команду в выданных данных: выборка '
+ 'малая, смотреть velocity_stddev и history_age_days). available_sp_per_sprint — фонд ОДНОГО ПОЛНОГО спринта. '
+ 'Пересчёты после факта добавляют наблюдения текущего PI (v_team_velocity_observed); ёмкость конкретного '
+ 'прогона — plan_team_capacity.';
+
+-- --------------------------------------------------------------------
+--  Спринт, в котором задача впервые выполнена (по ДАТЕ события, а не номеру загрузки).
+-- --------------------------------------------------------------------
+CREATE VIEW v_task_done_sprint AS
+SELECT completed_in.pi_id, completed_in.sprint_no, a.task_id
+FROM task_actuals a
+JOIN actual_uploads u   ON u.upload_id = a.upload_id
+JOIN tasks_seed_state s ON s.task_id = a.task_id
+JOIN sprints completed_in ON completed_in.pi_id = u.pi_id
+                         AND a.actual_end BETWEEN completed_in.start_date AND completed_in.end_date
+WHERE a.status = 'Done' AND s.status <> 'Done'
+  AND u.coverage_status = 'complete'
+  AND NOT EXISTS (SELECT 1 FROM task_actuals a2
+                  JOIN actual_uploads u2 ON u2.upload_id = a2.upload_id
+                  WHERE a2.task_id = a.task_id AND a2.status = 'Done'
+                    AND u2.coverage_status = 'complete'
+                    AND u2.sprint_no < u.sprint_no);
+COMMENT ON VIEW v_task_done_sprint IS
+ 'Спринт первого подтверждённого завершения задачи по actual_end (DA-17). Основа числителя Say/Do и '
+ 'наблюдаемой скорости команд.';
+
+-- --------------------------------------------------------------------
+--  Наблюдаемая скорость: SP, поставленные командой в закрытом спринте (DA-27).
+--  Поставлено = подтверждённый completed_sp спринта + остаток SP завершённых в нём задач.
+--  Спринт полного отчёта без поставки — наблюдение 0, но только для команд, у которых был
+--  невыполненный бэклог: пустой бэклог ёмкость не опровергает.
+-- --------------------------------------------------------------------
+CREATE VIEW v_team_velocity_observed AS
+WITH progress AS (
+    SELECT u.pi_id, u.sprint_no, t.team_id, SUM(a.completed_sp) AS sp
+    FROM task_actuals a
+    JOIN actual_uploads u ON u.upload_id = a.upload_id
+    JOIN tasks t          ON t.task_id = a.task_id
+    WHERE u.coverage_status = 'complete' AND a.completed_sp IS NOT NULL
+    GROUP BY u.pi_id, u.sprint_no, t.team_id
+), reported_total AS (
+    SELECT a.task_id, SUM(COALESCE(a.completed_sp, 0)) AS sp
+    FROM task_actuals a JOIN actual_uploads u ON u.upload_id = a.upload_id
+    WHERE u.coverage_status = 'complete'
+    GROUP BY a.task_id
+), completion AS (
+    SELECT d.pi_id, d.sprint_no, t.team_id,
+           SUM(GREATEST(COALESCE(t.estimation_sp, 0) - COALESCE(rt.sp, 0), 0)) AS sp
+    FROM v_task_done_sprint d
+    JOIN tasks t ON t.task_id = d.task_id
+    LEFT JOIN reported_total rt ON rt.task_id = d.task_id
+    GROUP BY d.pi_id, d.sprint_no, t.team_id
+), delivered AS (
+    SELECT pi_id, sprint_no, team_id, SUM(sp) AS delivered_sp
+    FROM (SELECT * FROM progress UNION ALL SELECT * FROM completion) x
+    GROUP BY pi_id, sprint_no, team_id
+)
+SELECT u.pi_id, u.sprint_no, tm.team_id, COALESCE(d.delivered_sp, 0)::numeric(8,2) AS delivered_sp
+FROM actual_uploads u
+CROSS JOIN teams tm
+LEFT JOIN delivered d ON d.pi_id = u.pi_id AND d.sprint_no = u.sprint_no AND d.team_id = tm.team_id
+WHERE u.coverage_status = 'complete'
+  AND EXISTS (SELECT 1 FROM tasks_seed_state s JOIN tasks t ON t.task_id = s.task_id
+              WHERE t.team_id = tm.team_id AND s.status <> 'Done');
+COMMENT ON VIEW v_team_velocity_observed IS
+ 'Скорость команды по закрытым спринтам текущего PI (наблюдение для пересчёта, ADR-030). Остаток SP '
+ 'завершённой задачи приписывается спринту завершения, в том числе доля, сделанная до квартала.';
 
 -- --------------------------------------------------------------------
 --  Остаток часов по задаче и роли. Для InProgress факт берётся ТОЛЬКО
@@ -68,10 +152,28 @@ SELECT COALESCE(e.task_id, s.task_id)                            AS task_id,
        COALESCE(e.role_id, s.role_id)                            AS role_id,
        COALESCE(e.hours, 0)                                      AS estimated_hours,
        COALESCE(s.hours, 0)                                      AS spent_hours,
-       GREATEST(COALESCE(e.hours, 0) - COALESCE(s.hours, 0), 0)  AS remaining_hours
+       COALESCE(etc.remaining_hours,
+                GREATEST(COALESCE(e.hours, 0) - COALESCE(s.hours, 0), 0)) AS remaining_hours,
+       (etc.revision_id IS NULL AND t.status <> 'Done'
+        AND COALESCE(s.hours, 0) > 0
+        AND COALESCE(s.hours, 0) >= COALESCE(e.hours, 0))        AS remaining_unknown,
+       etc.reason                                                AS etc_reason,
+       (etc.revision_id IS NULL AND t.status <> 'Done'
+        AND COALESCE(s.hours, 0) > 0
+        AND COALESCE(e.hours, 0) > COALESCE(s.hours, 0))         AS remaining_provisional
 FROM task_role_estimates e
 FULL OUTER JOIN task_role_spent s
-  ON s.task_id = e.task_id AND s.role_id = e.role_id;
+  ON s.task_id = e.task_id AND s.role_id = e.role_id
+JOIN tasks t ON t.task_id = COALESCE(e.task_id, s.task_id)
+LEFT JOIN LATERAL (
+    SELECT x.revision_id, x.remaining_hours, x.reason FROM task_role_etc x
+    WHERE x.task_id = e.task_id AND x.role_id = e.role_id
+    ORDER BY x.revision_id DESC LIMIT 1
+) etc ON TRUE;
+COMMENT ON VIEW v_task_remaining_hh IS
+ 'Остаток часов по задаче и роли. ETC (task_role_etc) главнее; без ETC остаток = смета − факт '
+ '(remaining_provisional = факт есть, но прогресс не подтверждён). remaining_unknown — смета роли '
+ 'исчерпана у незакрытой задачи: нужен ETC, сам по себе остаток 0 не означает готовность.';
 
 -- --------------------------------------------------------------------
 --  Фонд часов спутника на орбите в спринте.
@@ -82,38 +184,49 @@ FULL OUTER JOIN task_role_spent s
 CREATE VIEW v_satellite_capacity AS
 SELECT o.engineer_id, o.team_id, e.role_id, e.grade,
        s.pi_id, s.sprint_no, s.start_date, s.end_date,
-       o.capacity_rate,
+       COALESCE(a.available_rate, o.capacity_rate) AS capacity_rate,
        (SELECT COUNT(*) > 1 FROM engineer_orbits x WHERE x.engineer_id = o.engineer_id) AS is_shared_orbit,
        s.length_days,
-       ROUND(o.capacity_rate * p.fte_hours_per_sprint * f.factor, 2) AS hours_own
+       ROUND(COALESCE(a.available_rate, o.capacity_rate) * p.fte_hours_per_sprint * f.factor, 2) AS hours_own
 FROM engineer_orbits o
 JOIN engineers  e ON e.engineer_id = o.engineer_id
 JOIN sprints    s ON TRUE
 JOIN pi_periods p ON p.pi_id = s.pi_id
-JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no;
+JOIN v_sprint_fund_factor f ON f.pi_id = s.pi_id AND f.sprint_no = s.sprint_no
+LEFT JOIN engineer_orbit_availability a ON a.engineer_id = o.engineer_id AND a.team_id = o.team_id
+  AND a.pi_id = s.pi_id AND a.sprint_no = s.sprint_no;
 COMMENT ON VIEW v_satellite_capacity IS
  'hours_own — фонд спутника на орбите в КОНКРЕТНОМ спринте: rate × 80 × factor спринта. '
- 'В коротком 7-м спринте это 0.5714 от обычного.';
+ 'В текущем PI все шесть спринтов полные.';
 
 -- --------------------------------------------------------------------
 --  Предложение часов по роли: в разрезе ядра и по всей компании.
 -- --------------------------------------------------------------------
 CREATE VIEW v_role_supply_hh AS
-SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
-       COUNT(DISTINCT o.engineer_id)                                     AS engineers,
-       SUM(o.capacity_rate)                                              AS fte,
-       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2)           AS hh_per_sprint,
-       ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint)
-             * (SELECT factor FROM v_pi_fund_factor LIMIT 1), 2)         AS hh_per_pi
-FROM roles r
-JOIN engineers       e ON e.role_id = r.role_id
-JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
-CROSS JOIN pi_periods p
-GROUP BY r.role_id, r.canonical_name, o.team_id;
+WITH nominal AS (
+    SELECT r.role_id, r.canonical_name AS role_name, o.team_id,
+           COUNT(DISTINCT o.engineer_id) AS engineers,
+           SUM(o.capacity_rate) AS fte,
+           ROUND(SUM(o.capacity_rate * p.fte_hours_per_sprint), 2) AS hh_per_sprint
+    FROM roles r JOIN engineers e ON e.role_id = r.role_id
+    JOIN engineer_orbits o ON o.engineer_id = e.engineer_id
+    CROSS JOIN pi_periods p
+    GROUP BY r.role_id, r.canonical_name, o.team_id
+), calendar AS (
+    SELECT c.role_id, c.team_id, ROUND(SUM(c.hours_own), 2) AS hh_per_pi,
+           ROUND(COALESCE(SUM(c.hours_own) FILTER (
+               WHERE c.sprint_no > f.last_reported_sprint), 0), 2) AS hh_remaining_pi
+    FROM v_satellite_capacity c
+    JOIN v_remaining_pi_fund_factor f ON f.pi_id = c.pi_id
+    GROUP BY c.role_id, c.team_id
+)
+SELECT n.role_id, n.role_name, n.team_id, n.engineers, n.fte, n.hh_per_sprint,
+       c.hh_per_pi, c.hh_remaining_pi
+FROM nominal n JOIN calendar c USING (role_id, team_id);
 COMMENT ON VIEW v_role_supply_hh IS
  'hh_per_sprint — фонд одного ПОЛНОГО спринта. hh_per_pi — фонд всего квартала: '
- '× v_pi_fund_factor.factor (92/14 = 6.5714), а НЕ × sprint_count, иначе короткий '
- '7-й спринт подарил бы команде лишние 8 дней фонда.';
+ '× v_pi_fund_factor.factor (сейчас 6.0000). hh_remaining_pi — фонд '
+ 'будущих спринтов после последнего принятого факта.';
 
 -- --------------------------------------------------------------------
 --  Потребность живого бэклога по ядру и роли за квартал.
@@ -137,16 +250,23 @@ CREATE VIEW v_role_deficit AS
 SELECT COALESCE(d.team_id, s.team_id)       AS team_id,
        COALESCE(d.role_name, s.role_name)   AS role_name,
        COALESCE(d.demand_hh, 0)             AS demand_hh,
-       COALESCE(s.hh_per_pi, 0)             AS supply_hh,
-       COALESCE(d.demand_hh, 0) - COALESCE(s.hh_per_pi, 0) AS gap_hh,
-       CASE WHEN COALESCE(s.hh_per_pi, 0) = 0 AND COALESCE(d.demand_hh, 0) > 0
-                 THEN 'роли нет в команде'
-            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_per_pi, 0)
+       COALESCE(s.hh_remaining_pi, 0)       AS supply_hh,
+       COALESCE(d.demand_hh, 0) - COALESCE(s.hh_remaining_pi, 0) AS gap_hh,
+       CASE WHEN COALESCE(d.demand_hh, 0) = 0 THEN 'спроса нет'
+            WHEN COALESCE(s.hh_remaining_pi, 0) = 0 AND COALESCE(org.hh, 0) = 0
+                 THEN 'нет доступного фонда в организации'
+            WHEN COALESCE(s.hh_remaining_pi, 0) = 0 THEN 'роли нет в команде — возможен заём'
+            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_remaining_pi, 0)
+                 AND COALESCE(org.hh, 0) >= d.demand_hh THEN 'не хватает часов в команде — возможен заём'
+            WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh_remaining_pi, 0)
                  THEN 'не хватает часов'
             ELSE 'покрыто' END              AS verdict
 FROM v_backlog_demand d
 FULL OUTER JOIN v_role_supply_hh s
-  ON s.team_id = d.team_id AND s.role_id = d.role_id;
+  ON s.team_id = d.team_id AND s.role_id = d.role_id
+LEFT JOIN (SELECT role_id, SUM(hh_remaining_pi) AS hh
+           FROM v_role_supply_hh GROUP BY role_id) org
+  ON org.role_id = COALESCE(d.role_id, s.role_id);
 
 -- --------------------------------------------------------------------
 --  Bus Factor. Роли без единого инженера тоже попадают сюда —
@@ -175,9 +295,12 @@ CREATE VIEW v_task_board AS
 SELECT t.task_id, t.prodf_id, i.br_id, i.priority_rung, t.team_id, t.summary,
        t.status, t.rung, t.estimation_sp,
        t.estimated_hh_effective, t.estimated_hh_declared, t.estimated_hh_matrix_total,
-       (t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_declared) AS estimate_disputed,
+       (t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_declared OR
+        (t.estimated_hh_matrix_total IS NOT NULL AND
+         t.estimated_hh_effective IS DISTINCT FROM t.estimated_hh_matrix_total)) AS estimate_disputed,
        t.planned_start, t.planned_end, t.actual_start, t.actual_end,
-       q.topo_order, q.depth, q.earliest_start_sprint, q.on_critical_path,
+       q.topo_order, q.depth AS edge_depth_at_load,
+       q.earliest_start_sprint AS earliest_start_sprint_at_load, q.on_longest_edge_chain,
        COALESCE(rm.remaining_hh, 0) AS remaining_hh,
        (SELECT COUNT(*) FROM task_dependencies d WHERE d.blocked_task_id  = t.task_id) AS blocked_by,
        (SELECT COUNT(*) FROM task_dependencies d WHERE d.blocking_task_id = t.task_id) AS blocks
@@ -209,6 +332,19 @@ SELECT rule_code, severity, COUNT(*) AS n,
        MIN(detail) AS example
 FROM dq_issues GROUP BY rule_code, severity ORDER BY
      CASE severity WHEN 'error' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END, COUNT(*) DESC;
+
+CREATE VIEW v_dq_issue_worklist AS
+SELECT i.issue_id, i.batch_id, i.entity, i.entity_id, i.rule_code,
+       i.severity, i.detail,
+       COALESCE(r.decision, 'open') AS review_status,
+       r.reviewer, r.note AS review_note, r.reviewed_at,
+       (i.severity = 'error' AND COALESCE(r.decision, 'open') <> 'resolved') AS is_blocking
+FROM dq_issues i
+LEFT JOIN LATERAL (
+    SELECT decision, reviewer, note, reviewed_at
+    FROM dq_issue_reviews WHERE issue_id = i.issue_id
+    ORDER BY review_id DESC LIMIT 1
+) r ON TRUE;
 
 COMMIT;
 
@@ -252,7 +388,7 @@ CREATE VIEW v_role_deficit_effective AS
 WITH supply AS (
     SELECT c.role_id, o.team_id,
            SUM(o.capacity_rate * p.fte_hours_per_sprint)
-           * (SELECT factor FROM v_pi_fund_factor LIMIT 1) AS hh
+           * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1) AS hh
     FROM v_engineer_role_coverage c
     JOIN engineer_orbits o ON o.engineer_id = c.engineer_id
     CROSS JOIN pi_periods p
@@ -264,11 +400,17 @@ SELECT COALESCE(d.team_id, s.team_id)     AS team_id,
        COALESCE(s.hh, 0)                  AS supply_with_substitution_hh,
        COALESCE(d.demand_hh, 0) - COALESCE(s.hh, 0) AS gap_hh,
        CASE WHEN COALESCE(d.demand_hh, 0) <= COALESCE(s.hh, 0) THEN 'покрыто'
-            WHEN COALESCE(s.hh, 0) = 0 THEN 'НЕ ЗАКРЫТЬ НИКЕМ — нужен наём'
+            WHEN COALESCE(s.hh, 0) = 0 AND COALESCE(org.hh, 0) > 0
+                 THEN 'роли нет в команде — возможен заём'
+            WHEN COALESCE(s.hh, 0) = 0 THEN 'нет доступного фонда в организации'
+            WHEN COALESCE(org.hh, 0) >= d.demand_hh
+                 THEN 'не хватает часов в команде — возможен заём'
             ELSE 'не хватает часов' END   AS verdict
 FROM v_backlog_demand d
 FULL OUTER JOIN supply s ON s.team_id = d.team_id AND s.role_id = d.role_id
-LEFT JOIN roles r ON r.role_id = s.role_id;
+LEFT JOIN roles r ON r.role_id = s.role_id
+LEFT JOIN (SELECT role_id, SUM(hh) AS hh FROM supply GROUP BY role_id) org
+  ON org.role_id = COALESCE(d.role_id, s.role_id);
 COMMENT ON VIEW v_role_deficit_effective IS
  'Сравнивать с v_role_deficit (строгим). Разница между ними — ровно то, что даёт замещение.';
 
@@ -286,7 +428,7 @@ WITH demand AS (
            COUNT(DISTINCT c.engineer_id)                                   AS people,
            COUNT(DISTINCT c.engineer_id) FILTER (WHERE c.is_native)        AS native_people,
            SUM(e.total_capacity_rate * p.fte_hours_per_sprint)
-           * (SELECT factor FROM v_pi_fund_factor LIMIT 1) AS hh
+           * (SELECT factor FROM v_remaining_pi_fund_factor LIMIT 1) AS hh
     FROM v_engineer_role_coverage c
     JOIN engineers e ON e.engineer_id = c.engineer_id
     CROSS JOIN pi_periods p
@@ -299,6 +441,8 @@ SELECT r.canonical_name                      AS role_name,
        COALESCE(s.hh, 0)                     AS supply_hh,
        COALESCE(d.demand_hh, 0) - COALESCE(s.hh, 0) AS gap_hh,
        CASE WHEN COALESCE(d.demand_hh, 0) = 0                  THEN 'спроса нет'
+            WHEN COALESCE(s.hh, 0) = 0 AND COALESCE(s.people, 0) > 0
+                 THEN 'нет фонда до конца PI'
             WHEN COALESCE(s.hh, 0) = 0                         THEN 'НАЙМ: закрыть некем'
             WHEN COALESCE(d.demand_hh, 0) > COALESCE(s.hh, 0)  THEN 'НАЙМ: не хватает часов'
             WHEN COALESCE(s.native_people, 0) = 0              THEN 'только замещением'
@@ -342,53 +486,83 @@ COMMIT;
 -- =====================================================================
 BEGIN;
 
-DROP VIEW IF EXISTS v_sprint_deviation, v_plan_diff, v_team_profile,
+DROP VIEW IF EXISTS v_sprint_forecast_accuracy, v_sprint_deviation, v_plan_diff, v_team_profile,
+     v_initiative_goal_progress, v_plan_goal_outcome,
+     v_plan_role_demand_snapshot, v_plan_task_progress,
      v_engineer_absence_risk, v_bus_factor_skill CASCADE;
 
 -- --------------------------------------------------------------------
---  Bus Factor по компетенциям: сколько инженеров заявили навык.
---  critical = навык есть у кого-то, чья роль нужна живому бэклогу —
---  связи «задача → навык» в датасете нет, поэтому критичность выводится
---  через роль носителя (ADR-024).
+--  Подтверждённый спрос берётся из ручной разметки задача × роль × навык.
+--  Для ещё не проверенных задач сохраняется оценка через роль, но помечается
+--  как приближение. Один коллега без нужного навыка не снимает риск.
 -- --------------------------------------------------------------------
 CREATE VIEW v_bus_factor_skill AS
 WITH holders AS (
     SELECT es.skill_id, e.engineer_id, e.role_id,
            (SELECT COUNT(*) FROM engineers x WHERE x.role_id = e.role_id) AS role_n
     FROM engineer_skills es JOIN engineers e ON e.engineer_id = es.engineer_id
-), role_demand AS (
-    SELECT role_id, SUM(demand_hh) AS demand_hh FROM v_backlog_demand GROUP BY role_id
+), exact_demand AS (
+    SELECT q.skill_id, SUM(rm.remaining_hours) AS demand_hh
+    FROM task_role_skill_requirements q
+    JOIN task_role_skill_reviews review
+      ON review.task_id = q.task_id AND review.role_id = q.role_id
+      AND review.status = 'confirmed'
+    JOIN v_task_remaining_hh rm ON rm.task_id = q.task_id AND rm.role_id = q.role_id
+    JOIN tasks t ON t.task_id = q.task_id
+    WHERE t.status IN ('ToDo', 'InProgress') AND rm.remaining_hours > 0
+    GROUP BY q.skill_id
+), proxy_demand AS (
+    SELECT h.skill_id, SUM(rm.remaining_hours) AS demand_hh
+    FROM (SELECT DISTINCT skill_id, role_id FROM holders) h
+    JOIN v_task_remaining_hh rm ON rm.role_id = h.role_id
+    JOIN tasks t ON t.task_id = rm.task_id
+    LEFT JOIN task_role_skill_reviews review
+      ON review.task_id = rm.task_id AND review.role_id = rm.role_id
+    WHERE t.status IN ('ToDo', 'InProgress') AND rm.remaining_hours > 0
+      AND review.status IS DISTINCT FROM 'confirmed'
+    GROUP BY h.skill_id
 )
 SELECT s.skill_id,
        s.name                                                   AS skill_name,
        COUNT(DISTINCT h.engineer_id)::int                       AS bus_factor,
-       ARRAY_AGG(DISTINCT h.engineer_id ORDER BY h.engineer_id) AS engineers,
+       COALESCE(ARRAY_AGG(DISTINCT h.engineer_id ORDER BY h.engineer_id)
+                FILTER (WHERE h.engineer_id IS NOT NULL), '{}'::text[]) AS engineers,
        ARRAY(SELECT DISTINCT o.team_id FROM engineer_orbits o
               JOIN holders x ON x.engineer_id = o.engineer_id
               WHERE x.skill_id = s.skill_id ORDER BY 1)         AS teams,
        ARRAY(SELECT DISTINCT r.canonical_name FROM holders x
               JOIN roles r ON r.role_id = x.role_id
               WHERE x.skill_id = s.skill_id ORDER BY 1)         AS roles,
-       COALESCE((SELECT SUM(d.demand_hh) FROM role_demand d
-                  WHERE d.role_id IN (SELECT x.role_id FROM holders x
-                                       WHERE x.skill_id = s.skill_id)), 0) AS roles_demand_hh,
-       COALESCE(BOOL_OR(rd.demand_hh > 0), FALSE)               AS in_demand,
+       (COALESCE(ex.demand_hh, 0) + COALESCE(px.demand_hh, 0)) AS roles_demand_hh,
+       (COALESCE(ex.demand_hh, 0) > 0 OR COALESCE(px.demand_hh, 0) > 0) AS in_demand,
        (COUNT(DISTINCT h.engineer_id) = 1 AND MAX(h.role_n) = 1) AS sole_in_role,
        CASE
-         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND MAX(h.role_n) = 1
-              THEN 'критично: работу не подхватит никто'
+         WHEN COUNT(DISTINCT h.engineer_id) = 0 AND COALESCE(ex.demand_hh, 0) > 0
+              THEN 'нет носителей требуемого навыка'
+         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND COALESCE(ex.demand_hh, 0) > 0
+              THEN 'критично: требуемый навык у одного'
+         WHEN COUNT(DISTINCT h.engineer_id) = 1 AND COALESCE(px.demand_hh, 0) > 0
+              THEN 'предварительно: один носитель роли'
          WHEN COUNT(DISTINCT h.engineer_id) = 1 THEN 'единственный носитель'
          WHEN COUNT(DISTINCT h.engineer_id) = 2 THEN 'два носителя'
-         ELSE 'ок' END                                          AS risk
+         ELSE 'ок' END                                          AS risk,
+       (COUNT(DISTINCT h.engineer_id) = 1
+        AND (COALESCE(ex.demand_hh, 0) > 0 OR COALESCE(px.demand_hh, 0) > 0)) AS critical,
+       CASE WHEN COALESCE(ex.demand_hh, 0) > 0 AND COALESCE(px.demand_hh, 0) > 0
+                 THEN 'mixed'
+            WHEN COALESCE(ex.demand_hh, 0) > 0 THEN 'confirmed'
+            WHEN COALESCE(px.demand_hh, 0) > 0 THEN 'role_proxy'
+            ELSE 'none' END AS demand_source
 FROM skills s
-JOIN holders h ON h.skill_id = s.skill_id
-LEFT JOIN role_demand rd ON rd.role_id = h.role_id
-GROUP BY s.skill_id, s.name;
+LEFT JOIN holders h ON h.skill_id = s.skill_id
+LEFT JOIN exact_demand ex ON ex.skill_id = s.skill_id
+LEFT JOIN proxy_demand px ON px.skill_id = s.skill_id
+GROUP BY s.skill_id, s.name, ex.demand_hh, px.demand_hh;
 COMMENT ON VIEW v_bus_factor_skill IS
  'Bus Factor по компетенциям (ТЗ): число инженеров, заявивших навык. Градация риска: '
- '«критично» — единственный носитель, который ещё и единственный специалист своей роли '
- '(выпал — работу не подхватит никто, замещения ролей запрещены); «единственный носитель» — '
- 'навык у одного, но роль есть у других. in_demand — роль носителя нужна живому бэклогу. '
+ '«критично» — единственный носитель требуемого навыка, независимо от числа коллег по роли. '
+ 'demand_source=confirmed — ручная разметка задач; role_proxy — приблизительная оценка '
+ 'по роли на непроверенном бэклоге; mixed — оба источника. '
  'Покрытие ролей (роли без людей в штате) — отдельно: v_bus_factor, v_role_coverage_org.';
 
 -- --------------------------------------------------------------------
@@ -400,11 +574,45 @@ CREATE VIEW v_engineer_absence_risk AS
 WITH role_n AS (
     SELECT role_id, COUNT(*)::int AS n FROM engineers GROUP BY role_id
 ), uniq AS (
-    SELECT UNNEST(engineers) AS engineer_id, skill_name, sole_in_role AS critical
+    SELECT UNNEST(engineers) AS engineer_id, skill_name, critical
     FROM v_bus_factor_skill WHERE bus_factor = 1
 ), asg AS (
     SELECT run_id, engineer_id, task_id, SUM(hours) AS hours
     FROM plan_assignments GROUP BY run_id, engineer_id, task_id
+), assigned AS (
+    SELECT run_id, task_id, engineer_id, role_id, sprint_no, SUM(hours) AS hours
+    FROM plan_assignments GROUP BY run_id, task_id, engineer_id, role_id, sprint_no
+), busy AS (
+    SELECT run_id, engineer_id, sprint_no, SUM(hours) AS hours
+    FROM plan_assignments GROUP BY run_id, engineer_id, sprint_no
+), backup AS (
+    SELECT a.*,
+           EXISTS (SELECT 1 FROM task_role_skill_reviews review
+                   WHERE review.task_id = a.task_id AND review.role_id = a.role_id
+                     AND review.status = 'confirmed') AS stack_confirmed,
+           EXISTS (
+               SELECT 1 FROM engineers alternate
+               JOIN plan_runs run ON run.run_id = a.run_id
+               JOIN pi_periods p ON p.pi_id = run.pi_id
+               JOIN v_sprint_fund_factor f ON f.pi_id = p.pi_id AND f.sprint_no = a.sprint_no
+               LEFT JOIN busy occupied ON occupied.run_id = a.run_id
+                   AND occupied.engineer_id = alternate.engineer_id
+                   AND occupied.sprint_no = a.sprint_no
+               WHERE alternate.engineer_id <> a.engineer_id
+                 AND alternate.role_id = a.role_id
+                 AND alternate.total_capacity_rate * p.fte_hours_per_sprint * f.factor
+                     - COALESCE(occupied.hours, 0) >= a.hours
+                 AND NOT EXISTS (
+                     SELECT 1 FROM task_role_skill_requirements requirement
+                     LEFT JOIN engineer_skills known
+                       ON known.engineer_id = alternate.engineer_id
+                      AND known.skill_id = requirement.skill_id
+                     WHERE requirement.task_id = a.task_id
+                       AND requirement.role_id = a.role_id
+                       AND known.skill_id IS NULL
+                 )
+           ) AS has_capacity_and_skills
+    FROM assigned a
 )
 SELECT r.run_id, e.engineer_id, ro.canonical_name AS role_name, e.grade,
        e.total_capacity_rate,
@@ -419,26 +627,37 @@ SELECT r.run_id, e.engineer_id, ro.canonical_name AS role_name, e.grade,
                   WHERE a.run_id = r.run_id AND a.engineer_id = e.engineer_id), 0) AS planned_hours,
        ARRAY(SELECT a.task_id FROM asg a
               WHERE a.run_id = r.run_id AND a.engineer_id = e.engineer_id ORDER BY 1) AS planned_tasks,
-       CASE WHEN rn.n = 1 THEN ARRAY(SELECT a.task_id FROM asg a
-              WHERE a.run_id = r.run_id AND a.engineer_id = e.engineer_id ORDER BY 1)
-            ELSE '{}'::text[] END                                        AS tasks_without_backup,
-       CASE WHEN rn.n = 1 THEN COALESCE((SELECT SUM(a.hours) FROM asg a
-              WHERE a.run_id = r.run_id AND a.engineer_id = e.engineer_id), 0)
-            ELSE 0 END                                                   AS hours_without_backup,
-       CASE WHEN rn.n = 1 AND EXISTS (SELECT 1 FROM asg a
-                   WHERE a.run_id = r.run_id AND a.engineer_id = e.engineer_id)
-                 THEN 'критично: работы встанут'
+       ARRAY(SELECT DISTINCT b.task_id FROM backup b
+             WHERE b.run_id = r.run_id AND b.engineer_id = e.engineer_id
+               AND b.stack_confirmed AND NOT b.has_capacity_and_skills ORDER BY 1)
+                                                                        AS tasks_without_backup,
+       COALESCE((SELECT SUM(b.hours) FROM backup b
+                 WHERE b.run_id = r.run_id AND b.engineer_id = e.engineer_id
+                   AND b.stack_confirmed AND NOT b.has_capacity_and_skills), 0)
+                                                                        AS hours_without_backup,
+       CASE WHEN EXISTS (SELECT 1 FROM backup b
+                   WHERE b.run_id = r.run_id AND b.engineer_id = e.engineer_id
+                     AND b.stack_confirmed AND NOT b.has_capacity_and_skills)
+                 THEN 'нет прямой замены по фонду и стеку'
+            WHEN EXISTS (SELECT 1 FROM backup b
+                   WHERE b.run_id = r.run_id AND b.engineer_id = e.engineer_id
+                     AND NOT b.stack_confirmed)
+                 THEN 'замена не подтверждена'
             WHEN rn.n = 1 THEN 'единственный по роли'
             WHEN EXISTS (SELECT 1 FROM uniq u WHERE u.engineer_id = e.engineer_id AND u.critical)
                  THEN 'единственный носитель компетенций'
-            ELSE 'ок' END                                                AS risk
+            ELSE 'ок' END                                                AS risk,
+       ARRAY(SELECT DISTINCT b.task_id FROM backup b
+             WHERE b.run_id = r.run_id AND b.engineer_id = e.engineer_id
+               AND NOT b.stack_confirmed ORDER BY 1) AS tasks_backup_unverified
 FROM plan_runs r
 CROSS JOIN engineers e
 JOIN roles ro  ON ro.role_id = e.role_id
 JOIN role_n rn ON rn.role_id = e.role_id;
 COMMENT ON VIEW v_engineer_absence_risk IS
- 'Профиль инженера + «что будет, если он выпадет» в данном прогоне. Замещения ролей '
- 'запрещены организаторами (ADR-010), поэтому замена = другой инженер той же роли.';
+ 'Профиль инженера и проверка альтернативы по подтверждённому стеку и свободному '
+ 'фонду того же спринта. Для непроверенных требований выводится отдельное состояние. '
+ 'Полный сценарий с перестроением плана отдаёт /api/scenarios/absence.';
 
 -- --------------------------------------------------------------------
 --  Профиль команды: состав, роли, дыры, компетенции, ёмкость, бэклог.
@@ -486,113 +705,304 @@ COMMENT ON VIEW v_team_profile IS
 --  cause: completed | own_slip (сама не закрылась к отчётному спринту) |
 --  dependency (сдвинулась блокирующая) | capacity (ресурсы перераспределены)
 -- --------------------------------------------------------------------
+CREATE VIEW v_plan_role_demand_snapshot AS
+SELECT d.run_id, d.task_id, d.role_id, r.canonical_name AS role_name,
+       d.needed_hours
+FROM plan_role_demand_snapshot d
+JOIN roles r ON r.role_id = d.role_id;
+
+-- SP are a team throughput budget, not a conversion from engineer hours.
+-- Keep both streams visible for every sprint in a task's planned window.
+CREATE VIEW v_plan_task_progress AS
+WITH activity AS (
+    SELECT run_id, task_id, sprint_no, SUM(hours) AS assigned_hours,
+           SUM(work_hours) AS work_hours, 0::numeric AS sp
+    FROM plan_assignments GROUP BY run_id, task_id, sprint_no
+    UNION ALL
+    SELECT run_id, task_id, sprint_no, 0::numeric, 0::numeric, SUM(sp)
+    FROM plan_task_sp GROUP BY run_id, task_id, sprint_no
+)
+SELECT run_id, task_id, sprint_no, SUM(assigned_hours) AS assigned_hours,
+       SUM(work_hours) AS work_hours, SUM(sp) AS sp,
+       CASE WHEN SUM(assigned_hours) > 0 AND SUM(sp) > 0 THEN 'both'
+            WHEN SUM(sp) > 0 THEN 'team_sp_only'
+            ELSE 'engineer_hours_only' END AS progress_basis
+FROM activity GROUP BY run_id, task_id, sprint_no;
+
+-- Goal proposal and business acceptance are different fields. A planner
+-- cancellation remains only a recommendation until a customer confirmation.
+CREATE VIEW v_plan_goal_outcome AS
+WITH resolved AS (
+    SELECT r.run_id, st.task_id, t.prodf_id, st.status, s.decision,
+           t.result_planned, t.result_customer, t.result_executor,
+           m.proposal_action,
+           CASE WHEN m.proposal_action = 'pursue_goal'
+                THEN COALESCE(t.result_executor, t.result_customer, t.result_planned)
+                ELSE m.fallback_result_code END AS proposed_goal_code,
+           COALESCE(c.closure_code, CASE WHEN st.status = 'Done' THEN t.result_final END)
+               AS confirmed_closure_code,
+           COALESCE(c.goal_code, CASE WHEN st.status = 'Done' AND t.result_final = 'ACHIEVED'
+                THEN COALESCE(t.result_customer, t.result_executor, t.result_planned) END)
+               AS confirmed_goal_code,
+           CASE WHEN c.confirmation_id IS NOT NULL THEN 'user'
+                WHEN st.status = 'Done' AND t.result_final IS NOT NULL THEN 'dataset'
+                ELSE NULL END AS confirmation_source
+    FROM plan_runs r
+    JOIN task_state st ON st.run_id = r.run_id
+    JOIN tasks t ON t.task_id = st.task_id
+    LEFT JOIN plan_task_schedule s ON s.run_id = r.run_id AND s.task_id = st.task_id
+    LEFT JOIN plan_decision_goal_map m ON m.decision = s.decision
+    LEFT JOIN LATERAL (
+        SELECT c.confirmation_id, c.goal_code, c.closure_code
+        FROM task_goal_confirmations c
+        WHERE c.task_id = st.task_id AND c.confirmed_at <= r.created_at
+        ORDER BY c.confirmed_at DESC, c.confirmation_id DESC LIMIT 1
+    ) c ON TRUE
+)
+SELECT x.*, requested.label AS requested_goal_label,
+       proposed.label AS proposed_goal_label,
+       confirmed.label AS confirmed_goal_label,
+       closure.label AS confirmed_closure_label,
+       CASE WHEN x.confirmed_closure_code = 'ACHIEVED' THEN 'confirmed_achieved'
+            WHEN x.confirmed_closure_code = 'CANCELLED_BY_CUSTOMER' THEN 'customer_cancelled'
+            WHEN x.confirmed_closure_code = 'NOT_ACHIEVED' THEN 'confirmed_not_achieved'
+            WHEN x.status = 'Done' THEN 'unconfirmed_done'
+            ELSE 'pending' END AS confirmation_state,
+       CASE WHEN COALESCE(x.result_executor, x.result_customer, x.result_planned) ~ '^R[1-6]$'
+            THEN substring(COALESCE(x.result_executor, x.result_customer, x.result_planned) FROM 2)::int END AS target_goal_rank,
+       CASE WHEN x.confirmed_goal_code ~ '^R[1-6]$'
+            THEN substring(x.confirmed_goal_code FROM 2)::int END AS confirmed_goal_rank
+FROM resolved x
+LEFT JOIN ref_result_options requested ON requested.code = COALESCE(x.result_executor, x.result_customer, x.result_planned)
+LEFT JOIN ref_result_options proposed ON proposed.code = x.proposed_goal_code
+LEFT JOIN ref_result_options confirmed ON confirmed.code = x.confirmed_goal_code
+LEFT JOIN ref_closure_results closure ON closure.code = x.confirmed_closure_code;
+
+CREATE VIEW v_initiative_goal_progress AS
+SELECT run_id, prodf_id, COUNT(*) AS task_count,
+       COUNT(*) FILTER (WHERE target_goal_rank IS NOT NULL) AS target_task_count,
+       COUNT(*) FILTER (WHERE target_goal_rank IS NOT NULL
+           AND confirmation_state = 'confirmed_achieved'
+           AND confirmed_goal_rank >= target_goal_rank) AS confirmed_target_count,
+       COUNT(*) FILTER (WHERE proposal_action = 'pursue_goal') AS proposed_in_pi_count,
+       MAX(target_goal_rank) AS highest_requested_stage,
+       CASE WHEN COUNT(*) FILTER (WHERE target_goal_rank IS NOT NULL) = 0 THEN 'goal_unknown'
+            WHEN COUNT(*) FILTER (WHERE target_goal_rank IS NOT NULL
+                 AND confirmation_state = 'confirmed_achieved'
+                 AND confirmed_goal_rank >= target_goal_rank)
+                 = COUNT(*) FILTER (WHERE target_goal_rank IS NOT NULL) THEN 'confirmed_achieved'
+            WHEN COUNT(*) FILTER (WHERE proposal_action = 'pursue_goal'
+                 OR confirmation_state = 'confirmed_achieved') = COUNT(*) THEN 'forecast_in_pi'
+            ELSE 'at_risk' END AS quarter_goal_status
+FROM v_plan_goal_outcome
+GROUP BY run_id, prodf_id;
+
 CREATE VIEW v_plan_diff AS
 WITH pairs AS (
     SELECT r.run_id, r.as_of_sprint, r.actuals_upload_id,
            (SELECT u.sprint_no FROM actual_uploads u
-             WHERE u.upload_id = r.actuals_upload_id)                         AS reported_sprint,
+             WHERE u.upload_id = r.actuals_upload_id) AS reported_sprint,
            (SELECT MAX(p.run_id) FROM plan_runs p
-             WHERE p.run_id < r.run_id AND p.status = 'ok')                   AS prev_run_id
+             WHERE p.run_id < r.run_id AND p.pi_id = r.pi_id
+               AND p.status IN ('ok', 'infeasible')
+               AND p.algorithm = r.algorithm
+               AND p.params->>'dependency_mode' IS NOT DISTINCT FROM r.params->>'dependency_mode'
+               AND p.params->>'initiative_mode' IS NOT DISTINCT FROM r.params->>'initiative_mode'
+           ) AS prev_run_id
     FROM plan_runs r
 ), base AS (
     SELECT pr.run_id, pr.prev_run_id, pr.reported_sprint, t.task_id, t.prodf_id, t.team_id,
            p.decision AS prev_decision, p.start_sprint AS prev_start, p.end_sprint AS prev_end,
-           c.decision AS new_decision,  c.start_sprint AS new_start,  c.end_sprint AS new_end,
-           ts.status  AS status_at_run,
-           CASE
-             WHEN c.task_id IS NULL AND ts.status = 'Done'                     THEN 'completed'
-             WHEN p.decision = 'in_quarter' AND c.decision <> 'in_quarter'     THEN 'newly_deferred'
-             WHEN p.decision <> 'in_quarter' AND c.decision = 'in_quarter'     THEN 'newly_planned'
-             WHEN p.decision IS NULL AND c.decision IS NOT NULL                THEN 'newly_planned'
-             WHEN c.decision = 'in_quarter' AND c.end_sprint > p.end_sprint    THEN 'shifted_later'
-             WHEN c.decision = 'in_quarter' AND c.end_sprint < p.end_sprint    THEN 'shifted_earlier'
-             ELSE 'unchanged' END AS change_type
+           c.decision AS new_decision, c.start_sprint AS new_start, c.end_sprint AS new_end,
+           ts.status AS status_at_run,
+           jsonb_build_array(p.reason_code, p.reason_text, p.reason_details) AS prev_reason,
+           jsonb_build_array(c.reason_code, c.reason_text, c.reason_details) AS new_reason,
+           COALESCE((SELECT jsonb_agg(jsonb_build_array(a.sprint_no, a.engineer_id,
+                        a.role_id, a.home_team_id, a.serving_team_id, a.hours, a.work_hours)
+                        ORDER BY a.sprint_no, a.engineer_id, a.role_id, a.home_team_id, a.serving_team_id)
+                     FROM plan_assignments a WHERE a.run_id = pr.prev_run_id
+                       AND a.task_id = t.task_id), '[]'::jsonb) AS prev_assignments,
+           COALESCE((SELECT jsonb_agg(jsonb_build_array(a.sprint_no, a.engineer_id,
+                        a.role_id, a.home_team_id, a.serving_team_id, a.hours, a.work_hours)
+                        ORDER BY a.sprint_no, a.engineer_id, a.role_id, a.home_team_id, a.serving_team_id)
+                     FROM plan_assignments a WHERE a.run_id = pr.run_id
+                       AND a.task_id = t.task_id), '[]'::jsonb) AS new_assignments,
+           COALESCE((SELECT jsonb_agg(jsonb_build_array(x.sprint_no, x.sp)
+                        ORDER BY x.sprint_no)
+                     FROM plan_task_sp x WHERE x.run_id = pr.prev_run_id
+                       AND x.task_id = t.task_id), '[]'::jsonb) AS prev_sp,
+           COALESCE((SELECT jsonb_agg(jsonb_build_array(x.sprint_no, x.sp)
+                        ORDER BY x.sprint_no)
+                     FROM plan_task_sp x WHERE x.run_id = pr.run_id
+                       AND x.task_id = t.task_id), '[]'::jsonb) AS new_sp
     FROM pairs pr
     JOIN tasks t ON TRUE
     LEFT JOIN plan_task_schedule p ON p.run_id = pr.prev_run_id AND p.task_id = t.task_id
-    LEFT JOIN plan_task_schedule c ON c.run_id = pr.run_id      AND c.task_id = t.task_id
-    LEFT JOIN task_state ts        ON ts.run_id = pr.run_id     AND ts.task_id = t.task_id
+    LEFT JOIN plan_task_schedule c ON c.run_id = pr.run_id AND c.task_id = t.task_id
+    LEFT JOIN task_state ts ON ts.run_id = pr.run_id AND ts.task_id = t.task_id
     WHERE pr.prev_run_id IS NOT NULL
       AND (p.task_id IS NOT NULL OR c.task_id IS NOT NULL)
+), classified AS (
+    SELECT b.*,
+           (b.prev_start IS DISTINCT FROM b.new_start) AS start_changed,
+           (b.prev_assignments IS DISTINCT FROM b.new_assignments) AS assignment_changed,
+           (b.prev_sp IS DISTINCT FROM b.new_sp) AS sp_changed,
+           (b.prev_reason IS DISTINCT FROM b.new_reason) AS reason_changed,
+           CASE
+             WHEN b.new_decision IS NULL AND b.status_at_run = 'Done' THEN 'completed'
+             WHEN b.prev_decision IS NULL AND b.new_decision IS NOT NULL THEN 'newly_planned'
+             WHEN b.new_decision = 'cancelled' AND b.prev_decision IS DISTINCT FROM 'cancelled' THEN 'newly_cancelled'
+             WHEN b.prev_decision = 'in_quarter' AND b.new_decision <> 'in_quarter' THEN 'newly_deferred'
+             WHEN b.prev_decision <> 'in_quarter' AND b.new_decision = 'in_quarter' THEN 'newly_planned'
+             WHEN b.prev_decision IS DISTINCT FROM b.new_decision THEN 'decision_changed'
+             WHEN b.new_end > b.prev_end THEN 'shifted_later'
+             WHEN b.new_end < b.prev_end THEN 'shifted_earlier'
+             WHEN b.prev_start IS DISTINCT FROM b.new_start THEN 'start_changed'
+             WHEN b.prev_assignments IS DISTINCT FROM b.new_assignments THEN 'assignment_changed'
+             WHEN b.prev_sp IS DISTINCT FROM b.new_sp THEN 'sp_changed'
+             WHEN b.prev_reason IS DISTINCT FROM b.new_reason THEN 'reason_changed'
+             ELSE 'unchanged'
+           END AS change_type
+    FROM base b
+), caused AS (
+    SELECT c.*,
+           CASE
+             WHEN c.change_type = 'completed' THEN 'completed'
+             WHEN c.change_type = 'unchanged' THEN NULL
+             WHEN c.reported_sprint IS NOT NULL AND c.prev_decision = 'in_quarter'
+                  AND c.prev_end <= c.reported_sprint AND c.status_at_run <> 'Done'
+                  AND c.change_type IN ('shifted_later', 'newly_deferred', 'newly_cancelled')
+               THEN 'own_slip'
+             WHEN c.change_type IN ('shifted_later', 'newly_deferred', 'newly_cancelled')
+                  AND EXISTS (SELECT 1 FROM task_dependencies d JOIN classified blocker
+                    ON blocker.run_id = c.run_id AND blocker.task_id = d.blocking_task_id
+                    WHERE d.blocked_task_id = c.task_id
+                      AND blocker.change_type IN ('shifted_later', 'newly_deferred', 'newly_cancelled'))
+               THEN 'dependency'
+             ELSE 'unknown'
+           END AS cause
+    FROM classified c
 )
-SELECT b.*,
+SELECT b.run_id, b.prev_run_id, b.reported_sprint, b.task_id, b.prodf_id, b.team_id,
+       b.prev_decision, b.prev_start, b.prev_end,
+       b.new_decision, b.new_start, b.new_end, b.status_at_run, b.change_type,
+       b.cause,
        CASE
-         WHEN b.change_type = 'completed' THEN 'completed'
-         WHEN b.change_type IN ('unchanged','shifted_earlier','newly_planned') THEN NULL
-         WHEN b.reported_sprint IS NOT NULL AND b.prev_decision = 'in_quarter'
-              AND b.prev_end <= b.reported_sprint AND b.status_at_run <> 'Done' THEN 'own_slip'
-         -- задача шла через закрытый спринт и по плану должна была продолжаться:
-         -- это не отклонение, а перенос остатка на следующий спринт
-         WHEN b.reported_sprint IS NOT NULL AND b.prev_decision = 'in_quarter'
-              AND b.prev_start <= b.reported_sprint AND b.prev_end > b.reported_sprint
-              THEN 'carry_over'
-         WHEN EXISTS (SELECT 1 FROM task_dependencies d JOIN base bb
-                        ON bb.run_id = b.run_id AND bb.task_id = d.blocking_task_id
-                       WHERE d.blocked_task_id = b.task_id
-                         AND bb.change_type IN ('shifted_later','newly_deferred')) THEN 'dependency'
-         ELSE 'capacity' END AS cause,
-       CASE
-         WHEN b.change_type = 'completed' THEN 'выполнена по факту'
-         WHEN b.change_type = 'unchanged' THEN NULL
-         WHEN b.change_type = 'newly_planned'   THEN 'освободился ресурс — задача вошла в квартал'
-         WHEN b.change_type = 'shifted_earlier' THEN 'сдвинулась раньше: освободились часы или ёмкость'
-         WHEN b.reported_sprint IS NOT NULL AND b.prev_decision = 'in_quarter'
-              AND b.prev_end <= b.reported_sprint AND b.status_at_run <> 'Done'
-              THEN 'не закрыта к концу спринта ' || b.reported_sprint || ' — остаток переносится дальше'
-         WHEN b.reported_sprint IS NOT NULL AND b.prev_decision = 'in_quarter'
-              AND b.prev_start <= b.reported_sprint AND b.prev_end > b.reported_sprint
-              THEN 'работа продолжается: спринт ' || b.reported_sprint
-                   || ' закрыт, остаток запланирован дальше'
-         WHEN EXISTS (SELECT 1 FROM task_dependencies d JOIN base bb
-                        ON bb.run_id = b.run_id AND bb.task_id = d.blocking_task_id
-                       WHERE d.blocked_task_id = b.task_id
-                         AND bb.change_type IN ('shifted_later','newly_deferred'))
-              THEN 'сдвинулась блокирующая задача ' || (SELECT string_agg(d.blocking_task_id, ', ')
-                     FROM task_dependencies d WHERE d.blocked_task_id = b.task_id)
-         ELSE 'ёмкость и часы заняты задачами, перешедшими из закрытых спринтов' END AS explanation
-FROM base b;
+         WHEN b.cause = 'completed' THEN 'выполнена по факту'
+         WHEN b.cause = 'own_slip' THEN 'не закрыта к концу спринта ' || b.reported_sprint
+         WHEN b.cause = 'dependency' THEN 'сдвинулась блокирующая задача ' || (
+             SELECT string_agg(d.blocking_task_id, ', ' ORDER BY d.blocking_task_id)
+             FROM task_dependencies d JOIN classified blocker
+               ON blocker.run_id = b.run_id AND blocker.task_id = d.blocking_task_id
+             WHERE d.blocked_task_id = b.task_id
+               AND blocker.change_type IN ('shifted_later', 'newly_deferred', 'newly_cancelled'))
+         WHEN b.cause IS NULL THEN NULL
+         ELSE 'изменение плана; причина не установлена'
+       END AS explanation,
+       b.start_changed, b.assignment_changed, b.sp_changed, b.reason_changed
+FROM caused b;
 COMMENT ON VIEW v_plan_diff IS
- 'Сравнение прогона с предыдущим: что изменилось (change_type) и почему (cause, explanation). '
- 'Ответ на требование ТЗ «какие отклонения вызвали изменения».';
+ 'Сравнение с предыдущим опубликованным прогоном того же сценария. Причина указывается '
+ 'только когда подтверждена фактом или сдвигом блокирующей; иначе unknown.';
 
 -- --------------------------------------------------------------------
 --  Отклонения факта спринта от плана, действовавшего в этом спринте.
 -- --------------------------------------------------------------------
 CREATE VIEW v_sprint_deviation AS
-WITH plan_in_force AS (
-    SELECT u.upload_id, u.sprint_no,
-           (SELECT MAX(r.run_id) FROM plan_runs r
-             WHERE r.status = 'ok' AND r.as_of_sprint <= u.sprint_no
-               AND (r.actuals_upload_id IS NULL OR r.actuals_upload_id IN
-                    (SELECT x.upload_id FROM actual_uploads x WHERE x.sprint_no < u.sprint_no))
-           ) AS run_id
+WITH report_items AS (
+    SELECT u.upload_id, u.pi_id, u.sprint_no, u.plan_run_id, ids.task_id
     FROM actual_uploads u
+    CROSS JOIN LATERAL (
+        SELECT s.task_id FROM plan_task_schedule s
+        WHERE s.run_id = u.plan_run_id AND s.decision = 'in_quarter'
+          AND s.start_sprint <= u.sprint_no
+        UNION
+        SELECT a.task_id FROM task_actuals a WHERE a.upload_id = u.upload_id
+    ) ids
+    WHERE u.coverage_status = 'complete'
 )
-SELECT f.upload_id, f.sprint_no, f.run_id AS plan_run_id, s.task_id, t.team_id, t.estimation_sp,
+SELECT f.upload_id, f.sprint_no, f.plan_run_id, f.task_id, t.team_id, t.estimation_sp,
        s.start_sprint AS planned_start, s.end_sprint AS planned_end,
        a.status       AS reported_status,
        COALESCE((SELECT SUM(x.hours) FROM plan_assignments x
-                  WHERE x.run_id = f.run_id AND x.task_id = s.task_id
+                  WHERE x.run_id = f.plan_run_id AND x.task_id = f.task_id
                     AND x.sprint_no = f.sprint_no), 0)                    AS planned_hours,
        COALESCE((SELECT SUM(x.hours) FROM task_actual_spent x
-                  WHERE x.upload_id = f.upload_id AND x.task_id = s.task_id), 0) AS spent_hours,
+                  WHERE x.upload_id = f.upload_id AND x.task_id = f.task_id), 0) AS spent_hours,
        CASE
-         WHEN a.status = 'Done' AND s.end_sprint =  f.sprint_no THEN 'в срок'
-         WHEN a.status = 'Done' AND (s.end_sprint > f.sprint_no OR s.decision <> 'in_quarter')
-              THEN 'раньше плана'
-         WHEN s.decision = 'in_quarter' AND s.end_sprint <= f.sprint_no
-              AND COALESCE(a.status, t.status) <> 'Done' THEN 'не закрыта в срок'
-         WHEN s.decision = 'in_quarter' AND s.start_sprint <= f.sprint_no
-              AND a.task_id IS NULL THEN 'нет данных по задаче'
+         WHEN s.task_id IS NULL THEN 'вне плана'
+         WHEN h.status = 'Done' AND completion.sprint_no > s.end_sprint
+              THEN 'завершена с опозданием'
+         WHEN h.status = 'Done' AND completion.sprint_no = s.end_sprint THEN 'в срок'
+         WHEN h.status = 'Done' AND completion.sprint_no < s.end_sprint THEN 'раньше плана'
+         WHEN s.end_sprint <= f.sprint_no AND COALESCE(h.status, seed.status) <> 'Done'
+              THEN 'не закрыта в срок'
+         WHEN a.task_id IS NULL THEN 'нет данных по задаче'
          ELSE 'по плану' END                                              AS deviation
-FROM plan_in_force f
-JOIN plan_task_schedule s ON s.run_id = f.run_id
-JOIN tasks t ON t.task_id = s.task_id
-LEFT JOIN task_actuals a ON a.upload_id = f.upload_id AND a.task_id = s.task_id
-WHERE s.decision = 'in_quarter' AND s.start_sprint <= f.sprint_no
-   OR a.task_id IS NOT NULL;
+FROM report_items f
+JOIN tasks t ON t.task_id = f.task_id
+LEFT JOIN tasks_seed_state seed ON seed.task_id = f.task_id
+LEFT JOIN plan_task_schedule s ON s.run_id = f.plan_run_id AND s.task_id = f.task_id
+    AND s.decision = 'in_quarter' AND s.start_sprint <= f.sprint_no
+LEFT JOIN task_actuals a ON a.upload_id = f.upload_id AND a.task_id = f.task_id
+LEFT JOIN LATERAL (
+    SELECT prior.status FROM task_actuals prior
+    JOIN actual_uploads u ON u.upload_id = prior.upload_id
+    WHERE prior.task_id = f.task_id AND u.pi_id = f.pi_id AND u.sprint_no <= f.sprint_no
+    ORDER BY u.sprint_no DESC LIMIT 1
+) h ON TRUE
+LEFT JOIN LATERAL (
+    SELECT COALESCE(
+        (SELECT sp.sprint_no FROM sprints sp
+         WHERE sp.pi_id = f.pi_id AND done.actual_end BETWEEN sp.start_date AND sp.end_date
+         LIMIT 1), first_done.sprint_no
+    ) AS sprint_no
+    FROM (
+        SELECT u.sprint_no FROM task_actuals prior
+        JOIN actual_uploads u ON u.upload_id = prior.upload_id
+        WHERE prior.task_id = f.task_id AND u.pi_id = f.pi_id
+          AND u.sprint_no <= f.sprint_no AND prior.status = 'Done'
+        ORDER BY u.sprint_no LIMIT 1
+    ) first_done
+    LEFT JOIN LATERAL (
+        SELECT prior.actual_end FROM task_actuals prior
+        JOIN actual_uploads u ON u.upload_id = prior.upload_id
+        WHERE prior.task_id = f.task_id AND u.pi_id = f.pi_id
+          AND u.sprint_no <= f.sprint_no AND prior.actual_end IS NOT NULL
+        ORDER BY u.sprint_no DESC LIMIT 1
+    ) done ON TRUE
+) completion ON TRUE;
 COMMENT ON VIEW v_sprint_deviation IS
- 'По каждой загрузке факта: задачи, которые план держал в этом спринте, и что с ними на деле. '
- '«не закрыта в срок» — источник жёлтых и красных алертов следующего пересчёта.';
+ 'Факт и план на момент загрузки: план закреплён в actual_uploads, статус берётся из истории до спринта. '
+ 'Включает внеплановые задачи и позднее завершение.';
+
+-- --------------------------------------------------------------------
+--  Точность прогона «выполнение плана спринта» (DA-32): что план обещал ПЕРЕД спринтом и что
+--  получилось. Прогноз берётся из последнего прогона, действовавшего на старте спринта
+--  (as_of_sprint <= спринта, построенного на факте строго предыдущих спринтов).
+-- --------------------------------------------------------------------
+CREATE VIEW v_sprint_forecast_accuracy AS
+SELECT a.run_id, a.sprint_no,
+       (a.details->>'planned_sp')::numeric   AS planned_sp,
+       f.run_id                              AS forecast_run_id,
+       (f.details->>'done_sp')::numeric      AS forecast_done_sp,
+       (a.details->>'done_sp')::numeric      AS actual_done_sp,
+       f.value                               AS forecast_value,
+       a.value                               AS actual_value
+FROM kpi_snapshots a
+LEFT JOIN LATERAL (
+    SELECT k.run_id, k.details, k.value
+    FROM kpi_snapshots k
+    JOIN plan_runs p ON p.run_id = k.run_id
+    WHERE k.kpi_code = 'say_do_ratio' AND k.kind = 'forecast' AND k.sprint_no = a.sprint_no
+      AND p.status IN ('ok', 'infeasible') AND p.run_id < a.run_id AND p.as_of_sprint <= a.sprint_no
+      AND (p.actuals_upload_id IS NULL OR EXISTS (
+            SELECT 1 FROM actual_uploads u WHERE u.upload_id = p.actuals_upload_id AND u.sprint_no < a.sprint_no))
+    ORDER BY p.run_id DESC LIMIT 1
+) f ON TRUE
+WHERE a.kpi_code = 'say_do_ratio' AND a.kind = 'actual';
+COMMENT ON VIEW v_sprint_forecast_accuracy IS
+ 'По каждому закрытому спринту: прогноз, сделанный перед ним (SP к закрытию), против факта. Помогает отличить '
+ 'провал исполнения от плохого прогноза; позднее пересчёт прошлое обещание не улучшает.';
 
 COMMIT;

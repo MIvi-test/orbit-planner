@@ -1,11 +1,14 @@
 import { useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Badge, Group, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Switch, Table, Text, Title } from '@mantine/core'
-import { fmtHours, fmtSp, isNegative } from '../../api/wire'
+import { fmtHours, fmtSp, isPositive } from '../../api/wire'
 import { AsOfLabel } from '../../components/common/AsOfLabel'
 import { QueryError, anyPending, firstError } from '../../components/common/QueryError'
 import {
   useBusFactor,
   useDqSummary,
+  useDqIssues,
+  useDqIssueReviews,
   useRoleCoverageOrg,
   useRoleDeficit,
   useRoleDeficitEffective,
@@ -13,6 +16,9 @@ import {
   useTeams,
 } from '../../hooks/useViews'
 import type { RoleDeficitEffectiveRow, RoleDeficitRow } from '../../types/views'
+import { DataQualityWorkbench } from './DataQualityWorkbench'
+import { WorkforceScenarios } from './WorkforceScenarios'
+import { SkillReview } from './SkillReview'
 
 export function RolesScreen() {
   const [problemsOnly, setProblemsOnly] = useState(true)
@@ -23,13 +29,15 @@ export function RolesScreen() {
   const capacityQ = useTeamCapacitySp()
   const teamsQ = useTeams()
   const dqQ = useDqSummary()
-  const queries = [deficitQ, effectiveQ, coverageQ, busQ, capacityQ, teamsQ, dqQ]
+  const dqIssuesQ = useDqIssues()
+  const dqReviewsQ = useDqIssueReviews()
+  const queries = [deficitQ, effectiveQ, coverageQ, busQ, capacityQ, teamsQ, dqQ, dqIssuesQ, dqReviewsQ]
   const error = firstError(queries)
 
   if (anyPending(queries)) {
     return (
-      <Stack gap="md" maw={1400}>
-        <Title order={2}>Роли и ёмкость</Title>
+      <Stack gap="md">
+        <Title order={2}><L>Роли и ёмкость</L></Title>
         <Skeleton height={360} />
         <Skeleton height={260} />
       </Stack>
@@ -38,8 +46,8 @@ export function RolesScreen() {
 
   if (error) {
     return (
-      <Stack gap="md" maw={1400}>
-        <Title order={2}>Роли и ёмкость</Title>
+      <Stack gap="md">
+        <Title order={2}><L>Роли и ёмкость</L></Title>
         <QueryError error={error} title="Не удалось загрузить роли и ёмкость" />
       </Stack>
     )
@@ -47,17 +55,19 @@ export function RolesScreen() {
 
   const deficits = deficitQ.data?.items ?? []
   const effective = effectiveQ.data?.items ?? []
-  const shownDeficits = problemsOnly ? deficits.filter((row) => !isNegative(row.gap_hh)) : deficits
-  const shownEffective = problemsOnly ? effective.filter((row) => !isNegative(row.gap_hh)) : effective
+  const shownDeficits = problemsOnly ? deficits.filter((row) => isPositive(row.gap_hh)) : deficits
+  const shownEffective = problemsOnly ? effective.filter((row) => isPositive(row.gap_hh)) : effective
   const hiringNeeds = (coverageQ.data?.items ?? []).filter((row) => row.verdict.includes('НАЙМ'))
   const teamFocus = new Map((teamsQ.data?.items ?? []).map((row) => [row.team_id, row.focus_factor]))
 
   return (
-    <Stack gap="lg" maw={1400}>
+    <Stack gap="lg">
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2}>Роли и ёмкость</Title>
+          <Title order={2}><L>Роли и ёмкость</L></Title>
           <Text c="dimmed" size="sm" mt={2}>
+            Остаток работ сравнивается с фондом незакрытых спринтов. Фонд соседней команды
+            показан как возможный заём, а не как подтверждённое назначение.
             Дефицит людей, риск незаменимости и доступная командная ёмкость — отдельные срезы.
           </Text>
         </div>
@@ -86,7 +96,7 @@ export function RolesScreen() {
                     <Table.Td>{row.role_name}</Table.Td>
                     <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.demand_hh)}</Table.Td>
                     <Table.Td ta="right" className="tabular">{row.people_incl_substitution}</Table.Td>
-                    <Table.Td><Verdict text={row.verdict} problem={!isNegative(row.gap_hh)} /></Table.Td>
+                    <Table.Td><Verdict text={row.verdict} problem={isPositive(row.gap_hh)} /></Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
@@ -133,6 +143,10 @@ export function RolesScreen() {
         </ScrollArea>
       </Section>
 
+      <Section title="Сценарии изменения состава" note="Сколько задач и инициатив возвращают конкретные меры для выбранной роли и команды.">
+        <WorkforceScenarios roles={busQ.data?.items ?? []} teams={teamsQ.data?.items ?? []} />
+      </Section>
+
       <Section title="Диагностика исходных данных" note="Порядок и готовые пояснения приходят из диагностической витрины.">
         <Stack gap={0}>
           {(dqQ.data?.items ?? []).map((row) => (
@@ -148,6 +162,10 @@ export function RolesScreen() {
             </Group>
           ))}
         </Stack>
+        <DataQualityWorkbench issues={dqIssuesQ.data?.items ?? []} reviews={dqReviewsQ.data?.items ?? []} />
+      </Section>
+      <Section title="Разметка технологий" note="Подтвердите требования задачи к стеку перед проверкой назначения инженера.">
+        <SkillReview />
       </Section>
     </Stack>
   )
@@ -175,7 +193,7 @@ function DeficitFrame({ title, rows }: { title: string; rows: Array<{ team_id: s
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.demand_hh)}</Table.Td>
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.supply)}</Table.Td>
                 <Table.Td ta="right" className="mono" style={{ whiteSpace: 'nowrap' }}>{fmtHours(row.gap_hh)}</Table.Td>
-                <Table.Td><Verdict text={row.verdict} problem={!isNegative(row.gap_hh)} /></Table.Td>
+                <Table.Td><Verdict text={row.verdict} problem={isPositive(row.gap_hh)} /></Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
@@ -185,7 +203,7 @@ function DeficitFrame({ title, rows }: { title: string; rows: Array<{ team_id: s
   )
 }
 
-const SEVERITY_WORD: Record<string, string> = { error: 'ошибка', warning: 'предупреждение', info: 'справка' }
+const SEVERITY_WORD: Record<string, string> = { error: 'Ошибка', warning: 'Предупреждение', info: 'Справка' }
 
 // Вердикты длинные («НЕ ЗАКРЫТЬ НИКЕМ…»): в Badge они обрезаются, поэтому — текст с переносом.
 function Verdict({ text, problem }: { text: string; problem: boolean }) {

@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 
-from app import planner
+from app import plan_quality, planner
 
 T1, T2 = "Team-1", "Team-2"
 
@@ -67,6 +68,17 @@ def engineer(
         total_capacity_rate=Decimal(rate),
         orbits={team: Decimal(rate) / len(orbits) for team in orbits},
     )
+
+
+def test_continuing_task_keeps_previous_engineer_when_capacity_allows() -> None:
+    current = inputs(
+        [task("A", status="InProgress", roles={1: 10})],
+        [engineer("E1", rate="1.00"), engineer("E2", rate="0.50")],
+    )
+    stable = replace(current, preferred_engineers={("A", 1): frozenset({"E2"})})
+    plan = planner.build_plan(stable, simulate_next_pi=False)
+    assert {row.engineer_id for row in plan.assignments if row.task_id == "A"} == {"E2"}
+    assert plan.params["stability"]["kept_role_pairs"] == 1
 
 
 def inputs(
@@ -161,6 +173,40 @@ def test_task_fits_in_first_sprint_with_own_engineer() -> None:
     assert plan.status == "ok"
 
 
+def test_confirmed_task_skill_filters_same_role_candidates() -> None:
+    source = replace(
+        inputs([task("T-1")], [engineer("E-1"), engineer("E-2")]),
+        skill_requirements={("T-1", 1): frozenset({10})},
+        skill_reviews=frozenset({("T-1", 1)}),
+        engineer_skills={"E-1": frozenset({20}), "E-2": frozenset({10})},
+        skill_names={10: "Kafka"},
+    )
+    plan = planner.build_plan(source)
+    assert {row.engineer_id for row in plan.assignments} == {"E-2"}
+    assert plan.params["skill_validation"]["status"] == "confirmed"
+
+
+def test_missing_confirmed_skill_has_distinct_reason() -> None:
+    source = replace(
+        inputs([task("T-1")], [engineer("E-1")]),
+        skill_requirements={("T-1", 1): frozenset({10})},
+        skill_reviews=frozenset({("T-1", 1)}),
+        engineer_skills={"E-1": frozenset({20})},
+        skill_names={10: "Kafka"},
+    )
+    plan = planner.build_plan(source)
+    assert plan.schedule[0].reason_code == planner.REASON_SKILL_UNAVAILABLE
+    assert plan.schedule[0].reason_details["skill_gaps"] == [
+        {"role": "Роль 1", "skills": ["Kafka"]}
+    ]
+
+
+def test_unreviewed_task_stack_is_explicit_in_run_quality() -> None:
+    plan = planner.build_plan(inputs([task("T-1")], [engineer("E-1")]))
+    assert plan.params["skill_validation"]["status"] == "unverified"
+    assert plan.params["skill_validation"]["unreviewed"] == [{"task_id": "T-1", "role_id": 1}]
+
+
 def test_hours_stretch_across_sprints() -> None:
     plan = planner.build_plan(inputs([task("T-1", roles={1: 120})], [engineer("ENG-1")]))
 
@@ -243,9 +289,8 @@ def test_pi_fund_is_proportional_to_calendar_length() -> None:
     assert sum(a.hours for a in plan.assignments) == Decimal("525")
     assert plan.schedule[0].end_sprint == 7
 
-    # 526 ЧЧ не помещаются ни в этот квартал, ни в следующий с тем же штатом,
-    # поэтому планировщик не переносит задачу, а рекомендует пересогласовать
-    # её объём (ADR-022): перенос означал бы «в следующий раз получится».
+    # 526 ЧЧ не помещаются при тех же ресурсах; это повод пересмотреть объём,
+    # но не автоматическая рекомендация отменить бизнес-задачу.
     too_much = planner.build_plan(
         inputs(
             [task("T-1", roles={1: 526})],
@@ -254,10 +299,33 @@ def test_pi_fund_is_proportional_to_calendar_length() -> None:
             sprint_lengths={7: 8},
         )
     )
-    assert too_much.schedule[0].decision == "cancelled"
-    assert too_much.schedule[0].reason_code == planner.REASON_NOT_FEASIBLE
-    assert "ни в следующий" in too_much.schedule[0].reason_text
+    assert too_much.schedule[0].decision == "deferred_next_pi"
+    assert too_much.schedule[0].reason_details["next_pi_scenario"] == "needs_scope_or_capacity_review"
+    assert "Отдельно" in too_much.schedule[0].reason_text
     assert too_much.assignments == ()
+
+
+def test_next_pi_competition_does_not_make_a_feasible_task_cancelled() -> None:
+    source = inputs(
+        [task("A", roles={1: 80}, topo=1),
+         task("B", roles={1: 80}, topo=2),
+         task("C", roles={1: 80}, topo=3)],
+        [engineer("E")], sprint_count=1,
+    )
+    plan = planner.build_plan(source)
+    by_id = {row.task_id: row for row in plan.schedule}
+
+    assert by_id["A"].decision == "in_quarter"
+    assert by_id["B"].decision == "deferred_next_pi"
+    assert by_id["C"].decision == "deferred_next_pi"
+    assert by_id["C"].reason_details["next_pi_scenario"] == "competing_capacity"
+    assert "отдельно она помещается" in by_id["C"].reason_text
+    assert plan.params["next_pi_check"]["not_selected"] == ["C"]
+    assert by_id["B"].forecast_end_date == date(2026, 6, 28)
+    assert by_id["C"].forecast_end_date is None
+    red = {alert.entity_id: alert for alert in plan.alerts if alert.level == "red"}
+    assert red["PRODF-B"].payload["delay_days"] == 14
+    assert red["PRODF-C"].payload["forecast_end_date"] is None
 
 
 def test_calendar_lands_in_params() -> None:
@@ -330,11 +398,22 @@ def test_role_without_engineer_is_deferred_and_raises_orange() -> None:
     assert orange[0].payload["verdict"] == "НАЙМ: закрыть некем"
     assert orange[0].payload["tasks"] == ["T-1"]
     assert orange[0].payload["demand_hh"] == "40"
-
     red = [alert for alert in plan.alerts if alert.level == "red"]
     assert [alert.entity_id for alert in red] == ["PRODF-T-1"]
     assert red[0].alert_type == "deadline_miss"
 
+
+def test_orange_alert_counts_ready_work_delayed_within_pi() -> None:
+    plan = planner.build_plan(inputs(
+        [task("A", roles={1: 80}, topo=1), task("B", roles={1: 80}, topo=2)],
+        [engineer("ENG-1")],
+    ))
+    assert {row.task_id: row.start_sprint for row in plan.schedule} == {"A": 1, "B": 2}
+    orange = [alert for alert in plan.alerts if alert.level == "orange"]
+    assert len(orange) == 1
+    assert orange[0].payload["demand_hh"] == "160"
+    assert Decimal(orange[0].payload["supply_hh"]) == 80
+    assert orange[0].payload["tasks"] == ["A", "B"]
 
 def test_dependency_gap_is_kept() -> None:
     tasks = [task("A", roles={1: 80}, topo=1), task("B", roles={1: 80}, topo=2)]
@@ -378,14 +457,22 @@ def test_team_sp_capacity_pushes_the_task_to_the_next_sprint() -> None:
     assert starts_of(plan) == {"A": 1, "B": 2}
 
 
-def test_zero_remaining_task_gets_symbolic_assignment() -> None:
-    """MOB-7011 в живых данных: смета выбрана полностью, остаток 0 ЧЧ."""
+def test_zero_remaining_live_task_requires_etc_instead_of_symbolic_assignment() -> None:
+    """Исчерпанная смета не доказывает завершение незакрытой задачи."""
     plan = planner.build_plan(inputs([task("T-0", roles={1: 0})], [engineer("ENG-1")]))
 
     row = plan.schedule[0]
-    assert (row.decision, row.start_sprint, row.end_sprint) == ("in_quarter", 1, 1)
-    assert len(plan.assignments) == 1
-    assert plan.assignments[0].hours == planner.SYMBOLIC_HOURS == Decimal("0.01")
+    assert row.decision == "deferred_next_pi"
+    assert row.reason_code == planner.REASON_ETC_REQUIRED
+    assert plan.assignments == ()
+
+
+def test_explicit_etc_is_planned_even_when_spent_exceeds_original_estimate() -> None:
+    # Планировщик получает 40 ЧЧ подтверждённого ETC, а не estimate-spent=0.
+    plan = planner.build_plan(inputs([task("T-0", roles={1: 40}, status="InProgress")], [engineer("ENG-1")]))
+
+    assert plan.schedule[0].decision == "in_quarter"
+    assert sum((row.hours for row in plan.assignments), Decimal("0")) == Decimal("40")
 
 
 def test_params_validate_the_estimate_source() -> None:
@@ -449,7 +536,8 @@ def test_baseline_and_kpis_on_the_first_run() -> None:
 
     say_do = [row for row in plan.kpis if row.kpi_code == "say_do_ratio"]
     assert [row.sprint_no for row in say_do] == [1, 2, 3, 4, 5, 6]
-    assert all(row.value == Decimal("100.00") for row in say_do)
+    assert say_do[0].value == Decimal("100.00")
+    assert all(row.value is None and row.calculation_status == "no_plan" for row in say_do[1:])
     assert all(row.kind == "forecast" for row in say_do)
     assert say_do[0].target_min == Decimal("90") and say_do[0].target_max == Decimal("105")
 
@@ -484,17 +572,32 @@ def test_yellow_alert_when_a_task_with_dependents_shifts() -> None:
     deps = (("A", "B", 1), ("B", "C", 1))
     plain = inputs(tasks, [engineer("ENG-1")], deps=deps)
 
-    shifted = planner.build_plan(plain, as_of_sprint=1, baseline_starts={"B": 1})
+    shifted = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=deps,
+               baseline_schedule={"B": ("in_quarter", 2, 2), "C": ("in_quarter", 3, 3)}),
+        as_of_sprint=2, baseline_starts={"B": 2},
+    )
     yellow = [alert for alert in shifted.alerts if alert.level == "yellow"]
     assert [alert.entity_id for alert in yellow] == ["B"]
     assert yellow[0].alert_type == "cascade_shift"
-    assert yellow[0].payload["baseline_start_sprint"] == 1
-    assert yellow[0].payload["new_start_sprint"] == 2
+    assert yellow[0].payload["baseline_start_sprint"] == 2
+    assert yellow[0].payload["new_start_sprint"] == 3
     assert yellow[0].payload["dependents"] == ["C"]
+    assert yellow[0].payload["affected_dependents"][0]["delay_sprints"] == 1
 
     # Первый прогон: сравнивать не с чем — жёлтых алертов нет.
     first = planner.build_plan(plain)
     assert not [alert for alert in first.alerts if alert.level == "yellow"]
+
+
+def test_continuing_work_without_downstream_delay_is_not_a_cascade() -> None:
+    tasks = [task("A", roles={1: 160}, topo=1), task("B", roles={1: 80}, topo=2)]
+    plan = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),),
+               baseline_schedule={"A": ("in_quarter", 1, 3), "B": ("in_quarter", 4, 4)}),
+        as_of_sprint=2,
+    )
+    assert not [alert for alert in plan.alerts if alert.level == "yellow"]
 
 
 def test_say_do_ratio_compares_fact_with_the_original_promise() -> None:
@@ -543,26 +646,37 @@ def test_plan_is_deterministic() -> None:
 
 
 # ---------------------------------------------------------------------------
-#  Ревью M2 (docs/REVIEW_RESPONSE.md): зависимости, атомарность инициатив,
+#  Ревью M2: зависимости, атомарность инициатив,
 #  пересчёт, одна орбита на назначение, efficiency, кандидаты из вьюхи.
 # ---------------------------------------------------------------------------
 def test_dependency_finish_start_waits_for_the_end_of_the_blocker() -> None:
-    """ADR-013: `finish_start` — старт блокируемой после КОНЦА блокирующей.
+    """ADR-028: по умолчанию блокируемая стартует после КОНЦА блокирующей.
 
     A растянута на спринты 1..2 (120 ЧЧ при фонде 80), B зависит от A.
-    При `start_start` B влезает в спринт 2, при `finish_start` — только в 3-й.
+    При `finish_start` (умолчание) B встаёт только в 3-й, при явном `start_start` — во 2-й.
     """
     tasks = [task("A", roles={1: 120}, topo=1), task("B", roles={1: 40}, topo=2)]
     source = inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),))
 
-    start_start = planner.build_plan(source)
-    assert (start_start.schedule[0].start_sprint, start_start.schedule[0].end_sprint) == (1, 2)
+    default = planner.build_plan(source)
+    assert (default.schedule[0].start_sprint, default.schedule[0].end_sprint) == (1, 2)
+    assert starts_of(default) == {"A": 1, "B": 3}
+    assert default.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
+    assert planner.DEFAULT_DEPENDENCY_MODE == planner.DEPENDENCY_MODE_FINISH_START
+
+    start_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_START_START)
     assert starts_of(start_start) == {"A": 1, "B": 2}
     assert start_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
 
-    finish_start = planner.build_plan(source, dependency_mode=planner.DEPENDENCY_MODE_FINISH_START)
-    assert starts_of(finish_start) == {"A": 1, "B": 3}
-    assert finish_start.params["dependency_mode"] == planner.DEPENDENCY_MODE_FINISH_START
+
+def test_default_mode_never_starts_a_dependent_before_its_blocker_ends() -> None:
+    """Зависимая не завершается раньше предшественника при любых окнах (DA-09)."""
+    tasks = [task("A", roles={1: 240}, topo=1), task("B", roles={2: 40}, topo=2)]
+    source = inputs(tasks, [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),))
+
+    plan = planner.build_plan(source)
+    rows = {row.task_id: row for row in plan.schedule}
+    assert rows["B"].start_sprint > rows["A"].end_sprint
 
 
 def test_unknown_modes_are_rejected() -> None:
@@ -611,21 +725,20 @@ def test_atomic_initiatives_defer_the_whole_initiative() -> None:
     assert [(a.task_id, a.hours) for a in atomic.assignments] == [("B1", Decimal("80"))]
 
 
-def test_one_assignment_takes_hours_from_a_single_orbit() -> None:
-    """ADR-015: одна строка `plan_assignments` = одна орбита.
-
-    Парттаймер 0.5 + 0.5: бюджет орбиты — 40 ЧЧ. Задача на 80 ЧЧ получит
-    40 со своей орбиты в спринте 1 и 40 в спринте 2 — но не одной строкой.
-    """
+def test_one_engineer_can_use_two_orbits_on_one_task_in_one_sprint() -> None:
+    """Парттаймер 0.5 + 0.5 отдаёт свои 40 и заёмные 40 ЧЧ за спринт."""
     part_timer = engineer("ENG-1", orbits=(T1, T2))
     plan = planner.build_plan(inputs([task("T-1", team=T1, roles={1: 80})], [part_timer]))
 
     assert [(a.sprint_no, a.hours, a.home_team_id) for a in plan.assignments] == [
         (1, Decimal("40"), T1),
-        (2, Decimal("40"), T1),
+        (1, Decimal("40"), T2),
     ]
-    keys = [(a.task_id, a.sprint_no, a.engineer_id, a.role_id) for a in plan.assignments]
+    keys = [(a.task_id, a.sprint_no, a.engineer_id, a.role_id, a.home_team_id)
+            for a in plan.assignments]
     assert len(keys) == len(set(keys)), "ключ контракта обязан быть уникальным"
+    assert sum((a.hours for a in plan.assignments), Decimal(0)) == Decimal(80)
+    assert plan.schedule[0].end_sprint == 1
 
 
 def test_loan_comes_from_the_other_orbit_of_the_same_engineer() -> None:
@@ -654,6 +767,8 @@ def test_efficiency_multiplies_the_required_hours() -> None:
     )
 
     assert [(a.sprint_no, a.hours) for a in plan.assignments] == [(1, Decimal("50.00"))]
+    assert [a.work_hours for a in plan.assignments] == [Decimal("40.0000")]
+    assert plan.role_demands == (("T-1", 1, Decimal("40")),)
     assert plan.params["efficiency_note"] == planner.EFFICIENCY_NOTE
 
 
@@ -678,7 +793,7 @@ def test_objective_and_modes_are_recorded_in_params() -> None:
 
     assert plan.params["objective"] == planner.OBJECTIVE
     assert plan.params["initiative_mode"] == planner.INITIATIVE_MODE_GREEDY
-    assert plan.params["dependency_mode"] == planner.DEPENDENCY_MODE_START_START
+    assert plan.params["dependency_mode"] == planner.DEFAULT_DEPENDENCY_MODE
     assert plan.params["replan_floor"] == 1
     assert plan.params["initiatives_planned"] == 1
     assert plan.params["initiatives_complete"] == 1
@@ -702,7 +817,21 @@ def test_big_task_spreads_its_sp_over_several_sprints() -> None:
         1: Decimal("7"),
         2: Decimal("1"),
     }
-    assert "растянуты" in row.reason_text
+    assert "выполняются вместе" in row.reason_text
+
+
+def test_completed_blocker_recalculates_live_start_from_fact_date() -> None:
+    base = inputs([task("B", earliest=5)], [engineer("ENG-1")])
+    early = replace(base, all_deps=(("A", "B", 1),),
+                    done_task_dates={"A": (date(2026, 6, 2), date(2026, 6, 2))})
+    late = replace(base, all_deps=(("A", "B", 1),),
+                   done_task_dates={"A": (date(2026, 6, 16), date(2026, 6, 16))})
+
+    assert starts_of(planner.build_plan(early, as_of_sprint=2, simulate_next_pi=False)) == {"B": 2}
+    assert starts_of(planner.build_plan(late, as_of_sprint=3, simulate_next_pi=False)) == {"B": 3}
+    future = planner.build_plan(late, as_of_sprint=2, simulate_next_pi=False)
+    assert future.schedule[0].decision != "in_quarter"
+    assert future.params["dependency_fact_issues"]
 
 
 def test_task_waits_for_a_sprint_where_the_team_has_free_capacity() -> None:
@@ -742,6 +871,34 @@ def test_repack_uses_capacity_freed_by_deferrals() -> None:
     }
 
 
+def test_atomic_repack_uses_capacity_released_by_blocked_initiative() -> None:
+    """An initiative rejected after dependency propagation must release its hours for the next one."""
+    tasks = [
+        task("B", rung=90, topo=1, roles={1: 80}, prodf="P-1"),
+        task("C", rung=50, topo=2, roles={1: 80}, prodf="P-2"),
+        task("A", rung=10, topo=3, roles={99: 40}, prodf="P-3"),
+    ]
+    plan = planner.build_plan(
+        inputs(tasks, [engineer("ENG-1")], deps=(("A", "B", 1),), sprint_count=1),
+        initiative_mode=planner.INITIATIVE_MODE_ATOMIC, simulate_next_pi=False,
+    )
+    assert starts_of(plan) == {"A": None, "B": None, "C": 1}
+    assert plan.params["repack"] is True
+
+
+def test_small_order_search_exposes_a_better_complete_initiative() -> None:
+    source = inputs([
+        task("A", sp=5, rung=90, roles={1: 80}, prodf="P-A"),
+        task("B", sp=10, rung=50, roles={1: 80}, prodf="P-B"),
+    ], [engineer("ENG-1")], sprint_count=1)
+    ordinary = planner.build_plan(source, simulate_next_pi=False)
+    assert {row.task_id for row in ordinary.in_quarter} == {"A"}
+    benchmark = plan_quality.reference_order_search(source, 0, {})
+    assert benchmark["permutations"] == 2
+    assert benchmark["best_by_mode"]["atomic"]["complete_initiative_sp"] == "10"
+    assert benchmark["best_by_mode"]["greedy"]["order"][0] == "P-B"
+
+
 def test_every_decision_carries_a_human_explanation() -> None:
     """ТЗ: объяснять причины включения, переноса и отмены."""
     tasks = [task("A", topo=1, roles={1: 40}), task("B", topo=2, roles={99: 40})]
@@ -769,6 +926,146 @@ def test_quarter_end_run_moves_the_rest_to_the_next_pi() -> None:
 
     row = plan.schedule[0]
     assert plan.status == "ok"  # не infeasible: квартал просто закончился
+    assert plan.params["business_outcome"] == "nothing_scheduled"
     assert row.decision == "deferred_next_pi"
     assert row.reason_code == planner.REASON_PI_CLOSED
     assert plan.assignments == ()
+
+
+def test_empty_backlog_is_a_successful_completed_run() -> None:
+    plan = planner.build_plan(inputs([], [], all_tasks=(("A", "Done", Decimal(1), Decimal(0)),)))
+
+    assert plan.status == "ok"
+    assert plan.params["business_outcome"] == "completed"
+    assert plan.schedule == ()
+
+
+def test_all_deferred_is_published_as_the_current_result() -> None:
+    plan = planner.build_plan(inputs([task("A", roles={99: 40})], [engineer("ENG-1")]))
+
+    assert plan.status == "ok"
+    assert plan.params["business_outcome"] == "nothing_scheduled"
+    assert plan.schedule[0].decision == "deferred_next_pi"
+
+
+def test_sp_and_hours_move_together_in_every_sprint() -> None:
+    """ADR-029 (DA-07): спринт с долей SP содержит часы, спринт с часами — долю SP,
+    доли пропорциональны выполненной работе, сумма равна SP задачи, ёмкость цела."""
+    capacity = Decimal("3")
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 120}), task("U", sp=2, roles={1: 20}, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: capacity})
+    )
+    shares: dict[str, dict[int, Decimal]] = {}
+    for task_id, sprint, sp in plan.sp_shares:
+        shares.setdefault(task_id, {})[sprint] = sp
+    for row in plan.in_quarter:
+        hours: dict[int, Decimal] = {}
+        for item in plan.assignments:
+            if item.task_id == row.task_id:
+                hours[item.sprint_no] = hours.get(item.sprint_no, Decimal(0)) + item.work_hours
+        task_shares = shares.get(row.task_id, {})
+        assert set(task_shares) <= set(hours), "SP без часов"
+        assert set(hours) <= set(task_shares) or all(
+            hours[n] * Decimal(8) / sum(hours.values()) < Decimal("0.01") for n in set(hours) - set(task_shares)
+        ), "часы без SP"
+        total_sp = Decimal(8) if row.task_id == "T" else Decimal(2)
+        assert sum(task_shares.values()) == total_sp
+        total_hours = sum(hours.values())
+        for sprint, value in task_shares.items():
+            assert abs(value - total_sp * hours[sprint] / total_hours) <= Decimal("0.02")
+    for sprint in range(1, 7):
+        used = sum((sp for _t, n, sp in plan.sp_shares if n == sprint), Decimal(0))
+        assert used <= capacity
+
+
+def test_sp_cap_limits_hours_per_sprint_so_a_big_task_stretches() -> None:
+    """Часов у людей много, но ёмкость команды 2 SP за спринт: 8 SP — минимум 4 спринта."""
+    plan = planner.build_plan(
+        inputs([task("T", sp=8, roles={1: 40})], [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: Decimal("2")})
+    )
+    row = plan.schedule[0]
+    assert row.decision == "in_quarter" and row.end_sprint - row.start_sprint + 1 >= 4
+    by_sprint: dict[int, Decimal] = {}
+    for item in plan.assignments:
+        by_sprint[item.sprint_no] = by_sprint.get(item.sprint_no, Decimal(0)) + item.work_hours
+    assert all(hours <= Decimal("10.01") for hours in by_sprint.values())  # 40 ч × 2/8 SP
+
+
+# ---------------------------------------------------------------------------
+#  DA-16: причина отказа строится из той же проверки, по которой принято решение
+# ---------------------------------------------------------------------------
+def _row(plan: planner.Plan, task_id: str) -> planner.ScheduleRow:
+    return next(row for row in plan.schedule if row.task_id == task_id)
+
+
+def test_sp_refusal_is_explained_with_the_numbers_that_decided_it() -> None:
+    """Часов у людей много, ёмкость 2 SP/спринт: A (8 SP) берёт 8 из 12, B (8 SP) не помещается."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=8, roles={1: 40}, rung=9, topo=1), task("B", sp=8, roles={1: 40}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2")], team_sp={T1: 2}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_TEAM_SP
+    assert refusal.reason_details["free_sp"] == "4.00" and refusal.reason_details["need_sp"] == "8"
+    rival = refusal.reason_details["competitors"][0]
+    assert rival["task_id"] == "A" and rival["higher_priority"] is True and Decimal(rival["sp"]) == 8
+    assert "выше в очереди" in refusal.reason_text and "свободно 4" in refusal.reason_text
+
+
+def test_hours_refusal_names_unplaced_and_free_hours_and_the_rival() -> None:
+    """Один инженер (480 ч за квартал): A занимает 400, B просит 200 — не хватает 120, свободно 80."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=9, topo=1), task("B", sp=1, roles={1: 200}, rung=1, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    item = refusal.reason_details["shortages"][0]
+    assert Decimal(item["need_hh"]) == 200 and Decimal(item["unplaced_hh"]) == 120 and Decimal(item["free_hh"]) == 80
+    assert item["competitors"][0]["task_id"] == "A" and item["competitors"][0]["higher_priority"] is True
+    assert "не удалось разместить 120" in refusal.reason_text and "свободно у людей роли 80" in refusal.reason_text
+
+
+def test_lower_priority_rival_is_not_called_higher() -> None:
+    """Если место заняла задача ниже в очереди, текст не врёт про «более приоритетную»."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 400}, rung=1, topo=1), task("B", sp=1, roles={1: 200}, rung=9, topo=2)],
+               [engineer("ENG-1")], team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    # B стоит выше A и берёт 200; A (400 ч) не помещается: конкурент B — выше в очереди.
+    refusal = _row(plan, "A")
+    assert refusal.reason_code == planner.REASON_ROLE_HOURS
+    assert all(c["higher_priority"] for c in refusal.reason_details["shortages"][0]["competitors"])
+
+
+def test_dependency_chain_beyond_the_horizon_has_its_own_reason() -> None:
+    """A занимает весь квартал, B зависит от неё: самый ранний старт B — спринт 7 при шести спринтах."""
+    plan = planner.build_plan(
+        inputs([task("A", sp=1, roles={1: 480}, rung=9, topo=1), task("B", sp=1, roles={2: 10}, rung=1, topo=2)],
+               [engineer("ENG-1"), engineer("ENG-2", role_id=2)], deps=(("A", "B", 1),), team_sp={T1: 100}),
+        simulate_next_pi=False,
+    )
+    assert _row(plan, "A").decision == "in_quarter"
+    refusal = _row(plan, "B")
+    assert refusal.reason_code == planner.REASON_GRAPH_HORIZON
+    assert refusal.reason_details["earliest_start_sprint"] == 7
+    assert refusal.reason_details["blocking"][0]["task_id"] == "A"
+    assert "спринт 7" in refusal.reason_text and "шесть" not in refusal.reason_text
+
+
+def test_atomic_reason_checks_hours_and_sp_together() -> None:
+    """Задача X сама помещается, но Y инициативы — нет: X уходит с инициативой, и текст говорит про часы И SP."""
+    plan = planner.build_plan(
+        inputs([task("X", sp=1, roles={1: 40}, rung=5, topo=1, prodf="P"),
+                task("Y", sp=50, roles={1: 40}, rung=5, topo=2, prodf="P")],
+               [engineer("ENG-1")], team_sp={T1: 2}),
+        initiative_mode=planner.INITIATIVE_MODE_ATOMIC, simulate_next_pi=False,
+    )
+    x = _row(plan, "X")
+    assert x.decision != "in_quarter" and x.reason_code == planner.REASON_ATOMIC
+    assert "по часам и ёмкости SP" in x.reason_text

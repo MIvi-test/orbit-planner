@@ -1,0 +1,69 @@
+"""Контракт хранит две орбиты одного человека без удвоения его фонда."""
+import os
+from pathlib import Path
+from uuid import uuid4
+
+import psycopg
+import pytest
+
+from pg_support import load_base_file
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="нужен PostgreSQL")
+def test_two_orbits_share_one_engineer_and_keep_both_limits():
+    root = Path(__file__).resolve().parents[1]
+    with psycopg.connect(os.environ["TEST_DATABASE_URL"]) as connection:
+        with connection.cursor() as cursor:
+            schema = psycopg.sql.Identifier(f"da08_{uuid4().hex}")
+            cursor.execute(psycopg.sql.SQL("CREATE SCHEMA {}").format(schema))
+            cursor.execute(psycopg.sql.SQL("SET search_path TO {}").format(schema))
+            for name in ("01_schema.sql", "02_contract.sql", "03_substitutions.sql",
+                         "04_views.sql", "05_invariants.sql"):
+                load_base_file(cursor, root / "db" / name)
+            # Recreate the former key to exercise the upgrade path.
+            cursor.execute("""ALTER TABLE plan_assignments DROP CONSTRAINT plan_assignments_pkey;
+                ALTER TABLE plan_assignments ADD CONSTRAINT plan_assignments_pkey
+                PRIMARY KEY (run_id, task_id, sprint_no, engineer_id, role_id);""")
+            cursor.execute((root / "db/migrations/0047_multi_orbit_assignment.sql").read_text())
+            cursor.execute("""
+                INSERT INTO pi_periods (pi_id, start_date, end_date, sprint_count)
+                VALUES ('PI', '2026-07-01', '2026-07-14', 1);
+                INSERT INTO sprints (pi_id, sprint_no, start_date, end_date)
+                VALUES ('PI', 1, '2026-07-01', '2026-07-14');
+                INSERT INTO teams (team_id) VALUES ('T1'), ('T2');
+                INSERT INTO initiatives (prodf_id, br_id) VALUES ('P', 'BR');
+                INSERT INTO roles (role_id, canonical_name) VALUES (1, 'Developer');
+                INSERT INTO engineers (engineer_id, role_id, grade, total_capacity_rate)
+                VALUES ('E', 1, 'Senior', 1);
+                INSERT INTO engineer_orbits (engineer_id, team_id, capacity_rate)
+                VALUES ('E', 'T1', 0.5), ('E', 'T2', 0.5);
+                INSERT INTO tasks (task_id, prodf_id, team_id, status, estimation_sp,
+                                   estimated_hh_effective)
+                VALUES ('A', 'P', 'T1', 'ToDo', 1, 80);
+                INSERT INTO task_role_estimates (task_id, role_id, hours) VALUES ('A', 1, 80);
+                INSERT INTO plan_runs (run_id, pi_id, as_of_sprint, algorithm, params)
+                VALUES (1, 'PI', 0, 'test', '{"role_demand_snapshot_version":1}');
+                INSERT INTO plan_task_schedule (run_id, task_id, start_sprint, end_sprint, decision)
+                VALUES (1, 'A', 1, 1, 'in_quarter');
+                INSERT INTO task_state (run_id, task_id, as_of_sprint, status,
+                                        remaining_hh, remaining_sp)
+                VALUES (1, 'A', 0, 'ToDo', 80, 1);
+                INSERT INTO plan_role_demand_snapshot (run_id, task_id, role_id, needed_hours)
+                VALUES (1, 'A', 1, 80);
+                INSERT INTO plan_assignments (run_id, task_id, sprint_no, engineer_id,
+                                              role_id, hours, work_hours,
+                                              home_team_id, serving_team_id)
+                VALUES (1, 'A', 1, 'E', 1, 40, 40, 'T1', 'T1'),
+                       (1, 'A', 1, 'E', 1, 40, 40, 'T2', 'T1');
+            """)
+            cursor.execute("""SELECT check_code FROM v_plan_violations WHERE run_id = 1
+                              AND check_code IN ('ENGINEER_OVERLOAD', 'ORBIT_OVER_BUDGET',
+                                                 'UNDER_ALLOCATED', 'OVER_ALLOCATED')""")
+            assert cursor.fetchall() == []
+            cursor.execute("""UPDATE plan_assignments SET hours = 45, work_hours = 45
+                              WHERE run_id = 1 AND home_team_id = 'T2'""")
+            cursor.execute("""SELECT check_code FROM v_plan_violations WHERE run_id = 1
+                              AND check_code IN ('ENGINEER_OVERLOAD', 'ORBIT_OVER_BUDGET')
+                              ORDER BY check_code""")
+            assert [row[0] for row in cursor.fetchall()] == ["ENGINEER_OVERLOAD", "ORBIT_OVER_BUDGET"]
+        connection.rollback()

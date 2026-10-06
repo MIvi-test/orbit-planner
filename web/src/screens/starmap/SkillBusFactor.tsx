@@ -11,10 +11,12 @@ import { chip, muted } from './darkStyles'
 import { shortTeam } from './risk'
 
 const GRADES = [
-  { key: 'критично: работу не подхватит никто', label: 'критично', color: 'var(--flare)' },
-  { key: 'единственный носитель', label: 'единственный носитель', color: 'var(--ember)' },
-  { key: 'два носителя', label: 'два носителя', color: 'var(--orbit)' },
-  { key: 'ок', label: 'три и больше', color: 'var(--bloom)' },
+  { key: 'нет носителей требуемого навыка', label: 'Нет носителей', color: 'var(--flare)' },
+  { key: 'критично: требуемый навык у одного', label: 'Критично', color: 'var(--flare)' },
+  { key: 'предварительно: один носитель роли', label: 'Оценка по роли', color: 'var(--ember)' },
+  { key: 'единственный носитель', label: 'Единственный носитель', color: 'var(--ember)' },
+  { key: 'два носителя', label: 'Два носителя', color: 'var(--orbit)' },
+  { key: 'ок', label: 'Три и больше', color: 'var(--bloom)' },
 ]
 
 export function SkillBusFactor({
@@ -26,7 +28,7 @@ export function SkillBusFactor({
   selectedSkill: number | null
   onSelectSkill: (row: BusFactorSkillRow | null) => void
 }) {
-  const [active, setActive] = useState<Set<string>>(new Set([GRADES[0].key, GRADES[1].key]))
+  const [active, setActive] = useState<Set<string>>(new Set(GRADES.slice(0, 4).map((g) => g.key)))
   const counts = new Map<string, number>()
   rows.forEach((r) => counts.set(r.risk, (counts.get(r.risk) ?? 0) + 1))
   const shown = rows.filter((r) => active.has(r.risk))
@@ -59,7 +61,7 @@ export function SkillBusFactor({
               <th style={{ ...th, textAlign: 'right' }}>Носителей</th>
               <th style={th}>Кто</th>
               <th style={th}>Роль</th>
-              <th style={{ ...th, textAlign: 'right' }}>Спрос роли</th>
+              <th style={{ ...th, textAlign: 'right' }}>Спрос на навык</th>
               <th style={th}>Риск</th>
             </tr>
           </thead>
@@ -79,7 +81,7 @@ export function SkillBusFactor({
                       onSelectSkill(selected ? null : r)
                     }
                   }}
-                  style={{ cursor: 'pointer', background: selected ? 'rgba(232,236,245,0.10)' : undefined }}
+                  style={{ cursor: 'pointer', background: selected ? 'color-mix(in srgb, var(--star) 10%, transparent)' : undefined }}
                 >
                   <td style={{ ...td, borderLeft: `3px solid ${grade?.color ?? 'transparent'}` }}>{r.skill_name}</td>
                   <td style={{ ...td, textAlign: 'right' }} className="mono">
@@ -93,7 +95,7 @@ export function SkillBusFactor({
                     <span style={muted}> · {r.teams.map(shortTeam).join(', ')}</span>
                   </td>
                   <td style={{ ...td, textAlign: 'right' }} className="mono">
-                    {r.in_demand ? fmtHours(r.roles_demand_hh) : '—'}
+                    {r.in_demand ? `${fmtHours(r.roles_demand_hh)}${r.demand_source === 'role_proxy' ? ' (по роли)' : r.demand_source === 'mixed' ? ' (частично по роли)' : ''}` : '—'}
                   </td>
                   <td style={{ ...td, color: grade?.color }}>{r.risk}</td>
                 </tr>
@@ -106,5 +108,5 @@ export function SkillBusFactor({
   )
 }
 
-const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '6px 8px', borderBottom: '1px solid rgba(127,166,217,0.3)' }
-const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid rgba(127,166,217,0.12)', verticalAlign: 'top' }
+const th: React.CSSProperties = { textAlign: 'left', fontWeight: 500, padding: '6px 8px', borderBottom: '1px solid var(--sm-border)' }
+const td: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid var(--sm-border)', verticalAlign: 'top' }

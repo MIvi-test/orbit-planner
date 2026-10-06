@@ -81,15 +81,15 @@ export function RiskSpine({
                 </Text>
               </HeadCell>
             ))}
-            <HeadCell center>всего</HeadCell>
+            <HeadCell center>Всего</HeadCell>
           </div>
 
           <div style={{ display: 'contents' }}>
             <BodyCell>
               <Text size="xs" c="dimmed">
                 {selected === null
-                  ? 'нажмите на спринт, чтобы отобрать ленту'
-                  : 'нажмите ещё раз, чтобы снять отбор'}
+                  ? 'Нажмите на спринт, чтобы отобрать ленту'
+                  : 'Нажмите ещё раз, чтобы снять отбор'}
               </Text>
             </BodyCell>
 
@@ -107,12 +107,12 @@ export function RiskSpine({
                     rows.length === 0
                       ? `спринт ${s.sprint_no}: рисков нет`
                       : `спринт ${s.sprint_no}: ` +
-                        tally.map((t) => `${t.n} ${ALERT_WORD[t.alert_type]}`).join(', ')
+                        tally.map((t) => `${t.n} ${ALERT_WORD[t.alert_type].toLowerCase()}`).join(', ')
                   }
                 >
                   {tally.length === 0 ? (
                     <Text size="xs" c="dimmed">
-                      нет
+                      Нет
                     </Text>
                   ) : (
                     tally.map((t) => (

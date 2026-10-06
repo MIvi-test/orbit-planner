@@ -6,12 +6,14 @@ import { useState } from 'react'
 import { Dropzone, MIME_TYPES } from '@mantine/dropzone'
 import { Alert, List, Paper, Stack, Text, Title } from '@mantine/core'
 import { useQueryClient } from '@tanstack/react-query'
-import { notifications } from '@mantine/notifications'
+import { notifications } from '../../utils/notify'
 import { uploadDataset } from '../../api/uploads'
 import { ApiError } from '../../api/client'
 import type { UploadErrorPayload } from '../../types/views'
+import { useImperium } from '../../theme/appTheme'
 
-export function DatasetDropzone({ onDone }: { onDone: () => void }) {
+export function DatasetDropzone({ onDone }: { onDone: (runId: number) => void }) {
+  const imperium = useImperium()
   const [busy, setBusy] = useState(false)
   const [problems, setProblems] = useState<string[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -29,7 +31,7 @@ export function DatasetDropzone({ onDone }: { onDone: () => void }) {
         title: 'Датасет загружен',
         message: `${result.rows.tasks ?? '?'} задач, план построен: ${result.plan.in_quarter} в квартале, ${result.plan.not_in_quarter} перенесено`,
       })
-      onDone()
+      onDone(result.plan.run_id)
     } catch (err) {
       if (err instanceof ApiError && err.body) {
         const body = err.body as Partial<UploadErrorPayload>
@@ -59,7 +61,7 @@ export function DatasetDropzone({ onDone }: { onDone: () => void }) {
           multiple={false}
         >
           <Stack align="center" gap={4} py="md" style={{ pointerEvents: 'none' }}>
-            <Text fw={500}>Перетащите файл .xlsx сюда или нажмите</Text>
+            <Text fw={500}>{imperium ? 'ПОМЕСТИТЕ СВИТОК ЗДЕСЬ ВО СЛАВУ ИМПЕРАТОРА · .xlsx' : 'Перетащите файл .xlsx сюда или нажмите'}</Text>
             <Text size="sm" c="dimmed">
               выданный датасет ПочтаТеха
             </Text>

@@ -8,10 +8,13 @@ import { useView } from './useView'
 import type { ViewParams } from '../api/client'
 import type {
   ActualUploadRow,
+  ActualReportIssueRow,
   AlertRow,
   BusFactorRow,
   BusFactorSkillRow,
   DqSummaryRow,
+  DqIssueRow,
+  DqIssueReviewRow,
   EngineerAbsenceRiskRow,
   EngineerRoleCoverageRow,
   InitiativeRow,
@@ -22,8 +25,13 @@ import type {
   PlanBaselineRow,
   PlanDiffRow,
   PlanRunRow,
+  PlanDependencyBoundRow,
+  PlanGoalOutcomeRow,
+  InitiativeGoalProgressRow,
+  PlanRoleDemandSnapshotRow,
   PlanTaskScheduleRow,
   PlanTaskSpRow,
+  PlanTaskProgressRow,
   PlanViolationRow,
   RefDecisionReasonRow,
   RefResultOptionRow,
@@ -36,8 +44,11 @@ import type {
   SprintRow,
   TaskBoardRow,
   TaskRemainingHhRow,
+  TaskStateRow,
   TaskRow,
   TeamCapacitySpRow,
+  PlanTeamCapacityRow,
+  SprintForecastAccuracyRow,
   TeamProfileRow,
   TeamRow,
 } from '../types/views'
@@ -46,17 +57,29 @@ import type {
 export const useTaskBoard = (p?: ViewParams) => useView<TaskBoardRow>('v_task_board', p)
 export const useTasks = (p?: ViewParams) => useView<TaskRow>('tasks', p)
 export const useTaskRemainingHh = (p?: ViewParams) => useView<TaskRemainingHhRow>('v_task_remaining_hh', p)
+export const useTaskState = (runId?: number | null) =>
+  useView<TaskStateRow>('task_state', { runId: runId ?? undefined, limit: 500 })
+export const usePlanRoleDemandSnapshot = (runId?: number | null) =>
+  useView<PlanRoleDemandSnapshotRow>('v_plan_role_demand_snapshot', { runId: runId ?? undefined, limit: 500 })
 
 // -------------------------------------------------------------- план квартала
 export const usePlanRuns = () => useView<PlanRunRow>('plan_runs', { limit: 500 })
 export const usePlanSchedule = (runId?: number | null) =>
   useView<PlanTaskScheduleRow>('plan_task_schedule', { runId: runId ?? undefined, limit: 500 })
+export const usePlanDependencyBounds = (runId?: number | null) =>
+  useView<PlanDependencyBoundRow>('plan_dependency_bounds', { runId: runId ?? undefined, limit: 500 })
+export const usePlanGoalOutcome = (runId?: number | null) =>
+  useView<PlanGoalOutcomeRow>('v_plan_goal_outcome', { runId: runId ?? undefined, limit: 500 })
+export const useInitiativeGoalProgress = (runId?: number | null) =>
+  useView<InitiativeGoalProgressRow>('v_initiative_goal_progress', { runId: runId ?? undefined, limit: 100 })
 export const usePlanAssignments = (runId?: number | null) =>
   useView<PlanAssignmentDetailRow>('v_plan_assignment_detail', { runId: runId ?? undefined, limit: 5000 })
 export const usePlanBaseline = (runId?: number | null) =>
   useView<PlanBaselineRow>('plan_baseline', { runId: runId ?? undefined, limit: 500 })
 export const usePlanTaskSp = (runId?: number | null) =>
   useView<PlanTaskSpRow>('plan_task_sp', { runId: runId ?? undefined, limit: 500 })
+export const usePlanTaskProgress = (runId?: number | null) =>
+  useView<PlanTaskProgressRow>('v_plan_task_progress', { runId: runId ?? undefined, limit: 1000 })
 export const useSprints = () => useView<SprintRow>('sprints', { limit: 20 })
 export const useSprintFundFactor = () => useView<SprintFundFactorRow>('v_sprint_fund_factor', { limit: 20 })
 export const usePiFundFactor = () => useView<PiFundFactorRow>('v_pi_fund_factor', { limit: 5 })
@@ -80,10 +103,16 @@ export const useRoleDeficitEffective = () =>
 export const useRoleCoverageOrg = () => useView<RoleCoverageOrgRow>('v_role_coverage_org', { limit: 100 })
 export const useBusFactor = () => useView<BusFactorRow>('v_bus_factor', { limit: 100 })
 export const useTeamCapacitySp = () => useView<TeamCapacitySpRow>('v_team_capacity_sp', { limit: 20 })
+export const useSprintForecastAccuracy = (runId?: number | null) =>
+  useView<SprintForecastAccuracyRow>('v_sprint_forecast_accuracy', { runId: runId ?? undefined, limit: 20 })
+export const usePlanTeamCapacity = (runId?: number | null) =>
+  useView<PlanTeamCapacityRow>('plan_team_capacity', { runId: runId ?? undefined, limit: 20 })
 export const useTeams = () => useView<TeamRow>('teams', { limit: 20 })
 export const useEngineerRoleCoverage = () =>
   useView<EngineerRoleCoverageRow>('v_engineer_role_coverage', { limit: 500 })
 export const useDqSummary = () => useView<DqSummaryRow>('v_dq_summary', { limit: 100 })
+export const useDqIssues = () => useView<DqIssueRow>('v_dq_issue_worklist', { limit: 5000 })
+export const useDqIssueReviews = () => useView<DqIssueReviewRow>('dq_issue_reviews', { limit: 5000 })
 export const useInitiatives = () => useView<InitiativeRow>('initiatives', { limit: 100 })
 export const useRefResultOptions = () => useView<RefResultOptionRow>('ref_result_options', { limit: 50 })
 export const useRefDecisionReasons = () => useView<RefDecisionReasonRow>('ref_decision_reasons', { limit: 50 })
@@ -98,3 +127,4 @@ export const useTeamProfile = () => useView<TeamProfileRow>('v_team_profile', { 
 
 // -------------------------------------------------------------------- факт
 export const useActualUploads = () => useView<ActualUploadRow>('actual_uploads', { limit: 50 })
+export const useActualReportIssues = () => useView<ActualReportIssueRow>('actual_report_issues', { limit: 500 })

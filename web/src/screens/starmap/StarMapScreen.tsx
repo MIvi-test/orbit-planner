@@ -7,12 +7,14 @@
  *  - роли без людей в штате — вопрос найма, отдельный блок.
  */
 import { useMemo, useState } from 'react'
+import { L } from '../../components/imperium/L'
 import { Group, Skeleton, Stack, Text, Title } from '@mantine/core'
 import { useRun } from '../../hooks/useRun'
 import {
   useBusFactorSkill,
   useEngineerAbsenceRisk,
   useOrbitMap,
+  usePlanAssignments,
   useRoleCoverageOrg,
   useSatelliteCapacity,
 } from '../../hooks/useViews'
@@ -23,8 +25,10 @@ import { StarMapSvg } from './StarMapSvg'
 import { EngineerDrawer } from './EngineerDrawer'
 import { SkillBusFactor } from './SkillBusFactor'
 import { HiringGap } from './HiringGap'
+import { TeamDrawer } from './TeamDrawer'
 import { LEVEL_COLOR, LEVEL_WORD, starLevel, type StarLevel } from './risk'
 import { muted, panel } from './darkStyles'
+import { useLabel } from '../../theme/imperiumLabels'
 
 export function StarMapScreen() {
   const { runId } = useRun()
@@ -32,9 +36,11 @@ export function StarMapScreen() {
   const absenceQ = useEngineerAbsenceRisk(runId)
   const skillQ = useBusFactorSkill()
   const capacityQ = useSatelliteCapacity()
+  const assignmentsQ = usePlanAssignments(runId)
   const coverageQ = useRoleCoverageOrg()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [teamId, setTeamId] = useState<string | null>(null)
   const [skill, setSkill] = useState<BusFactorSkillRow | null>(null)
 
   const absenceById = useMemo(
@@ -42,12 +48,12 @@ export function StarMapScreen() {
     [absenceQ.data],
   )
 
-  const queries = [orbitQ, absenceQ, skillQ, capacityQ, coverageQ]
+  const queries = [orbitQ, absenceQ, skillQ, capacityQ, assignmentsQ, coverageQ]
   const error = firstError(queries)
 
   const frame = (children: React.ReactNode) => (
-    <div className="starmap-scope" style={{ padding: 20, margin: -16, minHeight: 'calc(100vh - 106px)' }}>
-      <Stack gap="lg" maw={1280} mx="auto">
+    <div className="starmap-scope" style={{ padding: 20, margin: -16, minHeight: 'calc(100vh - 60px)' }}>
+      <Stack gap="lg">
         {children}
       </Stack>
     </div>
@@ -56,7 +62,7 @@ export function StarMapScreen() {
   if (anyPending(queries)) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <Skeleton height={560} style={{ opacity: 0.15 }} />
       </>,
     )
@@ -64,7 +70,7 @@ export function StarMapScreen() {
   if (error) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <QueryError error={error} title="Не удалось загрузить звёздную карту" />
       </>,
     )
@@ -74,7 +80,7 @@ export function StarMapScreen() {
   if (orbits.length === 0) {
     return frame(
       <>
-        <Title order={2} c="var(--star)">Звёздная карта</Title>
+        <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
         <div style={panel}>
           <Text size="sm">Инженеров в базе нет. Загрузите датасет на вкладке «Загрузка» — карта построится по составу команд.</Text>
         </div>
@@ -89,7 +95,7 @@ export function StarMapScreen() {
     const l = starLevel(o, absenceById.get(o.engineer_id))
     levels.set(l, (levels.get(l) ?? 0) + 1)
   })
-  const critical = skills.filter((s) => s.sole_in_role).length
+  const critical = skills.filter((s) => s.critical).length
   const single = skills.filter((s) => s.bus_factor === 1).length
   const atRisk = (absenceQ.data?.items ?? []).filter((a) => a.tasks_without_backup.length > 0)
   const selectedOrbit = orbits.find((o) => o.engineer_id === selectedId) ?? null
@@ -99,7 +105,7 @@ export function StarMapScreen() {
     <>
       <Group justify="space-between" align="flex-end" wrap="wrap">
         <div>
-          <Title order={2} c="var(--star)">Звёздная карта</Title>
+          <Title order={2} c="var(--star)"><L>Звёздная карта</L></Title>
           <Text size="sm" mt={2} style={muted}>
             {orbits.length} инженеров в {teams.size} командах, {shared} из них делят ставку между двумя командами.{' '}
             {single} из {skills.length} компетенций держатся на одном человеке, {critical} — критично.
@@ -135,6 +141,7 @@ export function StarMapScreen() {
             highlight={highlight}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            onSelectTeam={setTeamId}
           />
           <Legend levels={levels} skillName={skill?.skill_name ?? null} onClearSkill={() => setSkill(null)} />
         </div>
@@ -162,10 +169,21 @@ export function StarMapScreen() {
         <HiringGap rows={coverageQ.data?.items ?? []} />
       </div>
 
+      <TeamDrawer
+        teamId={teamId}
+        orbits={orbits}
+        onClose={() => setTeamId(null)}
+        onSelectEngineer={(id) => {
+          setTeamId(null)
+          setSelectedId(id)
+        }}
+      />
+
       <EngineerDrawer
         orbit={selectedOrbit}
         absence={selectedId ? absenceById.get(selectedId) : undefined}
         capacity={(capacityQ.data?.items ?? []).filter((c) => c.engineer_id === selectedId)}
+        assignments={(assignmentsQ.data?.items ?? []).filter((a) => a.engineer_id === selectedId)}
         onClose={() => setSelectedId(null)}
       />
     </>,
@@ -190,6 +208,7 @@ function Legend({
   onClearSkill: () => void
 }) {
   const order: StarLevel[] = ['critical', 'single', 'ok']
+  const label = useLabel()
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, padding: '8px 10px', fontSize: 13, alignItems: 'center' }}>
       {order.map((l) => (
@@ -197,7 +216,7 @@ function Legend({
           <svg width="14" height="14" aria-hidden>
             <circle cx="7" cy="7" r="5" fill={LEVEL_COLOR[l]} />
           </svg>
-          {LEVEL_WORD[l]} <span className="mono" style={muted}>{levels.get(l) ?? 0}</span>
+          {label(LEVEL_WORD[l])} <span className="mono" style={muted}>{levels.get(l) ?? 0}</span>
         </span>
       ))}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

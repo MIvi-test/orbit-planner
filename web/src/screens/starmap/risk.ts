@@ -14,9 +14,9 @@ export const LEVEL_COLOR: Record<StarLevel, string> = {
 }
 
 export const LEVEL_WORD: Record<StarLevel, string> = {
-  critical: 'работы встанут',
-  single: 'незаменим',
-  ok: 'есть замена',
+  critical: 'Нет прямой замены',
+  single: 'Риск замены',
+  ok: 'В базовой проверке риск не найден',
 }
 
 export function starLevel(orbit: OrbitMapRow, absence: EngineerAbsenceRiskRow | undefined): StarLevel {

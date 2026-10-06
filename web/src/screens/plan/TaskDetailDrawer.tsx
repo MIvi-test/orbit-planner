@@ -2,9 +2,17 @@
  * Причина решения — готовый текст (docs/UI_DESIGN.md §8): `reason_text`
  * показывается как есть, не пересказывается и не сокращается.
  */
-import { Badge, Drawer, Group, List, Stack, Table, Text } from '@mantine/core'
-import type { PlanAssignmentDetailRow, PlanTaskScheduleRow, TaskBoardRow, TaskRow } from '../../types/views'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
+import { notifications } from '../../utils/notify'
+import { Badge, Button, Drawer, Group, List, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import type { PlanAssignmentDetailRow, PlanDependencyBoundRow, PlanGoalOutcomeRow, PlanRoleDemandSnapshotRow, PlanTaskProgressRow, PlanTaskScheduleRow, TaskStateRow, TaskRow } from '../../types/views'
 import { fmtHours, fmtSp, isNegative } from '../../api/wire'
+import { confirmTaskGoal } from '../../api/goals'
+import { fetchTaskTrace } from '../../api/client'
+import { useRun } from '../../hooks/useRun'
+import { useAuth } from '../../hooks/useAuth'
 
 const DECISION_LABEL: Record<string, string> = {
   in_quarter: 'В квартале',
@@ -20,23 +28,69 @@ const DECISION_COLOR: Record<string, string> = {
 
 export function TaskDetailDrawer({
   task,
-  board,
+  state,
+  roleDemand,
+  progress,
+  dependencyBound,
+  goalOutcome,
   schedule,
   assignments,
   onClose,
 }: {
   task: TaskRow | null
-  board: TaskBoardRow | undefined
+  state: TaskStateRow | undefined
+  roleDemand: PlanRoleDemandSnapshotRow[]
+  progress: PlanTaskProgressRow[]
+  dependencyBound: PlanDependencyBoundRow | undefined
+  goalOutcome: PlanGoalOutcomeRow | undefined
   schedule: PlanTaskScheduleRow | undefined
   assignments: PlanAssignmentDetailRow[]
   onClose: () => void
 }) {
+  const queryClient = useQueryClient()
+  const { isDefault, setRunId, runId } = useRun()
+  const { me, can } = useAuth()
+  const [traceOpen, setTraceOpen] = useState(false)
+  const traceQ = useQuery({
+    queryKey: ['task-trace', runId, task?.task_id],
+    queryFn: () => fetchTaskTrace(runId!, task!.task_id),
+    enabled: traceOpen && runId !== null && task !== null,
+    retry: false,
+  })
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [closureCode, setClosureCode] = useState<string | null>('ACHIEVED')
+  const [goalCode, setGoalCode] = useState<string | null>(null)
+  const [confirmedBy, setConfirmedBy] = useState('')
+  const [confirmationNote, setConfirmationNote] = useState('')
+  const [confirmBusy, setConfirmBusy] = useState(false)
+
+  async function saveConfirmation() {
+    if (!task || !closureCode) return
+    setConfirmBusy(true)
+    try {
+      const result = await confirmTaskGoal(task.task_id, closureCode,
+        closureCode === 'ACHIEVED' ? goalCode : null,
+        // При включённой авторизации сервер подставляет вошедшего пользователя сам.
+        me?.auth === 'required' ? me.name : confirmedBy, confirmationNote)
+      await queryClient.invalidateQueries()
+      setRunId(result.plan.run_id)
+      setConfirmOpen(false)
+      notifications.show({ color: 'teal', title: 'Бизнес результат подтверждён',
+        message: `План пересчитан: прогон ${result.plan.run_id}.` })
+    } catch (error) {
+      notifications.show({ color: 'red', title: 'Не удалось подтвердить результат',
+        message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setConfirmBusy(false)
+    }
+  }
+
   return (
     <Drawer
       opened={task !== null}
       onClose={onClose}
       position="right"
-      size="md"
+      size="lg"
       title={
         task && (
           <Group gap="xs">
@@ -56,12 +110,14 @@ export function TaskDetailDrawer({
       }
     >
       {task && (
-        <Stack gap="md">
-          <div>
-            <Text fw={500}>{task.summary}</Text>
-            <Text size="sm" c="dimmed">
-              {task.prodf_id} · {task.team_id} · {fmtSp(task.estimation_sp)} SP
-            </Text>
+        <Stack gap="md" className="drawer-sections">
+          <div className="drawer-head">
+            <Text fw={600} size="lg" style={{ lineHeight: 1.3 }}>{task.summary}</Text>
+            <Group gap="xs" mt={8}>
+              <Badge variant="light" color="gray" size="lg" style={{ textTransform: 'none' }}>Инициатива {task.prodf_id}</Badge>
+              <Badge variant="light" color="gray" size="lg" style={{ textTransform: 'none' }}>Команда {task.team_id}</Badge>
+              <Badge variant="light" color="post" size="lg" style={{ textTransform: 'none' }}>{fmtSp(task.estimation_sp)} SP</Badge>
+            </Group>
           </div>
 
           {schedule?.reason_text && (
@@ -73,21 +129,121 @@ export function TaskDetailDrawer({
             </Stack>
           )}
 
-          {board && (
+          <Button size="xs" variant="subtle" onClick={() => setTraceOpen(!traceOpen)}>
+            {traceOpen ? 'Скрыть источники решения' : 'Показать источники решения'}
+          </Button>
+          {traceOpen && (traceQ.isPending ? <Text size="xs" c="dimmed">Загружаем снимок решения…</Text>
+            : traceQ.error ? <Text size="xs" c="red">{traceQ.error.message}</Text>
+            : <Stack gap={4}>
+                <Text size="xs" c="dimmed">Алгоритм: {traceQ.data.run.algorithm}; формулы: {String(traceQ.data.run.params.formula_version ?? 'не указаны')}; факт: {traceQ.data.run.actuals_upload_id ?? 'исходный датасет'}.</Text>
+                <Text size="xs" c="dimmed">Excel SHA-256: {traceQ.data.source_batch?.source_sha256 ?? String(traceQ.data.run.params.source_sha256 ?? 'источник недоступен')}; конфигурация: {traceQ.data.source_batch?.config_sha256 ?? 'не записана'}.</Text>
+                {traceQ.data.role_demands.map((row) => <Text size="xs" key={row.role_id}>{row.role_name}: требовалось {row.needed_hours} ЧЧ.</Text>)}
+                {traceQ.data.assignments.map((row, index) => <Text size="xs" key={index}>Спринт {row.sprint_no}: {row.engineer_id}, роль {row.role_id}, назначено {row.hours} ЧЧ; фонд орбиты на момент прогона {row.available_hours ?? 'не сохранён'} ЧЧ.</Text>)}
+                {traceQ.data.dependency_bound && <Text size="xs">Граница зависимости: спринт {traceQ.data.dependency_bound.earliest_start_sprint}.</Text>}
+                {!traceQ.data.source_available && <Text size="xs" c="dimmed">Исходная загрузка больше не доступна в базе; снимок прогона сохранён.</Text>}
+                {traceQ.data.source_records.map((record, index) => <Text size="xs" key={index}>{record.entity} / {record.entity_id}, {record.field_name}: {record.source_sheet}!{record.source_cell}, исходно «{record.raw_value ?? 'пусто'}», после нормализации «{record.normalized_value ?? 'пусто'}».</Text>)}
+              </Stack>)}
+
+          {dependencyBound && dependencyBound.earliest_start_sprint > 1 && (
+            <Text size="sm" c="dimmed" className="drawer-note">
+              По зависимостям этого прогона старт возможен не раньше спринта {dependencyBound.earliest_start_sprint}.
+            </Text>
+          )}
+
+          {goalOutcome && (
             <Stack gap={4}>
+              <Text size="sm" fw={500}>Цель и результат</Text>
+              <GoalRow label="Цель исполнителя">
+                {goalOutcome.result_executor ?? 'Не указана'}
+                {goalOutcome.requested_goal_label ? `, ${goalOutcome.requested_goal_label}` : ''}
+              </GoalRow>
+              <GoalRow label="Цель заказчика">{goalOutcome.result_customer ?? 'Не указана'}</GoalRow>
+              <GoalRow label="Предложение плана">
+                {goalOutcome.proposal_action === 'recommend_cancel'
+                  ? 'Рекомендовать отмену, без согласия заказчика'
+                  : goalOutcome.proposed_goal_label ?? 'Решение не требуется'}
+              </GoalRow>
+              <GoalRow label="Подтверждённый результат">
+                {goalOutcome.confirmed_closure_label ?? 'Не подтверждён'}
+                {goalOutcome.confirmed_goal_label ? `, ${goalOutcome.confirmed_goal_label}` : ''}
+              </GoalRow>
+              {isDefault && can('planner') && goalOutcome.status === 'Done' && (
+                <>
+                  <Button size="xs" variant="subtle" onClick={() => setConfirmOpen(!confirmOpen)}>
+                    Подтвердить или исправить бизнес результат
+                  </Button>
+                  {confirmOpen && (
+                    <Stack gap="xs">
+                      <Select label="Итог" value={closureCode} onChange={setClosureCode}
+                        data={[{ value: 'ACHIEVED', label: 'Цель достигнута' },
+                          { value: 'NOT_ACHIEVED', label: 'Цель не достигнута' },
+                          { value: 'CANCELLED_BY_CUSTOMER', label: 'Отменено заказчиком' }]} />
+                      {closureCode === 'ACHIEVED' && <Select label="Достигнутый этап" value={goalCode}
+                        onChange={setGoalCode} data={[1, 2, 3, 4, 5, 6].map((n) => ({ value: `R${n}`, label: `R${n}` }))} />}
+                      {me?.auth === 'off'
+                        ? <TextInput label="Кто подтвердил" value={confirmedBy}
+                            onChange={(event) => setConfirmedBy(event.currentTarget.value)} />
+                        : <Text size="xs" c="dimmed">Подтверждает: {me?.name}</Text>}
+                      <TextInput label="Основание" value={confirmationNote}
+                        onChange={(event) => setConfirmationNote(event.currentTarget.value)} />
+                      <Button size="xs" loading={confirmBusy} onClick={saveConfirmation}>Сохранить подтверждение</Button>
+                    </Stack>
+                  )}
+                </>
+              )}
+            </Stack>
+          )}
+
+          {state && (
+            <Stack gap={6}>
               <Text size="sm" fw={500}>
-                Часы
+                Состояние на момент прогона
               </Text>
-              <Text size="sm" c="dimmed">
-                Остаток: {fmtHours(board.remaining_hh)}
-                {board.estimate_disputed && (
-                  <>
-                    {' '}
-                    · оценка спорная: столбец матрицы {board.estimated_hh_effective} ЧЧ, в
-                    исходнике {board.estimated_hh_declared} ЧЧ
-                  </>
-                )}
-              </Text>
+              <Group gap="xs">
+                <Badge variant="outline" color="gray" size="lg" style={{ textTransform: 'none' }}>{state.status}</Badge>
+                <Text size="sm">Остаток: {fmtHours(state.remaining_hh)} и {fmtSp(state.remaining_sp)} SP</Text>
+              </Group>
+              {task.estimated_hh_declared !== null && task.estimated_hh_matrix_total !== null && task.estimated_hh_declared !== task.estimated_hh_matrix_total && (
+                <Text size="sm" c="dimmed">
+                  Оценка спорная: в столбце матрицы {task.estimated_hh_effective} ЧЧ, в исходнике {task.estimated_hh_declared} ЧЧ.
+                </Text>
+              )}
+            </Stack>
+          )}
+
+          {roleDemand.length > 0 && (
+            <Stack gap={6}>
+              <Text size="sm" fw={500}>Остаток по ролям на момент прогона</Text>
+              <Table verticalSpacing={4} fz="sm">
+                <Table.Thead><Table.Tr><Table.Th>Роль</Table.Th><Table.Th ta="right">Осталось</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {roleDemand.map((row) => (
+                    <Table.Tr key={row.role_id}><Table.Td>{row.role_name}</Table.Td><Table.Td ta="right" className="tabular">{fmtHours(row.needed_hours)}</Table.Td></Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Stack>
+          )}
+
+          {progress.length > 0 && (
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>Работа по спринтам</Text>
+              <Text size="xs" c="dimmed">Часы и SP идут вместе: за спринт задача выполняет не больше доли работы, на которую хватает свободной ёмкости команды, а доля SP пропорциональна выполненным часам. Перевода SP в часы нет.</Text>
+              <Table verticalSpacing={4} fz="sm">
+                <Table.Thead><Table.Tr><Table.Th>Спринт</Table.Th><Table.Th ta="right">Часы</Table.Th><Table.Th ta="right">SP</Table.Th><Table.Th>Основа</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {progress.map((row) => (
+                    <Table.Tr key={row.sprint_no}>
+                      <Table.Td className="mono">{row.sprint_no}</Table.Td>
+                      <Table.Td ta="right" className="tabular">{fmtHours(row.assigned_hours)}</Table.Td>
+                      <Table.Td ta="right" className="tabular">{fmtSp(row.sp)}</Table.Td>
+                      <Table.Td>
+                        {row.progress_basis === 'team_sp_only' ? 'Только бюджет SP команды' : row.progress_basis === 'engineer_hours_only' ? 'Только работа инженеров' : 'Часы и SP'}
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
             </Stack>
           )}
 
@@ -143,10 +299,38 @@ export function TaskDetailDrawer({
   )
 }
 
+function GoalRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 12, padding: '4px 0', borderTop: '1px dashed var(--line)' }}>
+      <Text size="sm" c="dimmed">{label}</Text>
+      <Text size="sm" component="div">{children}</Text>
+    </div>
+  )
+}
+
+interface Competitor {
+  task_id: string
+  hours?: string
+  sp?: string
+  queue_rank: number
+  higher_priority: boolean
+}
+
+/** «T-1 (12 SP, выше в очереди)» — приоритет называем честно: ниже в очереди значит ниже. */
+function competitorsLabel(items: Competitor[], unit: string): string {
+  return items
+    .map((c) => `${c.task_id} (${c.sp ?? c.hours} ${unit}, ${c.higher_priority ? 'выше в очереди' : 'ниже в очереди'})`)
+    .join(', ')
+}
+
 function ReasonDetails({ details }: { details: Record<string, unknown> }) {
   const shortages = details.shortages
   const missingRoles = details.missing_roles
   const spBySprint = details.sp_by_sprint as Record<string, string> | undefined
+  const freeSpBySprint = details.free_sp_by_sprint as Record<string, string> | undefined
+  const spCompetitors = Array.isArray(details.competitors) ? (details.competitors as Competitor[]) : []
+  const horizonStart = typeof details.earliest_start_sprint === 'number' ? details.earliest_start_sprint : null
+  const blocking = Array.isArray(details.blocking) ? (details.blocking as Array<{ task_id: string; ready_from: number }>) : []
 
   return (
     <Stack gap={8}>
@@ -170,12 +354,36 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
             Не хватило часов
           </Text>
           <List size="sm">
-            {shortages.map((s: { role: string; need_hh: string; free_hh: string }, i: number) => (
+            {shortages.map((s: { role: string; need_hh: string; free_hh: string; unplaced_hh?: string; competitors?: Competitor[] }, i: number) => (
               <List.Item key={i}>
-                {s.role}: нужно {fmtHours(s.need_hh)}, свободно {fmtHours(s.free_hh)}
+                {s.role}: нужно {fmtHours(s.need_hh)}
+                {s.unplaced_hh ? `, не удалось разместить ${fmtHours(s.unplaced_hh)}` : ''}, свободно {fmtHours(s.free_hh)}
+                {s.competitors && s.competitors.length > 0 && (
+                  <Text size="xs" c="dimmed">Часы заняты: {competitorsLabel(s.competitors, 'ЧЧ')}</Text>
+                )}
               </List.Item>
             ))}
           </List>
+        </Stack>
+      )}
+      {freeSpBySprint && (
+        <Stack gap={2}>
+          <Text size="sm" fw={500}>Свободная ёмкость команды в SP</Text>
+          <Text size="sm" className="tabular">
+            {Object.entries(freeSpBySprint).map(([sprint, sp]) => `Спринт ${sprint}: ${sp}`).join('; ')}
+          </Text>
+          {spCompetitors.length > 0 && (
+            <Text size="xs" c="dimmed">Ёмкость заняли: {competitorsLabel(spCompetitors, 'SP')}</Text>
+          )}
+        </Stack>
+      )}
+      {horizonStart !== null && (
+        <Stack gap={2}>
+          <Text size="sm" fw={500}>Старт за горизонтом квартала</Text>
+          <Text size="sm">
+            Самый ранний допустимый старт — спринт {horizonStart}
+            {blocking.length > 0 ? `; задерживают: ${blocking.map((b) => `${b.task_id} (не раньше ${b.ready_from})`).join(', ')}` : ''}
+          </Text>
         </Stack>
       )}
       {spBySprint && Object.keys(spBySprint).length > 1 && (
@@ -185,8 +393,8 @@ function ReasonDetails({ details }: { details: Record<string, unknown> }) {
           </Text>
           <Text size="sm" className="tabular">
             {Object.entries(spBySprint)
-              .map(([sprint, sp]) => `спринт ${sprint}: ${isNegative(sp) ? sp : sp} SP`)
-              .join(' · ')}
+              .map(([sprint, sp]) => `Спринт ${sprint}: ${isNegative(sp) ? sp : sp} SP`)
+              .join('; ')}
           </Text>
         </Stack>
       )}

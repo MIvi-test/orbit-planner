@@ -2,7 +2,7 @@
 
 Живая база не нужна — `app.db.health` и сборщик бизнес-метрик подменяются,
 поэтому тесты проходят и на машине без PostgreSQL. Проверка на настоящей базе
-описана в docs/RUNBOOK.md (разделы с приёмкой сервера и метрик).
+описана в docs/RUNBOOK.md (раздел 6.3) и docs/OBSERVABILITY.md.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import server, views
+from app import planner, server, views
 
 HEALTH = {
     "dsn": "host=127.0.0.1 port=5432 dbname=pi_planner user=postgres",
@@ -32,6 +32,7 @@ SNAPSHOT = {
     "runs_total": 2,
     "run": {
         "run_id": 2,
+        "active_run_id": 2,
         "as_of_sprint": 3,
         "status": "ok",
         "created_epoch": 1_700_000_000.0,
@@ -151,6 +152,13 @@ def test_livez_answers_without_the_database(base_url: str, monkeypatch) -> None:
     assert payload["status"] == "alive"
     assert payload["version"] == server.APP_VERSION
     assert payload["uptime_seconds"] >= 0
+
+    # A stale browser PI selection must not turn a liveness probe into a DB lookup.
+    request = urllib.request.Request(
+        f"{base_url}/api/livez", headers={"X-PI-ID": "missing-pi"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.status == 200
 
 
 def test_version_reports_app_etl_and_pi(base_url: str, monkeypatch) -> None:
@@ -385,8 +393,25 @@ def test_view_run_defaults_to_the_last_ok_run(base_url: str, fake_db) -> None:
     assert status == 200
     assert payload["run_id"] == 2
     assert payload["run_default"] is True
-    assert "status = 'ok'" in fake_db.sql[0]
+    assert "status IN ('ok', 'infeasible')" in fake_db.sql[0]
     assert "WHERE run_id = %s::int" in fake_db.select()[0]
+
+
+def test_run_view_without_active_run_returns_explicit_404(base_url: str, fake_db) -> None:
+    fake_db.run_id = None
+
+    status, _, body = get(f"{base_url}/api/views/alerts")
+
+    assert status == 404
+    assert json.loads(body)["error"] == "no_active_run"
+    assert "query_dicts" not in fake_db.kinds
+
+
+def test_unknown_run_returns_404(base_url: str, fake_db) -> None:
+    status, _, body = get(f"{base_url}/api/views/alerts?run_id=1234")
+
+    assert status == 404
+    assert json.loads(body)["error"] == "run_not_found"
 
 
 def test_view_accepts_run_limit_offset_and_order(base_url: str, fake_db) -> None:
@@ -512,3 +537,19 @@ def test_empty_upload_is_rejected(base_url: str) -> None:
 
     assert status == 400
     assert json.loads(body.decode("utf-8"))["error"] == "bad_upload"
+
+
+def test_rejected_plan_is_reported_as_422(base_url: str, monkeypatch) -> None:
+    violation = {"check_code": "UNDER_ALLOCATED", "entity": "A / QA", "detail": "0 ЧЧ"}
+
+    def reject(_body, _filename, **_kwargs):
+        raise planner.PlanValidationError(42, 1, [violation])
+
+    monkeypatch.setattr(server.ingest, "load_dataset", reject)
+
+    status, _, body = post(f"{base_url}/api/dataset", b"dataset")
+    payload = json.loads(body)
+    assert status == 422
+    assert payload["error"] == "plan_validation_failed"
+    assert payload["run_id"] == 42
+    assert payload["violations"] == [violation]

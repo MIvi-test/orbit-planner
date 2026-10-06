@@ -200,7 +200,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Блокирующие нарушения контракта последнего успешного прогона.",
+      "description": "Блокирующие нарушения контракта последней попытки расчёта.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -272,7 +272,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(pi_planner_plan_kpi_value{kpi=\"bus_factor\"})",
+          "expr": "pi_planner_plan_kpi_value{kpi=\"bus_factor\",kind=\"actual\"}",
           "instant": true,
           "legendFormat": "Bus Factor",
           "range": false,
@@ -388,7 +388,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Число задач последнего прогона по решению планировщика.",
+      "description": "Число задач активного прогона по решению планировщика.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "continuous-GrYlRd" },
@@ -429,7 +429,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Процентные KPI последнего прогона. Bus Factor вынесен в отдельную карточку.",
+      "description": "Процентные KPI активного прогона: прогноз и факт показаны отдельно. Bus Factor вынесен в отдельную карточку.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -468,9 +468,9 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (kpi, sprint) (pi_planner_plan_kpi_value{kpi!=\"bus_factor\"})",
+          "expr": "pi_planner_plan_kpi_value{kpi!=\"bus_factor\"}",
           "instant": true,
-          "legendFormat": "{{kpi}} · спринт {{sprint}}",
+          "legendFormat": "{{kpi}} · спринт {{sprint}} · {{kind}}",
           "range": false,
           "refId": "A"
         }
@@ -480,7 +480,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Алерты последнего прогона с разбивкой по уровню.",
+      "description": "Алерты активного прогона с разбивкой по уровню.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "continuous-RdYlGr" },

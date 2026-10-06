@@ -58,7 +58,8 @@ WITH last AS (
     ORDER BY run_id DESC
     LIMIT 1
 )
-SELECT (SELECT COUNT(*) FROM plan_runs)                            AS runs_total,
+SELECT totals.runs_total,
+       (SELECT MAX(run_id) FROM plan_runs WHERE status = 'ok')      AS active_run_id,
        l.run_id,
        l.as_of_sprint,
        l.status,
@@ -81,11 +82,12 @@ SELECT (SELECT COUNT(*) FROM plan_runs)                            AS runs_total
                                                                     AS build_seconds,
        NULLIF(l.params #>> '{observability,write_plan_seconds}', '')::numeric
                                                                     AS write_seconds
-FROM last l
+FROM (SELECT COUNT(*) AS runs_total FROM plan_runs) totals
+LEFT JOIN last l ON true
 """
 
 # Календарь отдаём метрикой, а не только в логах: если фонд квартала поедет,
-# это должно быть видно на дашборде (fund_factor 6.5714 против 7.0000).
+# это должно быть видно на дашборде (fund_factor 6.0000 для текущего PI).
 CALENDAR_SQL = """
 SELECT p.pi_id, p.start_date, p.end_date, p.sprint_count,
        f.factor                                    AS fund_factor,
@@ -97,7 +99,7 @@ LIMIT 1
 """
 
 DECISIONS_SQL = """
-WITH last AS (SELECT run_id FROM plan_runs ORDER BY run_id DESC LIMIT 1)
+WITH last AS (SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status = 'ok')
 SELECT s.decision, COALESCE(s.decision_reason, 'none') AS reason,
        COUNT(*) AS tasks,
        COALESCE(SUM(t.estimated_hh_effective), 0) AS hours
@@ -109,7 +111,7 @@ ORDER BY s.decision, reason
 """
 
 ALERTS_SQL = """
-WITH last AS (SELECT run_id FROM plan_runs ORDER BY run_id DESC LIMIT 1)
+WITH last AS (SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status = 'ok')
 SELECT a.level, a.alert_type, COUNT(*) AS count
 FROM last l
 JOIN alerts a USING (run_id)
@@ -118,11 +120,11 @@ ORDER BY a.level, a.alert_type
 """
 
 KPI_SQL = """
-WITH last AS (SELECT run_id FROM plan_runs ORDER BY run_id DESC LIMIT 1)
-SELECT k.sprint_no, k.kpi_code, k.value, k.target_min, k.target_max
+WITH last AS (SELECT MAX(run_id) AS run_id FROM plan_runs WHERE status = 'ok')
+SELECT k.sprint_no, k.kpi_code, k.kind, k.value, k.target_min, k.target_max
 FROM last l
 JOIN kpi_snapshots k USING (run_id)
-ORDER BY k.kpi_code, k.sprint_no
+ORDER BY k.kpi_code, k.sprint_no, k.kind
 """
 
 DQ_SQL = """
@@ -701,12 +703,18 @@ class Metrics:
         """Серии последнего прогона и календаря. Пусто, если базы нет."""
         out: list[str] = []
         run = snapshot.get("run")
-        if run:
-            run_id = str(run.get("run_id"))
+        if snapshot.get("db_up"):
             out += [
                 "# HELP pi_planner_plan_runs_total Прогонов планировщика в plan_runs",
                 "# TYPE pi_planner_plan_runs_total gauge",
                 f"pi_planner_plan_runs_total {snapshot.get('runs_total', 0)}",
+                "# HELP pi_planner_plan_active_run_id Числовой ID последнего успешного прогона, как в UI; 0 если его нет",
+                "# TYPE pi_planner_plan_active_run_id gauge",
+                f"pi_planner_plan_active_run_id {int((run or {}).get('active_run_id') or 0)}",
+            ]
+        if run and run.get("run_id") is not None:
+            run_id = str(run.get("run_id"))
+            out += [
                 "# HELP pi_planner_plan_last_run_info Последний прогон: run_id, as_of_sprint, status",
                 "# TYPE pi_planner_plan_last_run_info gauge",
                 _sample(
@@ -784,7 +792,7 @@ class Metrics:
         decisions = snapshot.get("decisions") or []
         if decisions:
             out += [
-                "# HELP pi_planner_plan_tasks Задачи последнего прогона по решению и причине",
+                "# HELP pi_planner_plan_tasks Задачи активного прогона по решению и причине",
                 "# TYPE pi_planner_plan_tasks gauge",
             ]
             out.extend(
@@ -796,7 +804,7 @@ class Metrics:
                 for row in decisions
             )
             out += [
-                "# HELP pi_planner_plan_task_hours Часы задач последнего прогона по решению и причине",
+                "# HELP pi_planner_plan_task_hours Часы задач активного прогона по решению и причине",
                 "# TYPE pi_planner_plan_task_hours gauge",
             ]
             out.extend(
@@ -811,7 +819,7 @@ class Metrics:
         alerts = snapshot.get("alerts") or []
         if alerts:
             out += [
-                "# HELP pi_planner_plan_alerts Алерты последнего прогона по уровню и типу",
+                "# HELP pi_planner_plan_alerts Алерты активного прогона по уровню и типу",
                 "# TYPE pi_planner_plan_alerts gauge",
             ]
             out.extend(
@@ -826,14 +834,14 @@ class Metrics:
         kpis = snapshot.get("kpis") or []
         if kpis:
             for metric_name, field, help_text in (
-                ("pi_planner_plan_kpi_value", "value", "Значение KPI последнего прогона"),
+                ("pi_planner_plan_kpi_value", "value", "Значение KPI активного прогона"),
                 ("pi_planner_plan_kpi_target_min", "target_min", "Нижняя граница KPI"),
                 ("pi_planner_plan_kpi_target_max", "target_max", "Верхняя граница KPI"),
             ):
                 samples = [
                     _sample(
                         metric_name,
-                        {"kpi": row["kpi_code"], "sprint": row["sprint_no"]},
+                        {"kpi": row["kpi_code"], "sprint": row["sprint_no"], "kind": row["kind"]},
                         float(row[field]),
                     )
                     for row in kpis

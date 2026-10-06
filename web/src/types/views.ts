@@ -30,13 +30,19 @@ export type AlertType = 'deadline_miss' | 'cascade_shift' | 'role_deficit'
 export type ViolationSeverity = 'error' | 'warning'
 export type KpiCode = 'pi_predictability' | 'say_do_ratio' | 'bus_factor'
 export type KpiKind = 'forecast' | 'actual'
-export type DiffCause = 'own_slip' | 'carry_over' | 'dependency' | 'capacity' | 'completed' | null
+export type DiffCause = 'own_slip' | 'carry_over' | 'dependency' | 'completed' | 'unknown' | null
 export type DiffChangeType =
   | 'unchanged'
   | 'newly_planned'
   | 'newly_deferred'
   | 'shifted_later'
   | 'shifted_earlier'
+  | 'newly_cancelled'
+  | 'decision_changed'
+  | 'start_changed'
+  | 'assignment_changed'
+  | 'sp_changed'
+  | 'reason_changed'
   | 'completed'
 
 // ---------------------------------------------------------------- доска задач
@@ -59,9 +65,9 @@ export interface TaskBoardRow {
   actual_start: string | null
   actual_end: string | null
   topo_order: number
-  depth: number
-  earliest_start_sprint: number | null
-  on_critical_path: boolean
+  edge_depth_at_load: number
+  earliest_start_sprint_at_load: number | null
+  on_longest_edge_chain: boolean
   remaining_hh: NumericString
   blocked_by: number
   blocks: number
@@ -97,6 +103,74 @@ export interface TaskRemainingHhRow {
   estimated_hours: NumericString
   spent_hours: NumericString
   remaining_hours: NumericString
+}
+
+export interface TaskStateRow {
+  run_id: number
+  task_id: string
+  as_of_sprint: number
+  status: TaskStateStatus
+  remaining_hh: NumericString
+  remaining_sp: NumericString
+  forecast_end_sprint: number | null
+}
+
+export interface PlanRoleDemandSnapshotRow {
+  run_id: number
+  task_id: string
+  role_id: number
+  role_name: string
+  needed_hours: NumericString
+}
+
+export interface PlanDependencyBoundRow {
+  run_id: number
+  task_id: string
+  earliest_start_sprint: number
+}
+
+export interface PlanGoalOutcomeRow {
+  run_id: number
+  task_id: string
+  prodf_id: string
+  status: TaskStateStatus
+  decision: Decision | null
+  result_planned: string | null
+  result_customer: string | null
+  result_executor: string | null
+  proposal_action: 'pursue_goal' | 'defer' | 'recommend_cancel' | null
+  proposed_goal_code: string | null
+  confirmed_closure_code: string | null
+  confirmed_goal_code: string | null
+  confirmation_source: 'user' | 'dataset' | null
+  requested_goal_label: string | null
+  proposed_goal_label: string | null
+  confirmed_goal_label: string | null
+  confirmed_closure_label: string | null
+  confirmation_state: 'confirmed_achieved' | 'customer_cancelled' | 'confirmed_not_achieved' | 'unconfirmed_done' | 'pending'
+  target_goal_rank: number | null
+  confirmed_goal_rank: number | null
+}
+
+export interface InitiativeGoalProgressRow {
+  run_id: number
+  prodf_id: string
+  task_count: number
+  target_task_count: number
+  confirmed_target_count: number
+  proposed_in_pi_count: number
+  highest_requested_stage: number | null
+  quarter_goal_status: 'goal_unknown' | 'confirmed_achieved' | 'forecast_in_pi' | 'at_risk'
+}
+
+export interface PlanTaskProgressRow {
+  run_id: number
+  task_id: string
+  sprint_no: number
+  assigned_hours: NumericString
+  work_hours: NumericString
+  sp: NumericString
+  progress_basis: 'both' | 'team_sp_only' | 'engineer_hours_only'
 }
 
 // --------------------------------------------------------------- звёздная карта
@@ -139,6 +213,8 @@ export interface BusFactorSkillRow {
   in_demand: boolean
   sole_in_role: boolean
   risk: string
+  critical: boolean
+  demand_source: 'confirmed' | 'role_proxy' | 'mixed' | 'none'
 }
 
 export interface EngineerAbsenceRiskRow {
@@ -154,6 +230,7 @@ export interface EngineerAbsenceRiskRow {
   planned_hours: NumericString
   planned_tasks: string[]
   tasks_without_backup: string[]
+  tasks_backup_unverified: string[]
   hours_without_backup: NumericString
   risk: string
 }
@@ -194,6 +271,35 @@ export interface TeamCapacitySpRow {
   focus_factor: NumericString
   available_sp_per_sprint: NumericString
   available_sp_per_pi: NumericString
+  velocity_min: NumericString | null
+  velocity_max: NumericString | null
+  velocity_stddev: NumericString | null
+  history_from: string | null
+  history_to: string | null
+  history_age_days: number | null
+}
+
+/** Прогноз перед спринтом против факта (DA-32). */
+export interface SprintForecastAccuracyRow {
+  run_id: number
+  sprint_no: number
+  planned_sp: NumericString | null
+  forecast_run_id: number | null
+  forecast_done_sp: NumericString | null
+  actual_done_sp: NumericString | null
+  forecast_value: NumericString | null
+  actual_value: NumericString | null
+}
+
+export interface PlanTeamCapacityRow {
+  run_id: number
+  team_id: string
+  history_points: number
+  observed_points: number
+  avg_velocity: NumericString
+  focus_factor: NumericString
+  available_sp_per_sprint: NumericString
+  observed_through_sprint: number
 }
 
 export interface TeamRow {
@@ -269,6 +375,10 @@ export interface InitiativeRow {
   br_id: string
   title: string | null
   priority_rung: number | null
+  business_priority: number | null
+  business_priority_by: string | null
+  business_priority_at: string | null
+  business_priority_note: string | null
 }
 
 export interface RefResultOptionRow {
@@ -290,6 +400,30 @@ export interface DqSummaryRow {
   severity: 'info' | 'warning' | 'error'
   n: number
   example: string | null
+}
+
+export interface DqIssueRow {
+  issue_id: number
+  batch_id: number
+  entity: string
+  entity_id: string | null
+  rule_code: string
+  severity: 'info' | 'warning' | 'error'
+  detail: string
+  review_status: 'open' | 'acknowledged' | 'resolved' | 'reopened'
+  reviewer: string | null
+  review_note: string | null
+  reviewed_at: string | null
+  is_blocking: boolean
+}
+
+export interface DqIssueReviewRow {
+  review_id: number
+  issue_id: number
+  decision: 'acknowledged' | 'resolved' | 'reopened'
+  reviewer: string
+  note: string
+  reviewed_at: string
 }
 
 // -------------------------------------------------------------- контракт прогона
@@ -394,15 +528,34 @@ export interface KpiSnapshotRow {
   run_id: number
   sprint_no: number
   kpi_code: KpiCode
-  value: NumericString
+  value: NumericString | null
+  calculation_status: 'calculated' | 'no_commitment' | 'no_plan' | 'no_relevant_skills'
   target_min: NumericString | null
   target_max: NumericString | null
   details: Json
   kind: KpiKind
 }
 
+/** Охват обязательств: «обещано 2 из 15» (DA-29). */
+export interface PiCoverage {
+  initiatives_total: number
+  committed: number
+  partial: number
+  not_promised: number
+  not_promised_initiatives: string[]
+  beyond_promise_done: string[]
+  text: string
+}
+
 export interface PiPredictabilityDetails {
   formula: string
+  coverage?: PiCoverage
+  planned_completed_by_sprint?: Record<string, number>
+  /** Только у факта: срез за последний загруженный спринт — итоговая это норма или промежуточный ход (DA-30). */
+  final?: boolean
+  expected_completed_by_now?: number
+  completed_n?: number
+  progress_vs_plan?: 'ahead' | 'on_plan' | 'behind'
   committed_initiatives: string[]
   committed_n: number
   partial_initiatives: string[]
@@ -417,6 +570,9 @@ export interface SayDoDetails {
   formula: string
   planned_sp: NumericString
   done_sp: NumericString
+  unplanned_sp: NumericString
+  /** Доли SP, которые текущий план тратит в спринте (бюджет работ); у закрытых спринтов — null (DA-32). */
+  work_budget_sp?: NumericString | null
   planned_tasks: string[]
   done_tasks: string[]
   note: string
@@ -457,6 +613,17 @@ export interface ActualUploadRow {
   source_sha256: string
   uploaded_at: string
   summary: ActualUploadSummary
+  coverage_status: 'draft' | 'incomplete' | 'complete'
+}
+
+export interface ActualReportIssueRow {
+  upload_id: number
+  task_id: string
+  role_id: number | null
+  issue_code: 'UNPLANNED_ROLE' | 'ROLE_OVERRUN' | 'TODO_WITH_HOURS' | 'DONE_WITH_NEW_HOURS' | 'STATUS_REGRESSION'
+  detail: string
+  reason: string
+  resolved_revision_id: number | null
 }
 
 export interface PlanDiffRow {
@@ -476,6 +643,10 @@ export interface PlanDiffRow {
   change_type: DiffChangeType
   cause: DiffCause
   explanation: string | null
+  start_changed: boolean
+  assignment_changed: boolean
+  sp_changed: boolean
+  reason_changed: boolean
 }
 
 export interface SprintDeviationRow {
@@ -525,8 +696,12 @@ export interface ActualsUploadResult {
     in_progress: number
     hours: NumericString
     warnings: string[]
+    coverage_status: 'draft' | 'incomplete' | 'complete'
+    expected_tasks: number
+    missing_tasks: string[]
+    missing_role_cells: string[]
   }
-  plan: PlanRunSummary
+  plan: PlanRunSummary | null
 }
 
 export interface UploadErrorPayload {

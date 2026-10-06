@@ -3,7 +3,7 @@
 `fake_db` подменяет обращения к PostgreSQL, которые делает `app/views.py`:
 тесты витрин идут без базы, а текст SQL проверяется по записи вызовов, а не по
 факту выполнения. На живой базе витрины проверяются отдельно — приёмка в
-docs/RUNBOOK.md, раздел «Приёмка сервера».
+docs/RUNBOOK.md, раздел 6.3.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ class FakeViewsDB:
         self.rows = list(rows or [])
         self.total = total
         self.run_id = run_id
+        self.existing_run_ids = {2, 7, 999}
         self.columns = columns or ["alert_id", "run_id", "sprint_no"]
         self.calls: list[tuple[str, str, list[Any]]] = []
         self.error: Exception | None = None
@@ -42,6 +43,9 @@ class FakeViewsDB:
     def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         self.calls.append(("query_one", self._norm(sql), list(params or [])))
         self._boom()
+        if "WHERE run_id = %s::int" in sql:
+            requested = int(params[0])
+            return {"run_id": requested} if requested in self.existing_run_ids else None
         return {"run_id": self.run_id}
 
     def scalar(self, sql: str, params: Any = None) -> Any:
@@ -93,3 +97,18 @@ def fake_db(monkeypatch) -> FakeViewsDB:
     for name in ("query_dicts", "query_one", "scalar"):
         monkeypatch.setattr(views.db, name, getattr(fake, name))
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _auth_defaults(monkeypatch):
+    """Тесты сервера по умолчанию идут без авторизации; проверки доступа включают её сами.
+
+    Счётчик неудачных попыток сбрасывается: иначе 429 перетекает между тестами.
+    """
+    from app import auth
+
+    monkeypatch.setenv("PI_PLANNER_AUTH", "off")
+    monkeypatch.delenv("PI_PLANNER_ADMIN_TOKEN", raising=False)
+    auth.LIMITER.reset()
+    yield
+    auth.LIMITER.reset()

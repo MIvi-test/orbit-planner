@@ -19,54 +19,67 @@ DROP VIEW IF EXISTS v_plan_violations CASCADE;
 
 CREATE VIEW v_plan_violations AS
 
--- A. Ёмкость команды в SP (SP засчитываются в start_sprint) ------------
--- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: 7-й спринт
--- короче (8 дней), значит и SP в нём меньше (ADR-017).
+-- A. Ёмкость команды в SP (SP учитываются по долям plan_task_sp) ------------
+-- Ёмкость = available_sp_per_sprint × factor СВОЕГО спринта: в текущем PI все шесть спринтов полные (ADR-025).
 SELECT x.run_id, 'SP_OVERFLOW'::text AS check_code, 'error'::text AS severity,
        (t.team_id || ' / спринт ' || x.sprint_no)::text AS entity,
        ('запланировано ' || SUM(x.sp) || ' SP при ёмкости '
-        || MAX(ROUND(c.available_sp_per_sprint * f.factor, 2))
-        || ' SP (полный спринт ' || MAX(c.available_sp_per_sprint)
+        || MAX(ROUND(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint) * f.factor, 2))
+        || ' SP (полный спринт ' || MAX(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint))
         || ' × ' || MAX(f.factor) || ')')::text AS detail
 FROM plan_task_sp x
 JOIN tasks t               ON t.task_id = x.task_id
 JOIN plan_runs r           ON r.run_id = x.run_id
 JOIN v_team_capacity_sp c  ON c.team_id = t.team_id
+LEFT JOIN plan_team_capacity pc ON pc.run_id = x.run_id AND pc.team_id = t.team_id
 JOIN v_sprint_fund_factor f ON f.pi_id = r.pi_id AND f.sprint_no = x.sprint_no
 GROUP BY x.run_id, t.team_id, x.sprint_no
-HAVING SUM(x.sp) > MAX(c.available_sp_per_sprint * f.factor)
+HAVING SUM(x.sp) > MAX(COALESCE(pc.available_sp_per_sprint, c.available_sp_per_sprint) * f.factor)
+
+-- A3. У прогона с моделью ёмкости нет снимка ёмкости команды (DA-27) -------
+UNION ALL
+SELECT r.run_id, 'CAPACITY_SNAPSHOT_MISSING', 'error', t.team_id::text,
+       'прогон считался по модели ёмкости, но снимка ёмкости этой команды нет'::text
+FROM plan_runs r
+JOIN plan_task_schedule s ON s.run_id = r.run_id AND s.decision = 'in_quarter'
+JOIN tasks t ON t.task_id = s.task_id
+WHERE r.params ? 'capacity_model'
+  AND NOT EXISTS (SELECT 1 FROM plan_team_capacity pc WHERE pc.run_id = r.run_id AND pc.team_id = t.team_id)
+GROUP BY r.run_id, t.team_id
 
 -- A2. Доли SP задачи не сходятся с её SP (ADR-020) ------------------------
 UNION ALL
 SELECT s.run_id, 'SP_SHARES_MISMATCH', 'error', s.task_id::text,
-       ('сумма долей ' || COALESCE(sh.sp, 0) || ' SP, у задачи ' || t.estimation_sp
+       ('сумма долей ' || COALESCE(sh.sp, 0) || ' SP, остаток на момент прогона ' || ts.remaining_sp
         || ' SP' || CASE WHEN sh.outside > 0 THEN ', доли вне окна задачи: ' || sh.outside ELSE '' END)::text
 FROM plan_task_schedule s
-JOIN tasks t ON t.task_id = s.task_id
+JOIN task_state ts ON ts.run_id = s.run_id AND ts.task_id = s.task_id
 LEFT JOIN LATERAL (
     SELECT SUM(x.sp) AS sp,
            COUNT(*) FILTER (WHERE x.sprint_no NOT BETWEEN s.start_sprint AND s.end_sprint) AS outside
     FROM plan_task_sp x WHERE x.run_id = s.run_id AND x.task_id = s.task_id
 ) sh ON TRUE
 WHERE s.decision = 'in_quarter'
-  AND (COALESCE(sh.sp, 0) <> COALESCE(t.estimation_sp, 0) OR sh.outside > 0)
+  AND (COALESCE(sh.sp, 0) <> ts.remaining_sp OR sh.outside > 0)
 
 -- B. Перегрузка инженера: считать по СУММЕ ВСЕХ ОРБИТ ------------------
--- Фонд спринта — ставка × 80 ЧЧ × factor спринта (короткий 7-й = ×0.5714).
+-- Фонд спринта — ставка × 80 ЧЧ × factor спринта (в текущем PI factor = 1.0000).
 UNION ALL
 SELECT a.run_id, 'ENGINEER_OVERLOAD', 'error',
        (a.engineer_id || ' / спринт ' || a.sprint_no)::text,
        ('назначено ' || SUM(a.hours) || ' ЧЧ при фонде '
-        || MAX(e.total_capacity_rate * p.fte_hours_per_sprint * f.factor)
-        || ' (ставка ' || MAX(e.total_capacity_rate) || ', factor '
-        || MAX(f.factor) || ')')::text
+        || MAX(COALESCE(c.available_hours, e.total_capacity_rate * p.fte_hours_per_sprint * f.factor))
+        || ' ЧЧ по снимку прогона (или штатному фонду без снимка)')::text
 FROM plan_assignments a
 JOIN engineers e ON e.engineer_id = a.engineer_id
 JOIN plan_runs r ON r.run_id = a.run_id
-CROSS JOIN pi_periods p
+JOIN pi_periods p ON p.pi_id = r.pi_id
 JOIN v_sprint_fund_factor f ON f.pi_id = r.pi_id AND f.sprint_no = a.sprint_no
+LEFT JOIN (SELECT run_id, engineer_id, sprint_no, SUM(available_hours) AS available_hours
+      FROM plan_capacity_snapshot GROUP BY run_id, engineer_id, sprint_no) c
+  ON c.run_id = a.run_id AND c.engineer_id = a.engineer_id AND c.sprint_no = a.sprint_no
 GROUP BY a.run_id, a.engineer_id, a.sprint_no
-HAVING SUM(a.hours) > MAX(e.total_capacity_rate * p.fte_hours_per_sprint * f.factor)
+HAVING SUM(a.hours) > MAX(COALESCE(c.available_hours, e.total_capacity_rate * p.fte_hours_per_sprint * f.factor))
 
 -- C. Инженер не умеет эту роль ----------------------------------------
 UNION ALL
@@ -103,14 +116,27 @@ WHERE a.serving_team_id <> t.team_id
 UNION ALL
 SELECT sb.run_id, 'DEPENDENCY_VIOLATED', 'error',
        (d.blocking_task_id || ' -> ' || d.blocked_task_id)::text,
-       ('блокирующая стартует в спринте ' || sa.start_sprint
-        || ', блокируемая в ' || sb.start_sprint
+       ('режим ' || COALESCE(r.params->>'dependency_mode', 'start_start')
+        || ': блокирующая ' || sa.start_sprint || '..' || sa.end_sprint
+        || ', блокируемая стартует в ' || sb.start_sprint
         || ', требуется зазор ' || d.min_gap_sprints)::text
 FROM task_dependencies d
 JOIN plan_task_schedule sa ON sa.task_id = d.blocking_task_id
 JOIN plan_task_schedule sb ON sb.task_id = d.blocked_task_id AND sb.run_id = sa.run_id
+JOIN plan_runs r ON r.run_id = sb.run_id
 WHERE sa.decision = 'in_quarter' AND sb.decision = 'in_quarter'
-  AND sb.start_sprint < sa.start_sprint + d.min_gap_sprints
+  AND sb.start_sprint <
+      CASE COALESCE(r.params->>'dependency_mode', 'start_start')
+          WHEN 'finish_start' THEN sa.end_sprint + d.min_gap_sprints
+          ELSE sa.start_sprint + d.min_gap_sprints
+      END
+
+UNION ALL
+SELECT r.run_id, 'DEPENDENCY_MODE_UNKNOWN', 'error', ('прогон ' || r.run_id)::text,
+       ('неизвестный режим зависимостей ' || (r.params->>'dependency_mode'))::text
+FROM plan_runs r
+WHERE COALESCE(r.params->>'dependency_mode', 'start_start')
+      NOT IN ('start_start', 'finish_start')
 
 -- G. Назначение вне окна задачи ----------------------------------------
 UNION ALL
@@ -122,20 +148,54 @@ JOIN plan_task_schedule s ON s.run_id = a.run_id AND s.task_id = a.task_id
 WHERE s.start_sprint IS NOT NULL
   AND (a.sprint_no < s.start_sprint OR a.sprint_no > s.end_sprint)
 
--- H. Задача взята в квартал, но часы по роли недоданы -------------------
+-- H. Сметная работа по роли не совпала со снимком прогона --------------
 UNION ALL
 SELECT s.run_id, 'UNDER_ALLOCATED', 'error',
        (s.task_id || ' / ' || r.canonical_name)::text,
-       ('нужно ' || rm.remaining_hours || ' ЧЧ, назначено '
+       ('нужно ' || demand.needed_hours || ' сметных ЧЧ, назначено '
         || COALESCE(al.h, 0))::text
 FROM plan_task_schedule s
-JOIN v_task_remaining_hh rm ON rm.task_id = s.task_id
-JOIN roles r ON r.role_id = rm.role_id
-LEFT JOIN (SELECT run_id, task_id, role_id, SUM(hours) AS h
+JOIN plan_role_demand_snapshot demand ON demand.run_id = s.run_id AND demand.task_id = s.task_id
+JOIN roles r ON r.role_id = demand.role_id
+LEFT JOIN (SELECT run_id, task_id, role_id, SUM(work_hours) AS h
              FROM plan_assignments GROUP BY 1, 2, 3) al
-       ON al.run_id = s.run_id AND al.task_id = s.task_id AND al.role_id = rm.role_id
-WHERE s.decision = 'in_quarter' AND rm.remaining_hours > 0
-  AND COALESCE(al.h, 0) < rm.remaining_hours
+       ON al.run_id = s.run_id AND al.task_id = s.task_id AND al.role_id = demand.role_id
+WHERE s.decision = 'in_quarter'
+  AND COALESCE(al.h, 0) < demand.needed_hours
+
+UNION ALL
+SELECT s.run_id, 'OVER_ALLOCATED', 'error',
+       (s.task_id || ' / ' || r.canonical_name)::text,
+       ('нужно ' || demand.needed_hours || ' сметных ЧЧ, назначено '
+        || al.h)::text
+FROM plan_task_schedule s
+JOIN plan_role_demand_snapshot demand ON demand.run_id = s.run_id AND demand.task_id = s.task_id
+JOIN roles r ON r.role_id = demand.role_id
+JOIN (SELECT run_id, task_id, role_id, SUM(work_hours) AS h
+      FROM plan_assignments GROUP BY 1, 2, 3) al
+  ON al.run_id = s.run_id AND al.task_id = s.task_id AND al.role_id = demand.role_id
+WHERE s.decision = 'in_quarter' AND al.h > demand.needed_hours + 0.01
+
+UNION ALL
+SELECT a.run_id, 'ASSIGNMENT_ROLE_NOT_NEEDED', 'error',
+       (a.task_id || ' / role_id ' || a.role_id)::text,
+       'назначение по роли, которой нет в снимке потребности задачи'::text
+FROM plan_assignments a
+WHERE NOT EXISTS (SELECT 1 FROM plan_role_demand_snapshot d
+                  WHERE d.run_id = a.run_id AND d.task_id = a.task_id AND d.role_id = a.role_id)
+  AND EXISTS (SELECT 1 FROM plan_runs r WHERE r.run_id = a.run_id
+              AND r.params->>'role_demand_snapshot_version' = '1')
+
+UNION ALL
+SELECT s.run_id, 'ROLE_DEMAND_SNAPSHOT_MISSING', 'error', s.task_id::text,
+       'задаче нужны часы, но снимок ролевой потребности отсутствует'::text
+FROM plan_task_schedule s
+JOIN task_state st ON st.run_id = s.run_id AND st.task_id = s.task_id
+JOIN plan_runs r ON r.run_id = s.run_id
+WHERE s.decision = 'in_quarter' AND st.remaining_hh > 0
+  AND r.params->>'role_demand_snapshot_version' = '1'
+  AND NOT EXISTS (SELECT 1 FROM plan_role_demand_snapshot d
+                  WHERE d.run_id = s.run_id AND d.task_id = s.task_id)
 
 -- I. Задача in_quarter вообще без назначений ---------------------------
 UNION ALL
@@ -223,13 +283,13 @@ JOIN plan_task_schedule sa ON sa.task_id = d.blocking_task_id
 JOIN plan_task_schedule sb ON sb.task_id = d.blocked_task_id AND sb.run_id = sa.run_id
 WHERE sb.decision = 'in_quarter' AND sa.decision <> 'in_quarter'
 
--- Q. Старт раньше графа (task_sequence.earliest_start_sprint) ------------
+-- Q. Старт раньше живого графа, сохранённого в этом прогоне ----------------
 UNION ALL
 SELECT s.run_id, 'START_BEFORE_EARLIEST', 'error', s.task_id::text,
        ('старт в спринте ' || s.start_sprint || ', а граф разрешает не раньше '
         || COALESCE(q.earliest_start_sprint, 1))::text
 FROM plan_task_schedule s
-LEFT JOIN task_sequence q ON q.task_id = s.task_id
+LEFT JOIN plan_dependency_bounds q ON q.run_id = s.run_id AND q.task_id = s.task_id
 WHERE s.decision = 'in_quarter'
   AND s.start_sprint < COALESCE(q.earliest_start_sprint, 1)
 
@@ -291,7 +351,7 @@ SELECT b.run_id, 'BASELINE_MUTATED', 'error', b.task_id::text,
         || ' в каноническом прогоне ' || c.run_id)::text
 FROM plan_baseline b
 JOIN plan_baseline c ON c.task_id = b.task_id AND c.run_id <> b.run_id
-WHERE c.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status = 'ok')
+WHERE c.run_id = (SELECT MIN(run_id) FROM plan_runs WHERE as_of_sprint = 0 AND status IN ('ok', 'infeasible'))
   AND (b.planned_sp <> c.planned_sp OR b.committed <> c.committed)
 
 -- W. KPI посчитаны не полностью ------------------------------------------
@@ -299,17 +359,17 @@ UNION ALL
 SELECT r.run_id, 'KPI_INCOMPLETE', 'error', ('прогон ' || r.run_id)::text,
        ('pi_predictability ' || k.pred || ' (нужно 1), say_do_ratio ' || k.say_do
         || ' (нужно ' || p.sprint_count || '), bus_factor ' || k.bf
-        || ' (нужно 1), NULL-значений ' || k.nulls)::text
+        || ' (нужно 1), некорректных значений ' || k.invalid_values)::text
 FROM plan_runs r
 CROSS JOIN pi_periods p
 CROSS JOIN LATERAL (
     SELECT COUNT(*) FILTER (WHERE kpi_code = 'pi_predictability' AND kind = 'forecast') AS pred,
            COUNT(*) FILTER (WHERE kpi_code = 'say_do_ratio')      AS say_do,
            COUNT(*) FILTER (WHERE kpi_code = 'bus_factor')        AS bf,
-           COUNT(*) FILTER (WHERE value IS NULL)                  AS nulls
+           COUNT(*) FILTER (WHERE (calculation_status = 'calculated') <> (value IS NOT NULL)) AS invalid_values
     FROM kpi_snapshots WHERE run_id = r.run_id
 ) k
-WHERE k.pred <> 1 OR k.say_do <> p.sprint_count OR k.bf <> 1 OR k.nulls > 0
+WHERE k.pred <> 1 OR k.say_do <> p.sprint_count OR k.bf <> 1 OR k.invalid_values > 0
 
 -- X. Часы списаны с орбиты сверх её бюджета ------------------------------
 -- Проверка B считает СУММУ всех орбит и потому не видит перекос:
@@ -395,7 +455,30 @@ WHERE s.decision = 'in_quarter'
                                   AND a.sprint_no = g)
                 AND NOT EXISTS (SELECT 1 FROM plan_task_sp x   -- спринт, где идут только SP, — не дыра
                                 WHERE x.run_id = s.run_id AND x.task_id = s.task_id
-                                  AND x.sprint_no = g));
+                                  AND x.sprint_no = g))
+
+-- AD. Исполнитель не владеет подтверждённой технологией задачи -----------
+UNION ALL
+SELECT a.run_id, 'SKILL_MISMATCH', 'error',
+       (a.task_id || ' / ' || a.engineer_id)::text,
+       ('нет навыка ' || s.name || ' для роли ' || a.role_id)::text
+FROM plan_assignments a
+JOIN task_role_skill_reviews r ON r.task_id = a.task_id AND r.role_id = a.role_id
+  AND r.status = 'confirmed'
+JOIN task_role_skill_requirements q ON q.task_id = a.task_id AND q.role_id = a.role_id
+JOIN skills s ON s.skill_id = q.skill_id
+LEFT JOIN engineer_skills es ON es.engineer_id = a.engineer_id AND es.skill_id = q.skill_id
+WHERE es.skill_id IS NULL
+
+-- AE. Стек назначенной работы ещё не подтверждён -----------------------
+UNION ALL
+SELECT a.run_id, 'SKILL_REQUIREMENTS_UNVERIFIED', 'warning',
+       (a.task_id || ' / роль ' || a.role_id)::text,
+       'Требования к технологиям не подтверждены; назначение не доказывает соответствие стеку'::text
+FROM plan_assignments a
+LEFT JOIN task_role_skill_reviews r ON r.task_id = a.task_id AND r.role_id = a.role_id
+GROUP BY a.run_id, a.task_id, a.role_id, r.status
+HAVING r.status IS DISTINCT FROM 'confirmed';
 
 COMMENT ON VIEW v_plan_violations IS
  'Приёмка плана: нет строк с severity = error. Строки severity = warning план не '
