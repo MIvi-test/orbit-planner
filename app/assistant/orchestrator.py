@@ -59,7 +59,7 @@ def operation(intent: Intent) -> str:
               "эффект мер. В summary/explanation не пиши чисел: для численного вывода верни "
               "fact_refs как массив {evidence_id, field}, где field — точный путь к числу "
               "в переданном JSON факта; сервер подставит значение. "
-              "При неоднозначности верни needs_clarification. "
+              "Идентификаторы объектов выводи как [entity:точный_ID] из фактов; сервер проверит их. При неоднозначности верни needs_clarification. "
               "Верни JSON с status, summary, explanation, clarification, fact_refs.")
     details = {
         "system_help": "Объясни действующие правила и порядок работы по документации; прогон не обязателен.",

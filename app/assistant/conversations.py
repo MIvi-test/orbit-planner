@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from app import auth, db
-from app.assistant import prompts
+from app.assistant import diagnostics, prompts
 
 
 class ChatError(ValueError):
@@ -226,7 +226,7 @@ def list_messages(principal: auth.Principal, conversation_id: Any, cursor: str |
         rows = cur.fetchall()
         items = [{"message_id": str(row["message_id"]), "role": row["role"],
                   "text": row["content"], "context_revision": row["context_revision"],
-                  **({"answer": row["payload"]} if row["role"] == "assistant" and row["payload"] else {})}
+                  **({"answer": diagnostics.public_payload(row["payload"], principal)} if row["role"] == "assistant" and row["payload"] else {})}
                  for row in rows[:50]]
         return {"items": items, "next_cursor": str(rows[49]["sequence_no"]) if len(rows) > 50 else None}
 
@@ -314,7 +314,8 @@ def get_job(principal: auth.Principal, job_id: Any) -> dict[str, Any]:
     if row is None:
         raise ChatError("job_not_found", 404)
     return {"job_id": str(row["job_id"]), "status": row["status"],
-            "result": row["result_payload"], "error": row["error_payload"]}
+            "result": diagnostics.public_payload(row["result_payload"], principal),
+            "error": diagnostics.public_payload(row["error_payload"], principal)}
 
 
 def cancel_job(principal: auth.Principal, job_id: Any) -> dict[str, Any]:
@@ -332,4 +333,5 @@ def cancel_job(principal: auth.Principal, job_id: Any) -> dict[str, Any]:
         if row is None:
             raise ChatError("job_not_found", 404)
         return {"job_id": str(row["job_id"]), "status": row["status"],
-                "result": row["result_payload"], "error": row["error_payload"]}
+                "result": diagnostics.public_payload(row["result_payload"], principal),
+            "error": diagnostics.public_payload(row["error_payload"], principal)}

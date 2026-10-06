@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import time
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from psycopg.types.json import Jsonb
 
 from app import auth, db
 from app.assistant import (
-    conversations, evidence, facts, knowledge, memory, orchestrator, prompts, providers,
+    conversations, diagnostics, evidence, facts, knowledge, memory, orchestrator, prompts, providers, triage,
     retrieval, scenarios, snapshots,
 )
 
@@ -58,7 +59,7 @@ def _current_principal(job: dict[str, Any]) -> auth.Principal:
         if row is None:
             raise conversations.ChatError("user_no_longer_active", 403)
         principal = auth.Principal(row["name"], row["role"], "db", row["user_id"])
-    elif source == "env" and auth.admin_token():
+    elif source == "env" and (auth.admin_token() or os.environ.get("PI_PLANNER_ASSISTANT_ENV_ADMIN_ENABLED") == "true"):
         principal = auth.Principal("admin-token", "admin", "env")
     elif source == "anonymous" and auth.mode() == "off":
         principal = auth.ANONYMOUS
@@ -117,6 +118,11 @@ def _prepare(job: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any],
                                    pending_intent=pending)
     comparison = (facts.compare_runs(previous["snapshot_id"], snapshot_id)
                   if intent.name == "changes" and previous else None)
+    saved_triage = triage.previous(job["conversation_id"], row["context_revision"], snapshot_id) if snapshot_id else None
+    if triage.requested(row["content"], saved_triage):
+        intent = orchestrator.Intent("critical_problems", None if snapshot_id else "Выберите PI и прогон для разбора проблем.")
+        return (row, profile, messages, "", snapshot_id, conversation["newer_run_available"],
+                selected_focus, retrieval.SearchResult(None, (), "not_required"), [], intent)
     kb_revision = UUID(payload["kb_revision"]) if payload.get("kb_revision") else None
     found = retrieval.search(row["content"], kb_revision,
                              scope="knowledge" if intent.name == "system_help" or not snapshot_id else "planning",
@@ -217,6 +223,11 @@ def process(job: dict[str, Any]) -> None:
         preparation_started = time.perf_counter()
         row, profile, messages, system, snapshot_id, newer, selected_focus, found, records, intent = _prepare(job)
         preparation_ms = round((time.perf_counter() - preparation_started) * 1000, 1)
+        if intent.name == "critical_problems" and snapshot_id:
+            saved = triage.previous(job["conversation_id"], row["context_revision"], snapshot_id)
+            answer, records = triage.answer(snapshot_id, row["content"], saved, row["context_revision"], newer)
+            _finish(job, row, answer, {"deterministic": True, "operation": "critical_problems"}, records)
+            return
         current = db.query_one("SELECT 1 FROM public.assistant_jobs WHERE job_id = %s "
                                "AND status = 'running' AND attempt_count = %s AND lease_until > now() "
                                "AND deadline_at > now()", (job["job_id"], job["attempt_count"]))
@@ -234,6 +245,7 @@ def process(job: dict[str, Any]) -> None:
             return
         generation = None
         answer = None
+        rejected = []
         llm_started = time.perf_counter()
         for attempt in range(2):
             remaining = (job["deadline_at"] - datetime.now(timezone.utc)).total_seconds()
@@ -264,7 +276,8 @@ def process(job: dict[str, Any]) -> None:
                 evidence.render_fact_refs(answer, records)
                 break
             except ValueError as exc:
-                LOG.info("assistant answer rejected by grounding check: %s (attempt %s)", exc, attempt + 1,
+                rejected.append(diagnostics.reason(exc))
+                LOG.info("assistant answer rejected by grounding check: %s (attempt %s)", diagnostics.reason(exc), attempt + 1,
                          extra={"job_id": str(job["job_id"])})
                 if attempt == 1:
                     answer = {"status": "insufficient_data",
@@ -276,6 +289,10 @@ def process(job: dict[str, Any]) -> None:
                               "newer_run_available": newer,
                               "limitations": ["Ответ модели не прошёл проверку оснований."],
                               "degraded": True}
+        if answer is not None and answer.get("degraded") and snapshot_id:
+            answer, records = triage.answer(snapshot_id, "", None, row["context_revision"], newer)
+            answer["degraded"] = True
+            answer["limitations"].append("Объяснение модели не прошло проверку. Показан проверенный серверный список проблем.")
         assert answer is not None and generation is not None
         answer["kb_revision"] = str(found.revision) if found.revision else None
         used_chunks = {record["source_ref"] for record in records
@@ -292,7 +309,10 @@ def process(job: dict[str, Any]) -> None:
                           clarification="Укажите задачу, команду или код KPI.")
             answer["limitations"].append("Полный набор фактов не передавался модели из-за лимита контекста.")
         if found.vector_status != "ready":
-            answer["limitations"].append("Векторный поиск: " + found.vector_status)
+            answer["limitations"].append("Поиск по документации недоступен или ограничен; факты прогона проверяются отдельно.")
+            rejected.append(diagnostics.reason(found.vector_status))
+        if rejected:
+            answer["_diagnostics"] = {"job_id": str(job["job_id"]), "reasons": list(dict.fromkeys(rejected))}
         usage = {"model": generation.model, "input_tokens": generation.input_tokens,
                  "output_tokens": generation.output_tokens, "structured_output": generation.structured_output,
                  "preparation_ms": preparation_ms, "llm_ms": round((time.perf_counter() - llm_started) * 1000, 1),

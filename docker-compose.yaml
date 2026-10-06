@@ -115,7 +115,7 @@ services:
     pids_limit: 100
     environment:
       PI_PLANNER_AUTH: ${PI_PLANNER_AUTH:-required}
-      PI_PLANNER_ADMIN_TOKEN: ${PI_PLANNER_ADMIN_TOKEN:?set PI_PLANNER_ADMIN_TOKEN in .env}
+      PI_PLANNER_ASSISTANT_ENV_ADMIN_ENABLED: "true"
       PI_PLANNER_INTERNAL_LLM_HOSTS: ${PI_PLANNER_INTERNAL_LLM_HOSTS:-ollama}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
@@ -124,7 +124,7 @@ services:
       PI_PLANNER_KB_EMBED_MODEL: ${PI_PLANNER_KB_EMBED_MODEL:-embeddinggemma}
       PI_PLANNER_DSN: >-
         host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
-        user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+        user=pi_assistant_worker password=${ASSISTANT_DB_PASSWORD:?set ASSISTANT_DB_PASSWORD in .env}
     cap_drop:
       - ALL
     security_opt:
@@ -135,11 +135,33 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      bootstrap-plan:
+      assistant-db-init:
         condition: service_completed_successfully
     networks:
       - backend
       - ai_egress
+
+  assistant-db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "tools/setup_assistant_role.py"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    environment:
+      ASSISTANT_DB_PASSWORD: ${ASSISTANT_DB_PASSWORD:?set ASSISTANT_DB_PASSWORD in .env}
+      PI_PLANNER_DSN: >-
+        host=db port=5432 dbname=${POSTGRES_DB:-pi_planner}
+        user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [backend]
+    depends_on:
+      bootstrap-plan:
+        condition: service_completed_successfully
 
   # seed.sql содержит исходный датасет, но не результат планировщика. Без этого
   # одноразового шага свежий контейнер показывает задачи и пустой экран KPI.

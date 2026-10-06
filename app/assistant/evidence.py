@@ -108,15 +108,36 @@ def render_fact_refs(answer: dict[str, Any], records: list[dict[str, Any]]) -> N
         if not numeric.is_finite():
             raise ValueError("non_numeric_fact_reference")
         rendered.append(f"{field} = {value} [evidence:{ref['evidence_id']}]")
-    if rendered:
-        answer["explanation"] += ("\n\nПроверенные значения: " + "; ".join(rendered))
+    allowed_entities: set[str] = set()
+
+    def entities(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"task_id", "team_id", "initiative_id", "entity_id"} and isinstance(item, str):
+                    allowed_entities.add(item)
+                elif isinstance(item, (dict, list)):
+                    entities(item)
+        elif isinstance(value, list):
+            for item in value:
+                entities(item)
+
+    for record in records:
+        if record["source_type"] == "snapshot":
+            entities(record["payload"])
+    for entity in re.findall(r"\[entity:([^\]]+)\]", answer["summary"] + "\n" + answer["explanation"]):
+        if entity not in allowed_entities:
+            raise ValueError("unverified_entity_reference")
     bare = re.sub(r"\[(?:evidence|kb):[^\]]+\]", "", answer["summary"] + "\n" + answer["explanation"])
     # Numerals in prose are forbidden; all numeric claims are rendered above.
-    prose = bare.split("Проверенные значения:", 1)[0]
+    # Validate the entire model prose BEFORE appending server values. A model
+    # must not bypass validation by writing the rendering marker itself.
+    prose = re.sub(r"\[entity:[^\]]+\]", "объект", bare)
     # Номера пунктов Markdown-списка («1.», «2)») — разметка, а не числовое утверждение.
     prose = re.sub(r"(?m)^[ \t]*\d{1,2}[.)][ \t]", "- ", prose)
     if re.search(r"\d", prose):
         raise ValueError("untyped_numeric_claim")
+    if rendered:
+        answer["explanation"] += ("\n\nПроверенные значения: " + "; ".join(rendered))
 
 
 def save(cur: Any, *, conversation_id: UUID, message_id: UUID,

@@ -67,6 +67,13 @@ export interface Recommendation {
 }
 
 export interface Answer {
+  diagnostics?: { job_id: string; reasons: string[] }
+  triage?: {
+    snapshot_id: string; policy: string; total: number; next_offset: number
+    issues: { issue_id: string; rank: number; entity_id: string; kind: string; level: string;
+      priority_reason: string; first_step: string; affected_count: number; affected_task_ids: string[];
+      details_limited: boolean; source_alerts: { message: string }[] }[]
+  }
   status: 'answered' | 'needs_clarification' | 'insufficient_data'
   summary: string
   explanation: string

@@ -62,6 +62,7 @@ function humanize(text: string, evidenceIds: string[]): string {
       const n = evidenceIds.indexOf(id)
       return n >= 0 ? `доказательство ${n + 1}` : 'сохранённое основание'
     })
+    .replace(/\[entity:([^\]]+)\]/g, (_m, id: string) => id.replace(/[\\`*_{}\[\]()<>#!|]/g, '\\$&'))
     .replace(/\[?kb:[^\]\s]+\]?/gi, 'документ')
 }
 
@@ -86,6 +87,17 @@ export function AnswerCard({
       </Group>
       {answer.summary && <Text className="ai-answer__summary">{humanize(answer.summary, answer.evidence_ids)}</Text>}
       {answer.explanation && <Markdown>{humanize(answer.explanation, answer.evidence_ids)}</Markdown>}
+      {answer.triage && <Stack gap="sm">
+        {answer.triage.issues.map((issue) => <div key={issue.issue_id} className="ai-panel">
+          <Text fw={700}>{issue.rank}. {issue.entity_id} — {issue.priority_reason}</Text>
+          <Text size="sm">Потенциально затронуто задач: {issue.affected_count}.</Text>
+          <Text size="sm">Первый шаг: {issue.first_step}</Text>
+          {issue.affected_task_ids.length > 0 && <Text size="sm">Задачи: {issue.affected_task_ids.join(', ')}</Text>}
+          {issue.source_alerts.map((alert, index) => <Text size="sm" key={index}>{alert.message}</Text>)}
+          {issue.details_limited && <Text size="sm" c="dimmed">Подробности сокращены; полный список сохранён в основаниях.</Text>}
+        </div>)}
+        <Text size="sm" c="dimmed">Можно спросить «подробнее о первой»{answer.triage.next_offset < answer.triage.total ? ' или «следующие проблемы»' : ''}.</Text>
+      </Stack>}
       {answer.clarification && answer.clarification.trim() !== answer.summary.trim() && (
         <div className="ai-clarify">
           <IconHelpCircle size={18} />
@@ -114,6 +126,11 @@ export function AnswerCard({
           {answer.limitations.map((l, i) => <Text key={i} size="sm" c="dimmed">• {l}</Text>)}
         </details>
       )}
+      {answer.diagnostics && <details className="ai-limits">
+        <summary className="ai-label">Диагностика администратора</summary>
+        <Text size="sm">Задание: {answer.diagnostics.job_id}</Text>
+        {answer.diagnostics.reasons.map((reason) => <Text size="sm" key={reason}>{reason}</Text>)}
+      </details>}
       {(answer.evidence_ids.length > 0 || (answer.sources?.length ?? 0) > 0) && (
         <div className="ai-sources">
           <Text className="ai-label">Источники</Text>
