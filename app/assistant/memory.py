@@ -30,7 +30,7 @@ ANSWER_SCHEMA: dict[str, Any] = {
                                           "field": {"type": "string"}},
             "required": ["evidence_id", "field"], "additionalProperties": False}},
     },
-    "required": ["status", "summary", "explanation", "clarification"],
+    "required": ["status", "summary", "explanation", "clarification", "fact_refs"],
     "additionalProperties": False,
 }
 
@@ -145,7 +145,9 @@ def parse_answer(raw: str, revision: int, newer_run_available: bool | None,
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError("invalid_model_json") from exc
-    required = set(ANSWER_SCHEMA["required"])
+    # Старые сохранённые ответы могут не содержать fact_refs; API модели
+    # запрашивает поле обязательно для строгого JSON Schema режима Groq.
+    required = set(ANSWER_SCHEMA["required"]) - {"fact_refs"}
     if not isinstance(value, dict) or not required <= set(value) or set(value) - required - {"fact_refs"}:
         raise ValueError("invalid_model_answer")
     if ("fact_refs" in value and

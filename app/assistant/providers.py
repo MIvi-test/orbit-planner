@@ -216,7 +216,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _request(profile: dict[str, Any], body: dict[str, Any], timeout: float) -> dict[str, Any]:
     secret = _secret(profile)
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "PI-Planner/1.0"}
     if secret is not None:
         if profile["auth_type"] == "bearer":
             headers["Authorization"] = "Bearer " + secret
@@ -276,7 +277,7 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
     protocol = profile["protocol"]
     structured = bool(output_schema and profile.get("capabilities", {}).get("structured_output_verified"))
     json_mode = bool(output_schema and profile.get("capabilities", {}).get("json_mode"))
-    # thinking=False выключает скрытые рассуждения (Qwen3, DeepSeek, Ollama, Gemini 2.5): ответ в разы быстрее.
+    # Для Gemini 3.x минимальный уровень рассуждения заменяет устаревший budget=0.
     no_thinking = profile.get("capabilities", {}).get("thinking") is False
     if protocol == "gemini":
         body: dict[str, Any] = {"contents": [{"role": "model" if m["role"] == "assistant" else "user",
@@ -284,11 +285,13 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
                                 "systemInstruction": {"parts": [{"text": system}]},
                                 "generationConfig": {"maxOutputTokens": max_output_tokens}}
         if no_thinking:
-            body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+            body["generationConfig"]["thinkingConfig"] = (
+                {"thinkingLevel": "minimal"} if profile["model"].startswith("gemini-3")
+                else {"thinkingBudget": 0}
+            )
         if structured:
-            gemini_schema = {key: value for key, value in output_schema.items()
-                             if key != "additionalProperties"}
-            body["generationConfig"].update({"responseMimeType": "application/json", "responseSchema": gemini_schema})
+            body["generationConfig"].update({"responseMimeType": "application/json",
+                                             "responseJsonSchema": output_schema})
         elif json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
     else:
@@ -334,15 +337,16 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
 def check(profile: dict[str, Any]) -> dict[str, Any]:
     """Probe ordinary generation, then verify schema output with a separate call."""
     try:
-        generate(profile, [{"role": "user", "content": "Reply OK."}], "Connection check.", timeout=12, max_output_tokens=16)
+        generate(profile, [{"role": "user", "content": "Reply OK."}], "Connection check.", timeout=12, max_output_tokens=128)
     except ProviderError as exc:
         return {"reachable": False, "structured_output": False, "error": exc.code}
-    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
+              "required": ["ok"], "additionalProperties": False}
     probe = dict(profile)
     probe["capabilities"] = {"structured_output_verified": True}
     try:
         reply = generate(probe, [{"role": "user", "content": 'Return {"ok":true}.'}],
-                         "Return only JSON matching the schema.", schema, timeout=12, max_output_tokens=32)
+                         "Return only JSON matching the schema.", schema, timeout=12, max_output_tokens=256)
         verified = json.loads(reply.text) == {"ok": True}
     except (ProviderError, ValueError):
         verified = False

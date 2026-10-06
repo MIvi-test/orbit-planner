@@ -11,11 +11,14 @@ import { AI_KEYS, useKbStatus, useProfiles } from './hooks'
 export type SettingsTab = 'models' | 'prompt' | 'project'
 
 const PRESETS: Record<string, Partial<ProviderProfileInput>> = {
-  Groq: { name: 'Groq', protocol: 'openai_compatible', base_url: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', api_key_ref: 'env:GROQ_API_KEY' },
+  Groq: { name: 'Groq', protocol: 'openai_compatible', base_url: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-20b', api_key_ref: 'env:GROQ_API_KEY' },
   OpenAI: { name: 'OpenAI', protocol: 'openai_compatible', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini', api_key_ref: 'env:OPENAI_API_KEY' },
-  Gemini: { name: 'Gemini', protocol: 'gemini', base_url: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.0-flash', auth_type: 'header', auth_header_name: 'x-goog-api-key', api_key_ref: 'env:GEMINI_API_KEY' },
-  'Ollama (локально)': { name: 'Ollama', protocol: 'ollama', base_url: 'http://localhost:11434', model: 'llama3.1', auth_type: 'none', api_key_ref: '', network_scope: 'internal' },
+  Gemini: { name: 'Gemini', protocol: 'gemini', base_url: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-3.5-flash-lite', auth_type: 'header', auth_header_name: 'x-goog-api-key', api_key_ref: 'env:GEMINI_API_KEY' },
+  'Ollama (локально)': { name: 'Ollama', protocol: 'ollama', base_url: 'http://ollama:11434', model: 'qwen3.5:9b', auth_type: 'none', api_key_ref: '', network_scope: 'internal' },
 }
+const replacementModel = (p: ProviderProfile) =>
+  p.protocol === 'gemini' && p.model === 'gemini-2.0-flash' ? 'gemini-3.5-flash-lite'
+    : p.base_url === 'https://api.groq.com/openai/v1' && p.model === 'llama-3.3-70b-versatile' ? 'openai/gpt-oss-20b' : null
 const EMPTY: ProviderProfileInput = { name: '', protocol: 'openai_compatible', base_url: '', model: '', auth_type: 'bearer', api_key_ref: '', network_scope: 'external' }
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -57,6 +60,21 @@ function ModelsPanel({ admin }: { admin: boolean }) {
     }
   }
 
+  const upgrade = async (p: ProviderProfile) => {
+    const model = replacementModel(p)
+    if (!model) return
+    try {
+      const updated = await assistantApi.updateProfile(p.profile_id, {
+        name: p.name, protocol: p.protocol as ProviderProfileInput['protocol'], base_url: p.base_url,
+        model, auth_type: p.auth_type as ProviderProfileInput['auth_type'], network_scope: p.network_scope,
+      })
+      await reload()
+      await check(updated)
+    } catch (e) {
+      notifications.show({ color: 'red', title: 'Не удалось обновить модель', message: errText(e) })
+    }
+  }
+
   return (
     <Stack gap="md">
       <Group justify="space-between">
@@ -71,12 +89,14 @@ function ModelsPanel({ admin }: { admin: boolean }) {
                 <Text fw={700}>{p.name}</Text>
                 <Badge size="sm" variant="light" color={p.network_scope === 'internal' ? 'teal' : 'blue'}>{p.network_scope === 'internal' ? 'Локальная' : 'Внешний сервис'}</Badge>
                 {!p.credential_configured && <Badge size="sm" variant="outline" color="red">Ключ не найден</Badge>}
+                {replacementModel(p) && <Badge size="sm" variant="outline" color="orange">Модель устарела</Badge>}
                 {p.capabilities?.thinking === false && <Badge size="sm" variant="light" color="grape">Быстрый режим</Badge>}
               </Group>
               <Text size="sm" c="dimmed" className="mono" truncate>{p.model} · {p.base_url}</Text>
             </div>
             {admin && (
               <Group gap={4} wrap="nowrap">
+                {replacementModel(p) && <Button size="compact-sm" variant="light" color="orange" onClick={() => void upgrade(p)}>Обновить модель</Button>}
                 <Button size="compact-sm" variant="light" leftSection={<IconPlugConnected size={14} />} onClick={() => void check(p)}>Проверить</Button>
                 <Menu position="bottom-end" withinPortal>
                   <Menu.Target><ActionIcon variant="subtle" color="gray" aria-label="Действия с моделью"><IconDots size={17} /></ActionIcon></Menu.Target>
@@ -113,8 +133,8 @@ function KeyHelp() {
         <Accordion.Panel>
           <Stack gap={6}>
             <Text size="sm">Ключ не вводится в интерфейсе и не хранится в базе — сервер читает его из окружения.</Text>
-            <Text size="sm">1. Впишите ключ в файл <code>.env</code> рядом с <code>docker-compose.yml</code>: <code>GROQ_API_KEY=ваш_ключ</code>.</Text>
-            <Text size="sm">2. Перезапустите приложение и обработчик: <code>docker compose up -d app assistant-worker</code>.</Text>
+            <Text size="sm">1. Впишите ключ в файл <code>.env</code> рядом с <code>docker-compose.yaml</code>: <code>GROQ_API_KEY=ваш_ключ</code>.</Text>
+            <Text size="sm">2. Пересоздайте приложение и обработчик: <code>docker compose up -d --force-recreate app assistant-worker</code>.</Text>
             <Text size="sm">3. Добавьте модель (или выберите шаблон) и укажите ссылку на ключ <code>env:GROQ_API_KEY</code>. Нажмите «Проверить».</Text>
           </Stack>
         </Accordion.Panel>
@@ -179,7 +199,7 @@ function ProfileModal({ target, onClose, onSaved }: { target: ProviderProfile | 
         )}
         <Switch checked={form.capabilities?.thinking === false} onChange={(e) => set({ capabilities: e.currentTarget.checked ? { thinking: false } : {} })}
           label="Быстрые ответы без размышлений"
-          description="Выключает скрытые рассуждения модели (Qwen3, DeepSeek, Ollama, Gemini 2.5): ответ в 2–3 раза быстрее. На моделях без такого режима ни на что не влияет." />
+          description="Для Gemini 3 выбирает минимальный уровень рассуждения; у других поддерживаемых моделей отключает его. Доступность режима зависит от модели." />
         <Button variant="subtle" size="compact-sm" onClick={() => setMore((m) => !m)} style={{ alignSelf: 'flex-start' }}>{more ? 'Скрыть подключение' : 'Адрес, протокол, сеть'}</Button>
         {more && (
           <Stack gap="sm">

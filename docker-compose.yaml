@@ -40,6 +40,14 @@ services:
     image: ollama/ollama:latest
     restart: unless-stopped
     mem_limit: ${OLLAMA_MEMORY_LIMIT:-12g}
+    pids_limit: 200
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,noexec,size=64m
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -97,6 +105,8 @@ services:
       context: .
       dockerfile: Dockerfile
     command: ["python", "-m", "app.assistant.worker"]
+    healthcheck:
+      disable: true
     restart: unless-stopped
     init: true
     stop_grace_period: 120s
@@ -129,7 +139,7 @@ services:
         condition: service_completed_successfully
     networks:
       - backend
-      - frontend
+      - ai_egress
 
   # seed.sql содержит исходный датасет, но не результат планировщика. Без этого
   # одноразового шага свежий контейнер показывает задачи и пустой экран KPI.
@@ -354,6 +364,7 @@ volumes:
 
 networks:
   frontend:
+  ai_egress:
   backend:
     internal: true
   monitoring:
