@@ -60,7 +60,7 @@
   "name": "groq-main",
   "protocol": "openai_compatible",
   "base_url": "https://api.groq.com/openai/v1",
-  "model": "YOUR_GROQ_MODEL",
+  "model": "openai/gpt-oss-20b",
   "auth_type": "bearer",
   "api_key_ref": "env:GROQ_API_KEY",
   "network_scope": "external"

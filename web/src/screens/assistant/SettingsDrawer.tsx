@@ -199,7 +199,7 @@ function ProfileModal({ target, onClose, onSaved }: { target: ProviderProfile | 
         )}
         <Switch checked={form.capabilities?.thinking === false} onChange={(e) => set({ capabilities: e.currentTarget.checked ? { thinking: false } : {} })}
           label="Быстрые ответы без размышлений"
-          description="Выключает скрытые рассуждения модели (Qwen3, DeepSeek, Ollama, Gemini 2.5): ответ в 2–3 раза быстрее. На моделях без такого режима ни на что не влияет." />
+          description="Для Gemini 3 выбирает минимальный уровень рассуждения; у других поддерживаемых моделей отключает его. Доступность режима зависит от модели." />
         <Button variant="subtle" size="compact-sm" onClick={() => setMore((m) => !m)} style={{ alignSelf: 'flex-start' }}>{more ? 'Скрыть подключение' : 'Адрес, протокол, сеть'}</Button>
         {more && (
           <Stack gap="sm">
