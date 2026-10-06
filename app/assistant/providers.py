@@ -216,7 +216,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _request(profile: dict[str, Any], body: dict[str, Any], timeout: float) -> dict[str, Any]:
     secret = _secret(profile)
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "PI-Planner/1.0"}
     if secret is not None:
         if profile["auth_type"] == "bearer":
             headers["Authorization"] = "Bearer " + secret
@@ -336,15 +337,16 @@ def generate(profile: dict[str, Any], messages: list[dict[str, str]], system: st
 def check(profile: dict[str, Any]) -> dict[str, Any]:
     """Probe ordinary generation, then verify schema output with a separate call."""
     try:
-        generate(profile, [{"role": "user", "content": "Reply OK."}], "Connection check.", timeout=12, max_output_tokens=16)
+        generate(profile, [{"role": "user", "content": "Reply OK."}], "Connection check.", timeout=12, max_output_tokens=128)
     except ProviderError as exc:
         return {"reachable": False, "structured_output": False, "error": exc.code}
-    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
+              "required": ["ok"], "additionalProperties": False}
     probe = dict(profile)
     probe["capabilities"] = {"structured_output_verified": True}
     try:
         reply = generate(probe, [{"role": "user", "content": 'Return {"ok":true}.'}],
-                         "Return only JSON matching the schema.", schema, timeout=12, max_output_tokens=32)
+                         "Return only JSON matching the schema.", schema, timeout=12, max_output_tokens=256)
         verified = json.loads(reply.text) == {"ok": True}
     except (ProviderError, ValueError):
         verified = False
