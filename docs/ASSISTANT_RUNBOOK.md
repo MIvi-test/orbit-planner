@@ -9,6 +9,10 @@
 
 1. Задайте `POSTGRES_PASSWORD` и `PI_PLANNER_ADMIN_TOKEN` в `.env`. Пустые `*_API_KEY`
    допустимы, если используются только локальные модели.
+   После изменения ключей пересоздайте `app` и `assistant-worker` через
+   `docker compose up -d --force-recreate app assistant-worker`: окружение уже
+   запущенного контейнера не обновляется. Для Gemini и Groq worker использует
+   отдельную сеть `ai_egress`; портов наружу у него нет.
 2. Для существующего тома PostgreSQL обновите образ БД и примените миграции:
 
    ```bash
@@ -33,6 +37,14 @@
    `docs/assistant_kb_manifest.json`. Нужна установленная модель эмбеддингов: код не
    скачивает её автоматически. Если индекс ещё не готов, чат явно сообщает об этом.
 
+Контейнеры `app`, `assistant-worker` и опциональный `ollama` имеют read-only rootfs,
+сброшенные Linux capabilities и запрет повышения привилегий. Ollama пишет модели
+только в том `ollama_data`; его запуск с этими ограничениями нужно проверить при
+первом включении профиля `rag-local`. SQL для ассистента задан кодом, модель не
+исполняет собственные запросы. При этом `app` и worker пока подключаются к БД
+под общей ролью `postgres` и получают административный токен: для полного принципа
+наименьших привилегий нужны отдельные роли БД и разделение проверки токена.
+
 ## Профили модели
 
 Профиль создаёт администратор через `POST /api/assistant/profiles`. В базе хранится
@@ -56,7 +68,7 @@
 ```
 
 Пример Gemini: `protocol=gemini`, `base_url=https://generativelanguage.googleapis.com/v1beta`,
-`model=YOUR_GEMINI_MODEL`, `auth_type=header`, `auth_header_name=x-goog-api-key`,
+`model=gemini-3.5-flash-lite`, `auth_type=header`, `auth_header_name=x-goog-api-key`,
 `api_key_ref=env:GEMINI_API_KEY`, `network_scope=external`.
 
 Для Qwen Cloud или своего OpenAI-совместимого сервера укажите `protocol=openai_compatible`,

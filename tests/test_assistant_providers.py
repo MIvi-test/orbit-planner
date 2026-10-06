@@ -117,6 +117,18 @@ def test_thinking_flag_is_omitted_by_default(monkeypatch):
     assert "enable_thinking" not in bodies[0]
 
 
+def test_gemini_3_uses_minimal_thinking_and_json_schema(monkeypatch):
+    bodies = []
+    monkeypatch.setattr(providers, "_request", lambda _p, body, _t: bodies.append(body) or
+                        {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]})
+    p = profile("gemini", model="gemini-3.5-flash-lite", capabilities={"thinking": False})
+    p["capabilities"]["structured_output_verified"] = True
+    schema = {"type": "object", "additionalProperties": False}
+    providers.generate(p, [{"role": "user", "content": "q"}], "system", schema)
+    assert bodies[0]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
+    assert bodies[0]["generationConfig"]["responseJsonSchema"] == schema
+
+
 def test_edit_keeps_admin_capabilities_but_not_observed_ones():
     previous = {"auth_type": "none", "api_key_ref": None, "auth_header_name": None,
                 "capabilities": {"thinking": False, "structured_output_verified": True}}
