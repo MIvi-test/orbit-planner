@@ -1,6 +1,8 @@
 """Ядро: чистая функция `build_plan` (вход -> `Plan`, без обращений к базе)."""
 from __future__ import annotations
 
+import os
+
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import replace
@@ -46,7 +48,9 @@ from app.planner.graph import _refresh_live_graph
 from app.planner.alerts import _build_alerts
 from app.planner.capacity import effective_capacity
 from app.planner.kpi import _build_kpis, _build_states
-from app.planner.local_search.solver import ALGORITHM_LOCAL_SEARCH, allocation_from_plan, solve_allocation
+from app.planner.local_search.solver import (
+    ALGORITHM_LOCAL_SEARCH, allocation_from_plan, plan_vector_units, solve_allocation,
+)
 from app.planner.local_search.search import improve_with_lns
 
 
@@ -309,9 +313,12 @@ def build_plan(
             priority_strategy=priority_strategy, algorithm=ALGORITHM,
         )
         seed_errors = validate_plan(seed_plan, inputs, dependency_mode=dependency_mode)
-        seed = (allocation_from_plan(seed_plan, inputs, priority_strategy=priority_strategy)
-                if not seed_errors else None)
-        initial_budget = max(0.000001, max_time_seconds * 0.4 - (monotonic() - search_started))
+        seed_allocation = allocation_from_plan(seed_plan, inputs, priority_strategy=priority_strategy)
+        seed = seed_allocation if not seed_errors else None
+        # The greedy vector is a hard lexicographic floor even when its plan cannot
+        # be loaded into the model as an incumbent (sub-cent chunks, rounding).
+        floor_vector = plan_vector_units(seed_plan, inputs, priority_strategy=priority_strategy)
+        initial_budget = max(0.000001, max_time_seconds * 0.5 - (monotonic() - search_started))
         try:
             allocation_solution = solve_allocation(
                 inputs,
@@ -324,6 +331,9 @@ def build_plan(
                 random_seed=random_seed,
                 incumbent=seed,
                 free_task_ids=frozenset(by_id),
+                floor_vector=floor_vector,
+                hint_solution=seed_allocation,
+                num_workers=int(os.environ.get('PLANNER_SEARCH_WORKERS', '1')),
             )
         except RuntimeError as exc:
             # Keep planning available when CP-SAT cannot produce its first
@@ -348,6 +358,12 @@ def build_plan(
                 max_time_seconds=remaining_search_budget,
                 random_seed=random_seed,
             )
+        if tuple(int(v) for v in allocation_solution.objective_vector) < floor_vector:
+            # Never publish a plan the greedy algorithm beats on the shared objective.
+            fallback = seed_plan
+            fallback.params["requested_algorithm"] = ALGORITHM_LOCAL_SEARCH
+            fallback.params["fallback_reason"] = "lns result is lexicographically worse than greedy"
+            return replace(fallback, note=(fallback.note + " LNS не улучшил жадный план; показан жадный результат.").strip())
         for task_id in allocation_solution.selected:
             starts[task_id] = allocation_solution.starts[task_id]
             ends[task_id] = allocation_solution.ends[task_id]

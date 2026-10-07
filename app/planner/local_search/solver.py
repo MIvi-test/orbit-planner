@@ -55,13 +55,21 @@ def _capacity_units(value: Decimal, scale: int) -> int:
     return int((value * scale).to_integral_value(rounding=ROUND_FLOOR))
 
 
+def plan_vector_units(plan: Plan, inputs: Inputs, *, priority_strategy: str) -> tuple[int, ...]:
+    """Objective vector of any plan (valid for the model or not) in solver units."""
+    from app.planner.local_search.objective import evaluate_objective
+
+    vector = list(evaluate_objective(plan, inputs, priority_strategy=priority_strategy).vector)
+    vector[-2] = _units(Decimal(vector[-2]), 100, name="seed loan hours")
+    return tuple(int(value) for value in vector)
+
+
 def allocation_from_plan(plan: Plan, inputs: Inputs, *, priority_strategy: str) -> AllocationSolution:
     """Convert a validated greedy plan into a feasible search incumbent."""
     from app.planner.local_search.objective import evaluate_objective
 
     objective = evaluate_objective(plan, inputs, priority_strategy=priority_strategy)
-    vector = list(objective.vector)
-    vector[-2] = _units(Decimal(vector[-2]), 100, name="seed loan hours")
+    vector = list(plan_vector_units(plan, inputs, priority_strategy=priority_strategy))
     levels = (
         tuple(f"complete_initiatives:{level}" for level in objective.priority_levels)
         + ("-lost_baseline_initiatives",)
@@ -95,6 +103,9 @@ def solve_allocation(
     random_seed: int = 0,
     incumbent: AllocationSolution | None = None,
     free_task_ids: frozenset[str] | None = None,
+    floor_vector: tuple[int, ...] | None = None,
+    num_workers: int = 1,
+    hint_solution: AllocationSolution | None = None,
 ) -> AllocationSolution:
     """Строит допустимое расписание CP-SAT с лексикографической целью.
 
@@ -454,7 +465,7 @@ def solve_allocation(
     objective_bounds: list[str] = []
     last_solver_status = "UNKNOWN"
     solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = 1
+    solver.parameters.num_search_workers = max(1, int(num_workers))
     solver.parameters.random_seed = int(random_seed)
     solver.parameters.log_search_progress = False
     all_optimal = True
@@ -520,19 +531,35 @@ def solve_allocation(
         for key, variable in sp_vars.items():
             model.AddHint(variable, _units(shares.get(key, Decimal(0)), sp_scale, name="hint SP"))
 
+    # Lexicographic lower bound: a level must not fall below the reference
+    # (incumbent or greedy plan) only while all earlier levels equal it. Once an
+    # earlier level is strictly better, later levels are free to trade off.
+    reference = (tuple(int(v) for v in last_snapshot.objective_vector)
+                 if last_snapshot is not None else floor_vector)
+    prefix_equal = reference is not None
+    constant_levels = {i for i, (_n, e) in enumerate(objective_exprs) if isinstance(e, int)}
     for index, (name, expression) in enumerate(objective_exprs):
+        if index in constant_levels:
+            statuses.append((name, "OPTIMAL"))
+            objective_bounds.append(str(expression))
+            continue
         if last_snapshot is not None:
-            # Earlier levels are fixed to the incumbent prefix. Never let a
-            # time-limited solve lose the quality already available at this level.
-            model.Add(expression >= int(last_snapshot.objective_vector[index]))
             hint(last_snapshot)
+        elif hint_solution is not None:
+            hint(hint_solution)
+        if reference is not None and prefix_equal:
+            model.Add(expression >= reference[index])
         remaining = max_time_seconds - (monotonic() - started)
         if remaining <= 0:
             statuses.append((name, "BUDGET_EXHAUSTED"))
             last_solver_status = "BUDGET_EXHAUSTED"
             all_optimal = False
             break
-        solver.parameters.max_time_in_seconds = remaining
+        # Share the budget: a level must not starve the ones after it.
+        levels_left = sum(1 for i in range(index, len(objective_exprs)) if i not in constant_levels)
+        solver.parameters.max_time_in_seconds = min(
+            remaining, remaining * 1.5 / max(1, levels_left) if levels_left > 1 else remaining
+        )
         model.Maximize(expression)
         status = solver.Solve(model)
         last_solver_status = solver.StatusName(status)
@@ -549,6 +576,8 @@ def solve_allocation(
         if (last_snapshot is None or tuple(map(int, candidate.objective_vector))
                 >= tuple(map(int, last_snapshot.objective_vector))):
             last_snapshot = candidate
+        if reference is not None and prefix_equal and value > reference[index]:
+            prefix_equal = False
         model.Add(expression == value)
 
     if last_snapshot is None:
