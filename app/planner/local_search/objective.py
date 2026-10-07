@@ -25,6 +25,11 @@ class ObjectiveValue:
     baseline_delay: int
     loan_hours: Decimal
     negative_completion_sprint_sum: int
+    # Plan shape, strictly after every delivery criterion: idle sprints inside
+    # a task window, distinct people per task role, distinct assignment rows.
+    schedule_gaps: int = 0
+    assignees: int = 0
+    assignment_rows: int = 0
 
     @property
     def vector(self) -> tuple[int | Decimal, ...]:
@@ -36,7 +41,14 @@ class ObjectiveValue:
             -self.baseline_delay,
             -self.loan_hours,
             self.negative_completion_sprint_sum,
+            -self.schedule_gaps,
+            -self.assignees,
+            -self.assignment_rows,
         )
+
+    @property
+    def loan_hours_index(self) -> int:
+        return len(self.complete_initiatives) + 1 + len(self.complete_tasks) + 2
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -49,6 +61,9 @@ class ObjectiveValue:
             "baseline_delay": self.baseline_delay,
             "loan_hours": str(self.loan_hours),
             "negative_completion_sprint_sum": self.negative_completion_sprint_sum,
+            "schedule_gaps": self.schedule_gaps,
+            "assignees": self.assignees,
+            "assignment_rows": self.assignment_rows,
             "vector": [str(value) for value in self.vector],
         }
 
@@ -162,6 +177,19 @@ def evaluate_objective(
         row.end_sprint or 0 for row in plan.schedule if row.decision == "in_quarter"
     )
 
+    task_sprints: dict[str, set[int]] = defaultdict(set)
+    people: set[tuple[str, int, str]] = set()
+    rows: set[tuple[str, int, str, str, int]] = set()
+    for row in plan.assignments:
+        work = (row.work_hours if row.work_hours is not None else
+                row.hours / inputs.coverage[(row.engineer_id, row.role_id)])
+        if work <= 0 or row.task_id not in selected:
+            continue
+        task_sprints[row.task_id].add(row.sprint_no)
+        people.add((row.task_id, row.role_id, row.engineer_id))
+        rows.add((row.task_id, row.role_id, row.engineer_id, row.home_team_id, row.sprint_no))
+    schedule_gaps = sum(max(used) - min(used) + 1 - len(used) for used in task_sprints.values())
+
     return ObjectiveValue(
         priority_levels=tuple("unranked" if value is None else str(value) for value in levels),
         complete_initiatives=tuple(complete_initiatives_by_level),
@@ -171,4 +199,7 @@ def evaluate_objective(
         baseline_delay=baseline_delay,
         loan_hours=loan_hours,
         negative_completion_sprint_sum=-completion_sprint_sum,
+        schedule_gaps=schedule_gaps,
+        assignees=len(people),
+        assignment_rows=len(rows),
     )

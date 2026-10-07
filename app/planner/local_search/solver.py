@@ -59,8 +59,10 @@ def plan_vector_units(plan: Plan, inputs: Inputs, *, priority_strategy: str) -> 
     """Objective vector of any plan (valid for the model or not) in solver units."""
     from app.planner.local_search.objective import evaluate_objective
 
-    vector = list(evaluate_objective(plan, inputs, priority_strategy=priority_strategy).vector)
-    vector[-2] = _units(Decimal(vector[-2]), 100, name="seed loan hours")
+    objective = evaluate_objective(plan, inputs, priority_strategy=priority_strategy)
+    vector = list(objective.vector)
+    index = objective.loan_hours_index
+    vector[index] = _units(Decimal(vector[index]), 100, name="seed loan hours")
     return tuple(int(value) for value in vector)
 
 
@@ -74,7 +76,8 @@ def allocation_from_plan(plan: Plan, inputs: Inputs, *, priority_strategy: str) 
         tuple(f"complete_initiatives:{level}" for level in objective.priority_levels)
         + ("-lost_baseline_initiatives",)
         + tuple(f"complete_tasks:{level}" for level in objective.priority_levels)
-        + ("-assignment_changes", "-baseline_delay", "-loan_hours", "-completion_sprint_sum")
+        + ("-assignment_changes", "-baseline_delay", "-loan_hours", "-completion_sprint_sum",
+           "-schedule_gaps", "-assignees", "-assignment_rows")
     )
     return AllocationSolution(
         selected=frozenset(row.task_id for row in plan.in_quarter),
@@ -163,6 +166,7 @@ def solve_allocation(
         for task in tasks
     }
 
+    eligible_for_cuts: dict[tuple[str, int], list[str]] = {}
     unlocked = set(task_by_id) if incumbent is None else set(free_task_ids or ())
     if not unlocked <= set(task_by_id):
         raise ValueError("free_task_ids contains an unknown task")
@@ -189,6 +193,7 @@ def solve_allocation(
                     inputs.engineer_skills.get(engineer_id, frozenset())
                 )
             ]
+            eligible_for_cuts[(task.task_id, role_id)] = list(eligible_ids)
             if not eligible_ids:
                 any_missing_candidate = True
             role_demand_units = _units(role_demand, work_scale, name=f"{task.task_id}/{role_id}.demand")
@@ -229,6 +234,7 @@ def solve_allocation(
             model.Add(z == 0)
 
     # Общий фонд сотрудника и отдельный фонд каждой команды-орбиты.
+    engineer_capacity: dict[tuple[str, int], int] = {}
     for engineer in inputs.engineers:
         for sprint_no in range(max(1, replan_floor), inputs.sprint_count + 1):
             factor = inputs.sprint_factors.get(sprint_no, Decimal(1))
@@ -245,53 +251,177 @@ def solve_allocation(
             total_rate = min(engineer.total_capacity_rate, sum(rates.values(), Decimal(0)))
             total_capacity = total_rate * Decimal(inputs.fte_hours_per_sprint) * factor
             total_units = _capacity_units(total_capacity, hours_scale)
+            engineer_capacity[(engineer.engineer_id, sprint_no)] = total_units
             model.Add(sum(hours_by_engineer_sprint[(engineer.engineer_id, sprint_no)]) <= total_units)
+
+    sprints = range(max(1, replan_floor), inputs.sprint_count + 1)
+
+    def role_work_capacity(task_id: str, role_id: int, sprint_no: int) -> int:
+        """Upper bound on role work (work units) the eligible people can do in a sprint."""
+        total = 0
+        for engineer_id in eligible_for_cuts.get((task_id, role_id), ()):
+            efficiency = inputs.coverage[(engineer_id, role_id)]
+            hours_units = engineer_capacity.get((engineer_id, sprint_no), 0)
+            total += int((Decimal(hours_units) * work_scale / hours_scale / efficiency)
+                         .to_integral_value(rounding=ROUND_CEILING))
+        return total
 
     starts: dict[str, Any] = {}
     ends: dict[str, Any] = {}
     sp_vars: dict[tuple[str, int], Any] = {}
+    active_vars: dict[tuple[str, int], Any] = {}
+    running: dict[tuple[str, int], Any] = {}
     for task_index, task in enumerate(tasks):
         z = selected_var[task.task_id]
         total_work = task_work_units[task.task_id]
         total_sp = task_sp_units[task.task_id]
+        role_units = {
+            role_id: _units(demand, work_scale, name=f"{task.task_id}/{role_id}.demand")
+            for role_id, demand in task.needed.items()
+        }
         sprint_work_vars: list[Any] = []
         first_values: list[Any] = []
         last_values: list[Any] = []
-        for sprint_no in range(max(1, replan_floor), inputs.sprint_count + 1):
+        start = model.NewIntVar(0, inputs.sprint_count + 1, f"start_{task_index}")
+        end = model.NewIntVar(0, inputs.sprint_count, f"end_{task_index}")
+        role_capacity = {
+            (role_id, sprint_no): min(units, role_work_capacity(task.task_id, role_id, sprint_no))
+            for role_id, units in role_units.items() for sprint_no in sprints
+        }
+        for sprint_no in sprints:
             work_s = model.NewIntVar(0, max(0, total_work), f"task_work_{task_index}_{sprint_no}")
             model.Add(work_s == sum(work_by_task_sprint[(task.task_id, sprint_no)]))
             active = model.NewBoolVar(f"task_active_{task_index}_{sprint_no}")
-            model.Add(work_s <= total_work * active)
+            active_vars[(task.task_id, sprint_no)] = active
+            # Redundant cut: a sprint can absorb only what eligible people can do in it.
+            absorb = min(total_work, sum(role_capacity[(r, sprint_no)] for r in role_units))
+            model.Add(work_s <= absorb * active)
             model.Add(work_s >= active)
             sprint_work_vars.append(work_s)
             first_values.append(sprint_no * active + (inputs.sprint_count + 1) * (1 - active))
             last_values.append(sprint_no * active)
+            # Linear forms of the window definition, for a stronger relaxation.
+            model.Add(end >= sprint_no * active)
+            model.Add(start <= sprint_no + (inputs.sprint_count + 1) * (1 - active))
 
             if total_sp > 0 and total_work > 0:
-                numerator = model.NewIntVar(0, total_sp * total_work, f"sp_num_{task_index}_{sprint_no}")
-                model.Add(numerator == total_sp * work_s)
-                floor_share = model.NewIntVar(0, total_sp, f"sp_floor_{task_index}_{sprint_no}")
-                model.AddDivisionEquality(floor_share, numerator, total_work)
-                rounded_up = model.NewBoolVar(f"sp_round_{task_index}_{sprint_no}")
-                model.Add(rounded_up <= active)
+                # share = floor(SP*work/W) or that +1, written linearly:
+                # SP*work - (W-1) <= W*share <= SP*work + W - 1.
                 share = model.NewIntVar(0, total_sp, f"sp_share_{task_index}_{sprint_no}")
-                model.Add(share == floor_share + rounded_up)
+                model.Add(total_work * share >= total_sp * work_s - (total_work - 1))
+                model.Add(total_work * share <= total_sp * work_s + total_work - 1)
+                model.Add(share <= total_sp * active)
                 sp_vars[(task.task_id, sprint_no)] = share
 
         model.Add(sum(sprint_work_vars) == total_work * z)
         if total_sp > 0 and total_work > 0:
             model.Add(sum(
-                sp_vars[(task.task_id, sprint_no)]
-                for sprint_no in range(max(1, replan_floor), inputs.sprint_count + 1)
+                sp_vars[(task.task_id, sprint_no)] for sprint_no in sprints
             ) == total_sp * z)
 
-        start = model.NewIntVar(0, inputs.sprint_count + 1, f"start_{task_index}")
-        end = model.NewIntVar(0, inputs.sprint_count, f"end_{task_index}")
         model.AddMinEquality(start, first_values)
         model.AddMaxEquality(end, last_values)
         model.Add(start >= max(replan_floor, task.earliest_start_sprint) * z)
+
+        # Minimum duration: each role needs at least this many active sprints.
+        min_duration = 1
+        for role_id, units in role_units.items():
+            per_sprint = sorted((role_capacity[(role_id, n)] for n in sprints), reverse=True)
+            done, count = 0, 0
+            for capacity in per_sprint:
+                if done >= units:
+                    break
+                done += capacity
+                count += 1
+            min_duration = max(min_duration, count)
+        actives = [active_vars[(task.task_id, n)] for n in sprints]
+        model.Add(sum(actives) >= min_duration * z)
+        model.Add(end - start + 1 >= sum(actives)).OnlyEnforceIf(z)
+        model.Add(end >= max(replan_floor, task.earliest_start_sprint) + min_duration - 1).OnlyEnforceIf(z)
+        # running[k] == "the task still has work in sprint k or later".
+        # Then end == (floor-1)*z + sum(running): a time-indexed form whose
+        # relaxation, with the energy cuts below, bounds completion sums well.
+        floor_sprint = max(1, replan_floor)
+        running_list: list[Any] = []
+        for sprint_no in sprints:
+            flag = model.NewBoolVar(f"running_{task_index}_{sprint_no}")
+            later = [active_vars[(task.task_id, n)] for n in sprints if n >= sprint_no]
+            for item in later:
+                model.Add(flag >= item)
+            model.Add(flag <= sum(later))
+            running[(task.task_id, sprint_no)] = flag
+            running_list.append(flag)
+        for earlier, later_flag in zip(running_list, running_list[1:]):
+            model.Add(earlier >= later_flag)
+        model.Add(end == (floor_sprint - 1) * z + sum(running_list))
         starts[task.task_id] = start
         ends[task.task_id] = end
+
+    # Energy cuts: work of tasks finished by sprint k fits into sprints <= k.
+    for role_id in sorted({role for task in tasks for role in task.needed}):
+        holders = sorted({
+            engineer_id for (task_id, candidate_role), ids in eligible_for_cuts.items()
+            if candidate_role == role_id for engineer_id in ids
+        })
+        cumulative = 0
+        for sprint_no in sprints:
+            cumulative += sum(
+                int((Decimal(engineer_capacity.get((engineer_id, sprint_no), 0)) * work_scale
+                     / hours_scale / inputs.coverage[(engineer_id, role_id)])
+                    .to_integral_value(rounding=ROUND_CEILING))
+                for engineer_id in holders
+            )
+            if sprint_no == inputs.sprint_count:
+                break
+            finished = [
+                _units(task.needed[role_id], work_scale, name="cut")
+                * (selected_var[task.task_id] - running[(task.task_id, sprint_no + 1)])
+                for task in tasks if role_id in task.needed
+            ]
+            if finished:
+                model.Add(sum(finished) <= cumulative)
+    for team_id in sorted({task.team_id for task in tasks}):
+        cumulative = 0
+        for sprint_no in sprints:
+            cumulative += _capacity_units(
+                inputs.team_sp_per_sprint.get(team_id, Decimal(0))
+                * inputs.sprint_factors.get(sprint_no, Decimal(1)), sp_scale)
+            if sprint_no == inputs.sprint_count:
+                break
+            model.Add(sum(
+                task_sp_units[task.task_id]
+                * (selected_var[task.task_id] - running[(task.task_id, sprint_no + 1)])
+                for task in tasks if task.team_id == team_id
+            ) <= cumulative)
+
+    # Redundant aggregate knapsacks: role work and team SP against whole-PI funds.
+    for role_id in sorted({role for task in tasks for role in task.needed}):
+        holders = sorted({
+            engineer_id for (task_id, candidate_role), ids in eligible_for_cuts.items()
+            if candidate_role == role_id for engineer_id in ids
+        })
+        role_fund = sum(
+            int((Decimal(engineer_capacity.get((engineer_id, n), 0)) * work_scale / hours_scale
+                 / inputs.coverage[(engineer_id, role_id)]).to_integral_value(rounding=ROUND_CEILING))
+            for engineer_id in holders for n in sprints
+        )
+        demand_terms = [
+            _units(task.needed[role_id], work_scale, name="cut") * selected_var[task.task_id]
+            for task in tasks if role_id in task.needed
+        ]
+        if demand_terms:
+            model.Add(sum(demand_terms) <= role_fund)
+    for team_id in sorted({task.team_id for task in tasks}):
+        team_fund = sum(
+            _capacity_units(
+                inputs.team_sp_per_sprint.get(team_id, Decimal(0))
+                * inputs.sprint_factors.get(n, Decimal(1)), sp_scale)
+            for n in sprints
+        )
+        model.Add(sum(
+            task_sp_units[task.task_id] * selected_var[task.task_id]
+            for task in tasks if task.team_id == team_id
+        ) <= team_fund)
 
     # SP в проекте округляется до сотой. Доли выбираются из floor/ceil
     # пропорциональной работы, при этом их сумма ровно равна SP задачи.
@@ -459,6 +589,38 @@ def solve_allocation(
         "-completion_sprint_sum",
         -sum(ends[task.task_id] for task in tasks),
     ))
+    # Plan shape: never traded against delivery, only breaks ties after it.
+    gap_terms = [
+        ends[task.task_id] - starts[task.task_id] + 1
+        - sum(active_vars[(task.task_id, n)] for n in sprints)
+        for task in tasks if task.task_id in selected_var
+    ]
+    gap_vars = []
+    for index, expression in enumerate(gap_terms):
+        gap = model.NewIntVar(0, inputs.sprint_count, f"gap_{index}")
+        # For a deferred task start=S+1, end=0: the raw term is negative.
+        model.AddMaxEquality(gap, [0, expression])
+        gap_vars.append(gap)
+    objective_exprs.append(("-schedule_gaps", -sum(gap_vars)))
+    person_work: dict[tuple[str, int, str], list[Any]] = defaultdict(list)
+    for (task_id, role_id, engineer_id, _orbit, _sprint), variable in work_vars.items():
+        person_work[(task_id, role_id, engineer_id)].append(variable)
+    used_people = []
+    for index, ((task_id, role_id, _engineer), variables) in enumerate(sorted(person_work.items())):
+        used = model.NewBoolVar(f"assignee_{index}")
+        role_units = _units(task_by_id[task_id].needed[role_id], work_scale, name="assignee")
+        model.Add(sum(variables) <= role_units * used)
+        model.Add(sum(variables) >= used)
+        used_people.append(used)
+    objective_exprs.append(("-assignees", -sum(used_people)))
+    used_rows = []
+    for index, (key, variable) in enumerate(sorted(work_vars.items())):
+        used = model.NewBoolVar(f"row_{index}")
+        role_units = _units(task_by_id[key[0]].needed[key[1]], work_scale, name="row")
+        model.Add(variable <= role_units * used)
+        model.Add(variable >= used)
+        used_rows.append(used)
+    objective_exprs.append(("-assignment_rows", -sum(used_rows)))
 
     last_snapshot: AllocationSolution | None = incumbent
     statuses: list[tuple[str, str]] = []
@@ -547,7 +709,7 @@ def solve_allocation(
             hint(last_snapshot)
         elif hint_solution is not None:
             hint(hint_solution)
-        if reference is not None and prefix_equal:
+        if reference is not None and prefix_equal and index < len(reference):
             model.Add(expression >= reference[index])
         remaining = max_time_seconds - (monotonic() - started)
         if remaining <= 0:
@@ -557,12 +719,30 @@ def solve_allocation(
             break
         # Share the budget: a level must not starve the ones after it.
         levels_left = sum(1 for i in range(index, len(objective_exprs)) if i not in constant_levels)
-        solver.parameters.max_time_in_seconds = min(
-            remaining, remaining * 1.5 / max(1, levels_left) if levels_left > 1 else remaining
+        # Without any feasible point the level gets the whole budget; once one
+        # exists, a level must not starve the ones after it.
+        solver.parameters.max_time_in_seconds = (
+            remaining if last_snapshot is None or levels_left <= 1
+            else min(remaining, remaining * 1.5 / levels_left)
         )
         model.Maximize(expression)
         status = solver.Solve(model)
         last_solver_status = solver.StatusName(status)
+        if status == cp_model.UNKNOWN and last_snapshot is not None:
+            # Out of time on this level: keep the known value and go on, so
+            # the later levels are still optimised around it.
+            statuses.append((name, "KEPT_INCUMBENT"))
+            all_optimal = False
+            if index >= len(last_snapshot.objective_vector):
+                statuses[-1] = (name, "BUDGET_EXHAUSTED")
+                objective_bounds.append(str(solver.BestObjectiveBound()))
+                break
+            value = int(last_snapshot.objective_vector[index])
+            objective_bounds.append(str(solver.BestObjectiveBound()))
+            if reference is not None and prefix_equal and index < len(reference) and value > reference[index]:
+                prefix_equal = False
+            model.Add(expression == value)
+            continue
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             statuses.append((name, last_solver_status))
             all_optimal = False
@@ -576,7 +756,7 @@ def solve_allocation(
         if (last_snapshot is None or tuple(map(int, candidate.objective_vector))
                 >= tuple(map(int, last_snapshot.objective_vector))):
             last_snapshot = candidate
-        if reference is not None and prefix_equal and value > reference[index]:
+        if reference is not None and prefix_equal and index < len(reference) and value > reference[index]:
             prefix_equal = False
         model.Add(expression == value)
 
