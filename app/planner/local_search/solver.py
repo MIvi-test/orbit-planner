@@ -36,6 +36,7 @@ class AllocationSolution:
     neighborhoods_attempted: int = 0
     neighborhoods_improved: int = 0
     neighborhood_statuses: tuple[tuple[str, str, bool], ...] = ()
+    neighborhood_log: tuple[dict[str, object], ...] = ()
 
 
 def _decimal_scale(values: list[Decimal]) -> int:
@@ -171,12 +172,48 @@ def solve_allocation(
     if not unlocked <= set(task_by_id):
         raise ValueError("free_task_ids contains an unknown task")
 
+    # Tasks outside the neighborhood enter the model as constants: their hours
+    # and SP are subtracted from the funds and their windows are fixed numbers,
+    # so CP-SAT only searches over the released tasks.
+    fixed_ids = set(task_by_id) - unlocked
+    fixed_rows: dict[str, list[Assignment]] = defaultdict(list)
+    fixed_work: dict[tuple[str, int, str, str, int], int] = defaultdict(int)
+    fixed_sp: dict[tuple[str, int], int] = {}
+    if incumbent is not None:
+        for row in incumbent.assignments:
+            if row.task_id in fixed_ids:
+                fixed_rows[row.task_id].append(row)
+        for task_id, sprint_no, sp in incumbent.sp_shares:
+            if task_id in fixed_ids:
+                fixed_sp[(task_id, sprint_no)] = _units(sp, sp_scale, name="fixed SP")
+        for task_id in fixed_ids:
+            selected_var[task_id] = model.NewConstant(int(task_id in incumbent.selected))
+
     for task_index, task in enumerate(tasks):
         z = selected_var[task.task_id]
         required_skills_by_role = {
             role_id: inputs.skill_requirements.get((task.task_id, role_id), frozenset())
             for role_id in task.needed
         }
+        if task.task_id in fixed_ids:
+            for row in fixed_rows[task.task_id]:
+                key = (row.task_id, row.role_id, row.engineer_id, row.home_team_id, row.sprint_no)
+                work = row.work_hours if row.work_hours is not None else (
+                    row.hours / inputs.coverage[(row.engineer_id, row.role_id)])
+                work_units = _units(work, work_scale, name="fixed work")
+                hours_units = _units(row.hours, hours_scale, name="fixed hours")
+                fixed_work[key] += work_units
+                work_by_task_sprint[(task.task_id, row.sprint_no)].append(work_units)
+                hours_by_engineer_sprint[(row.engineer_id, row.sprint_no)].append(hours_units)
+                hours_by_orbit_sprint[(row.engineer_id, row.home_team_id, row.sprint_no)].append(hours_units)
+                if row.home_team_id != task.team_id:
+                    loan_hour_vars.append(hours_units)
+            for role_id in task.needed:
+                eligible_for_cuts[(task.task_id, role_id)] = [
+                    engineer_id for engineer_id in eligible_by_task.get(task.task_id, {}).get(role_id, [])
+                    if engineer_id in engineers and (engineer_id, role_id) in inputs.coverage
+                ]
+            continue
         if task.remaining_unknown or not task.needed or task_work_units[task.task_id] <= 0:
             model.Add(z == 0)
             continue
@@ -273,6 +310,20 @@ def solve_allocation(
     running: dict[tuple[str, int], Any] = {}
     for task_index, task in enumerate(tasks):
         z = selected_var[task.task_id]
+        if task.task_id in fixed_ids:
+            chosen = task.task_id in incumbent.selected
+            used = {row.sprint_no for row in fixed_rows[task.task_id]} if chosen else set()
+            first = min(used) if used else inputs.sprint_count + 1
+            last = max(used) if used else 0
+            starts[task.task_id] = model.NewConstant(first)
+            ends[task.task_id] = model.NewConstant(last)
+            for sprint_no in sprints:
+                active_vars[(task.task_id, sprint_no)] = model.NewConstant(int(sprint_no in used))
+                running[(task.task_id, sprint_no)] = model.NewConstant(int(chosen and last >= sprint_no))
+                share = fixed_sp.get((task.task_id, sprint_no), 0)
+                if task_sp_units[task.task_id] > 0 and task_work_units[task.task_id] > 0:
+                    sp_vars[(task.task_id, sprint_no)] = model.NewConstant(share)
+            continue
         total_work = task_work_units[task.task_id]
         total_sp = task_sp_units[task.task_id]
         role_units = {
@@ -459,32 +510,6 @@ def solve_allocation(
             for task_id in members[1:]:
                 model.Add(selected_var[task_id] == selected_var[members[0]])
 
-    if incumbent is not None:
-        incumbent_selected = set(incumbent.selected)
-        incumbent_work: dict[tuple[str, int, str, str, int], Decimal] = {}
-        for row in incumbent.assignments:
-            key = (row.task_id, row.role_id, row.engineer_id, row.home_team_id, row.sprint_no)
-            incumbent_work[key] = incumbent_work.get(key, Decimal(0)) + (row.work_hours or Decimal(0))
-        incumbent_sp = {
-            (task_id, sprint_no): sp for task_id, sprint_no, sp in incumbent.sp_shares
-        }
-        for task in tasks:
-            if task.task_id in unlocked:
-                continue
-            model.Add(selected_var[task.task_id] == int(task.task_id in incumbent_selected))
-            for key, variable in work_vars.items():
-                if key[0] == task.task_id:
-                    model.Add(variable == _units(
-                        incumbent_work.get(key, Decimal(0)), work_scale,
-                        name=f"incumbent_work[{key}]",
-                    ))
-            for key, variable in sp_vars.items():
-                if key[0] == task.task_id:
-                    model.Add(variable == _units(
-                        incumbent_sp.get(key, Decimal(0)), sp_scale,
-                        name=f"incumbent_sp[{key}]",
-                    ))
-
     # Лексикографические компоненты цели, все приведены к максимизации.
     groups: dict[str, list[TaskInput]] = defaultdict(list)
     for task in tasks:
@@ -558,7 +583,7 @@ def solve_allocation(
         role_units = _units(role_demand, work_scale, name=f"stability[{task_id},{role_id}]")
         retained_work = sum(
             variable for (candidate_task, candidate_role, engineer_id, _orbit, _sprint), variable
-            in work_vars.items()
+            in [*work_vars.items(), *fixed_work.items()]
             if candidate_task == task_id and candidate_role == role_id and engineer_id in preferred
         )
         kept = model.NewBoolVar(f"kept_role_pair_{pair_index}")
@@ -590,12 +615,17 @@ def solve_allocation(
         -sum(ends[task.task_id] for task in tasks),
     ))
     # Plan shape: never traded against delivery, only breaks ties after it.
+    fixed_gaps = 0
+    for task_id in fixed_ids:
+        used = {row.sprint_no for row in fixed_rows[task_id]}
+        if task_id in incumbent.selected and used:
+            fixed_gaps += max(used) - min(used) + 1 - len(used)
     gap_terms = [
         ends[task.task_id] - starts[task.task_id] + 1
         - sum(active_vars[(task.task_id, n)] for n in sprints)
-        for task in tasks if task.task_id in selected_var
+        for task in tasks if task.task_id not in fixed_ids
     ]
-    gap_vars = []
+    gap_vars: list[Any] = [fixed_gaps] if fixed_gaps else []
     for index, expression in enumerate(gap_terms):
         gap = model.NewIntVar(0, inputs.sprint_count, f"gap_{index}")
         # For a deferred task start=S+1, end=0: the raw term is negative.
@@ -605,7 +635,7 @@ def solve_allocation(
     person_work: dict[tuple[str, int, str], list[Any]] = defaultdict(list)
     for (task_id, role_id, engineer_id, _orbit, _sprint), variable in work_vars.items():
         person_work[(task_id, role_id, engineer_id)].append(variable)
-    used_people = []
+    used_people: list[Any] = [len({key[:3] for key, units in fixed_work.items() if units > 0})]
     for index, ((task_id, role_id, _engineer), variables) in enumerate(sorted(person_work.items())):
         used = model.NewBoolVar(f"assignee_{index}")
         role_units = _units(task_by_id[task_id].needed[role_id], work_scale, name="assignee")
@@ -613,7 +643,7 @@ def solve_allocation(
         model.Add(sum(variables) >= used)
         used_people.append(used)
     objective_exprs.append(("-assignees", -sum(used_people)))
-    used_rows = []
+    used_rows: list[Any] = [sum(1 for units in fixed_work.values() if units > 0)]
     for index, (key, variable) in enumerate(sorted(work_vars.items())):
         used = model.NewBoolVar(f"row_{index}")
         role_units = _units(task_by_id[key[0]].needed[key[1]], work_scale, name="row")
@@ -653,6 +683,9 @@ def solve_allocation(
                 serving_team_id=task_by_id[task_id].team_id,
                 work_hours=Decimal(work_units) / work_scale,
             ))
+        for task_id in fixed_ids:
+            if task_id in chosen:
+                assignments.extend(fixed_rows[task_id])
         shares = tuple(
             (task_id, sprint_no, Decimal(current_solver.Value(variable)) / sp_scale)
             for (task_id, sprint_no), variable in sp_vars.items()
@@ -686,12 +719,15 @@ def solve_allocation(
             work[key] += (row.work_hours if row.work_hours is not None else
                           row.hours / inputs.coverage[(row.engineer_id, row.role_id)])
         shares = {(task_id, sprint): sp for task_id, sprint, sp in solution.sp_shares}
+        # Fixed tasks are constants (shared by value), never hinted.
         for task_id, variable in selected_var.items():
-            model.AddHint(variable, int(task_id in solution.selected))
+            if task_id not in fixed_ids:
+                model.AddHint(variable, int(task_id in solution.selected))
         for key, variable in work_vars.items():
             model.AddHint(variable, _units(work[key], work_scale, name="hint work"))
         for key, variable in sp_vars.items():
-            model.AddHint(variable, _units(shares.get(key, Decimal(0)), sp_scale, name="hint SP"))
+            if key[0] not in fixed_ids:
+                model.AddHint(variable, _units(shares.get(key, Decimal(0)), sp_scale, name="hint SP"))
 
     # Lexicographic lower bound: a level must not fall below the reference
     # (incumbent or greedy plan) only while all earlier levels equal it. Once an

@@ -924,6 +924,7 @@ def build_plan(
                     {"tasks": tasks, "solver_status": status, "accepted": accepted}
                     for tasks, status, accepted in allocation_solution.neighborhood_statuses
                 ],
+                "neighborhood_log": list(allocation_solution.neighborhood_log),
                 "wall_time_seconds": allocation_solution.wall_time_seconds,
                 "neighborhoods_attempted": allocation_solution.neighborhoods_attempted,
                 "neighborhoods_improved": allocation_solution.neighborhoods_improved,
