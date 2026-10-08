@@ -22,4 +22,3 @@ web/dist/**        -diff linguist-generated=true
 
 # --- Кириллица в именах файлов датасета ---
 *.xlsx diff
-*.pdf  diff

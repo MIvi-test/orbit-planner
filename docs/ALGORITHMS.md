@@ -4,6 +4,8 @@
 со ссылками на код. Точные правила — в [PLANNER_SPEC.md](PLANNER_SPEC.md),
 причины решений — в [DECISIONS.md](DECISIONS.md) (ADR-номера ниже), схема данных —
 в [SCHEMA.md](SCHEMA.md), эксплуатация — в [RUNBOOK.md](RUNBOOK.md).
+Реализация варианта с CP-SAT и LNS описана в
+[LOCAL_SEARCH_PLANNER.md](LOCAL_SEARCH_PLANNER.md).
 
 Если код и документ расходятся, прав код: правьте документ.
 
